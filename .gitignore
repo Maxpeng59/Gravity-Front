@@ -1,5 +1,7 @@
 .DS_Store
 .claude/
+__pycache__/
+*.py[cod]
 
 # Unused third-party Sketchfab asset; keep it local unless its CC-BY attribution
 # and license are intentionally included in a future public release.
