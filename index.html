@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GRAVITY FRONT — U.C. 0079</title>
+<link rel="stylesheet" href="css/style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="audio-status" class="audio-status hidden" role="status">ALL AUDIO MUTED · M TO RESTORE</div>
+
+<!-- ============ MAIN MENU ============ -->
+<div id="menu-main" class="screen">
+  <div class="title-block">
+    <div class="title-eyebrow">UNIVERSAL CENTURY 0079 · THE ONE YEAR WAR</div>
+    <h1>GRAVITY FRONT</h1>
+    <div class="title-sub">A FRONTIER SPHERE OPERATIONS SIMULATOR</div>
+  </div>
+  <div class="menu-buttons">
+    <button id="btn-campaign" class="big">▸ CAMPAIGN — THE ONE YEAR WAR</button>
+    <button id="btn-continue" class="big" disabled>▸ CONTINUE OPERATION</button>
+    <button id="btn-custom" class="big">▸ CUSTOM BATTLE</button>
+    <button id="btn-pvp" class="big">▸ PVP DUEL — ONLINE</button>
+  </div>
+  <div class="menu-foot">150 worlds · live war simulation · worlds persist only while observed</div>
+</div>
+
+<!-- ============ CUSTOM BATTLE SETUP ============ -->
+<div id="menu-custom" class="screen hidden">
+  <h2>CUSTOM BATTLE · SORTIE CONFIGURATION</h2>
+  <div class="custom-cols">
+    <div class="custom-col">
+      <h3>YOUR MOBILE SUIT</h3>
+      <div id="suit-grid" class="suit-grid"></div>
+    </div>
+    <div class="custom-col narrow">
+      <h3>BATTLEFIELD</h3>
+      <div id="env-picker" class="pill-row"></div>
+      <h3>BATTLE MAP</h3>
+      <div id="map-picker" class="pill-row"></div>
+      <div id="map-sub" class="map-sub"></div>
+      <h3>MASS BATTLE</h3>
+      <div id="horde-picker" class="pill-row"></div>
+      <h3>ENEMY FORCE</h3>
+      <div id="enemy-list" class="enemy-list"></div>
+      <div class="pill-row">
+        <button id="btn-add-enemy" class="small">+ ADD ENEMY</button>
+        <button id="btn-clear-enemy" class="small">CLEAR</button>
+      </div>
+      <h3>ALLIED FORCE</h3>
+      <div id="ally-list" class="enemy-list"></div>
+      <div class="pill-row">
+        <button id="btn-add-ally" class="small">+ ADD ALLY</button>
+        <button id="btn-clear-ally" class="small">CLEAR</button>
+      </div>
+      <div class="pill-row" style="margin-top:10px">
+        <button id="btn-fold-readout" class="small">◱ UNIT READOUT</button>
+        <button id="btn-fold-map" class="small">◈ DEPLOYMENT MAP</button>
+      </div>
+      <div class="spacer"></div>
+      <button id="btn-launch-custom" class="big accent">LAUNCH SORTIE</button>
+      <button id="btn-custom-back" class="small">◂ BACK</button>
+    </div>
+    <div class="custom-col preview">
+      <div class="fold open" id="fold-readout">
+        <button class="fold-h" data-fold="readout"><span>UNIT READOUT</span><span class="cv">▾</span></button>
+        <div class="fold-b">
+          <canvas id="ms-preview" class="ms-preview"></canvas>
+          <div id="ms-stats" class="ms-stats"></div>
+        </div>
+      </div>
+      <div class="fold" id="fold-map">
+        <button class="fold-h" data-fold="map"><span>DEPLOYMENT MAP</span><span class="cv">▾</span></button>
+        <div class="fold-b">
+          <canvas id="spawn-map" class="spawn-map"></canvas>
+          <div id="map-hint" class="map-hint">Drag <b style="color:#5aa9ff">▲ YOU</b> and each numbered <b style="color:#49d67a">● ally</b> / <b style="color:#ff5d5d">✚ enemy</b> marker to set where that unit deploys</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ PVP DUEL LOBBY ============ -->
+<div id="menu-pvp" class="screen pvp-screen hidden">
+  <div class="pvp-shell">
+    <header class="pvp-head">
+      <div class="title-eyebrow">DIRECT PEER-TO-PEER LINK</div>
+      <h2>PVP DUEL · ONLINE LOBBY</h2>
+      <p>Exchange connection codes with one opponent. No account or dedicated game server is required.</p>
+    </header>
+
+    <div class="pvp-grid">
+      <section class="pvp-panel" aria-labelledby="pvp-loadout-title">
+        <h3 id="pvp-loadout-title">PILOT LOADOUT</h3>
+
+        <label class="pvp-field" for="pvp-callsign">
+          <span>CALLSIGN</span>
+          <input id="pvp-callsign" type="text" maxlength="20" autocomplete="nickname"
+            placeholder="ENTER CALLSIGN">
+        </label>
+
+        <label class="pvp-field" for="pvp-suit">
+          <span>MOBILE SUIT</span>
+          <select id="pvp-suit" aria-label="Choose your mobile suit"></select>
+        </label>
+
+        <label class="pvp-field" for="pvp-map">
+          <span>BATTLE MAP</span>
+          <select id="pvp-map" aria-describedby="pvp-host-note"></select>
+        </label>
+
+        <p id="pvp-host-note" class="pvp-note">The host chooses the map and launches the duel after both pilots connect.</p>
+
+        <div id="pvp-status" class="pvp-status" role="status" aria-live="polite">LINK OFFLINE · CHOOSE HOST OR JOIN</div>
+        <div id="pvp-peer" class="pvp-peer" aria-live="polite">OPPONENT · NOT CONNECTED</div>
+      </section>
+
+      <section class="pvp-panel pvp-connect" aria-labelledby="pvp-connect-title">
+        <h3 id="pvp-connect-title">MANUAL CONNECTION · THREE STEPS</h3>
+        <ol class="pvp-steps">
+          <li><b>Host:</b> create an invite, then send the generated code to your opponent.</li>
+          <li><b>Joiner:</b> paste the invite, join, then send the generated answer code back.</li>
+          <li><b>Host:</b> paste the answer and apply it. When the link is ready, launch the duel.</li>
+        </ol>
+
+        <div class="pvp-action-row">
+          <button id="btn-pvp-host" class="small accent">1 · CREATE HOST INVITE</button>
+          <button id="btn-pvp-join" class="small">2 · JOIN INVITE</button>
+        </div>
+
+        <label class="pvp-field" for="pvp-incoming-code">
+          <span>CODE RECEIVED FROM OPPONENT</span>
+          <textarea id="pvp-incoming-code" rows="4" spellcheck="false"
+            placeholder="PASTE INVITE OR ANSWER CODE HERE"></textarea>
+        </label>
+
+        <button id="btn-pvp-apply-answer" class="small">3 · APPLY ANSWER AS HOST</button>
+
+        <label class="pvp-field" for="pvp-outgoing-code">
+          <span>CODE TO SEND TO OPPONENT</span>
+          <textarea id="pvp-outgoing-code" rows="4" readonly spellcheck="false"
+            placeholder="YOUR SHAREABLE CODE WILL APPEAR HERE"></textarea>
+        </label>
+
+        <div class="pvp-action-row end">
+          <button id="btn-pvp-copy" class="small" disabled>COPY GENERATED CODE</button>
+        </div>
+      </section>
+    </div>
+
+    <div class="pvp-footer">
+      <button id="btn-pvp-back" class="small">◂ BACK</button>
+      <button id="btn-pvp-reset" class="small" disabled>RESET LINK / TRY AGAIN</button>
+      <button id="btn-pvp-launch" class="big accent" disabled>LAUNCH PVP DUEL</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============ CAMPAIGN INTRO ============ -->
+<div id="intro" class="screen hidden">
+  <div id="intro-text" class="intro-text"></div>
+  <button id="btn-intro-next" class="big accent">▸▸</button>
+</div>
+
+<!-- ============ BRIDGE (campaign hub) ============ -->
+<div id="bridge" class="screen bridge hidden">
+  <div id="bridge-top" class="bridge-top">
+    <span id="b-date"></span><span id="b-loc"></span><span id="b-credits"></span><span id="b-hull"></span>
+    <span class="flex"></span>
+    <button id="btn-save" class="small">SAVE</button>
+    <button id="btn-quit" class="small">QUIT TO MENU</button>
+  </div>
+  <div class="bridge-body">
+    <div class="bridge-tabs" id="bridge-tabs"></div>
+    <div class="bridge-pane" id="bridge-pane"></div>
+  </div>
+  <div id="b-news" class="bridge-news"></div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="hud" class="hidden">
+  <div id="cockpit-frame" class="hidden" aria-hidden="true">
+    <div class="cockpit-side left">
+      <b>SUBSYSTEMS</b><div class="cockpit-vent"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="cockpit-lamps"><i></i><i></i><i></i><i></i><i></i><i></i></div><span>FRAME · DRIVE · COOLANT</span>
+    </div>
+    <div class="cockpit-side right">
+      <b>MS CONTROL</b><div class="cockpit-lamps"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <span>STABLE · TRACK · GUARD</span>
+    </div>
+    <div class="cockpit-deck left"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="cockpit-deck right"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+    <div class="cockpit-grip left"><i></i></div><div class="cockpit-grip right"><i></i></div>
+    <div class="cockpit-actuator"><i></i></div>
+  </div>
+  <canvas id="lockon"></canvas>
+  <div id="crosshair">+</div>
+  <div id="hud-killfeed" aria-live="polite" aria-atomic="false"></div>
+  <div class="hud-bl">
+    <div class="bar-label">ARMOR <span id="hud-hp-num"></span></div>
+    <div class="bar"><div id="hud-hp" class="bar-fill hp"></div></div>
+    <div class="bar-label">THRUSTER</div>
+    <div class="bar"><div id="hud-boost" class="bar-fill boost"></div></div>
+    <div id="hud-weapon" class="hud-weapon"></div>
+  </div>
+  <div class="hud-br"><canvas id="radar" width="180" height="180"></canvas></div>
+  <div class="hud-tc">
+    <div id="hud-objective"></div>
+    <div id="hud-sim" class="hud-sim"></div>
+  </div>
+  <div id="hud-msg" class="hud-msg"></div>
+  <div id="hud-hint" class="hud-hint"></div>
+</div>
+
+<!-- ============ BATTLE RESULT ============ -->
+<div id="result" class="screen hidden">
+  <h2 id="result-title"></h2>
+  <div id="result-body" class="intro-text small"></div>
+  <button id="btn-result-ok" class="big accent">CONTINUE</button>
+</div>
+
+<div id="modal-root"></div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
