@@ -390,7 +390,7 @@ $('btn-quit').onclick = () => modal('RETURN TO MENU', 'Progress is saved automat
 // the actual duel over a reliable browser-to-browser data channel.
 // Bump this whenever networked combat state changes so cached/older Pages
 // clients fail clearly instead of entering a silently divergent duel.
-const PVP_PROTOCOL = 2;
+const PVP_PROTOCOL = 3;
 const PVP_CALLSIGN_KEY = 'gravityFront.pvp.callsign';
 const PVP_SUIT_KEY = 'gravityFront.pvp.suit';
 const pvpSession = {

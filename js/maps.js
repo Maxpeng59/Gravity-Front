@@ -8,8 +8,9 @@
 // opts.mapId is set: it paints the terrain, drapes the fog/light, then builds
 // each structure — military kinds (wall/gate/guntower/hangar/…) become
 // destructible NEUTRAL props (anyone's fire can level them), landmark kinds
-// (churchtower/townhouse) become indestructible solid cover, and the rest
-// (road/river/tree/rock/rubble) are decorative ground dressing.
+// (churchtower/townhouse) become indestructible solid cover. Rubble, tree trunks,
+// rocks and river embankments also carry matching colliders; only flat roads,
+// landing pads and river water remain traversable ground dressing.
 //
 // Coordinates: X = east/west, Z = NORTH (forward, +Z), Y = up; 1 unit ≈ 1 m,
 // a Gundam ~18 m. Player deploys at origin facing +Z; hostiles enter from +Z.

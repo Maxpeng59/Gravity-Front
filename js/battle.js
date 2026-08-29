@@ -12,6 +12,10 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
+import {
+  raySphere, rayYawBox, segmentSphere, segmentYawBox,
+  circleYawRectPenetration, sweepCircleYawRect,
+} from './collision-math.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 
@@ -419,6 +423,25 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- environment ----------
   let hfn = null;            // terrain height fn, null in space
   const spinners = [];       // slowly rotating asteroids
+  // Environment meshes are built before mission props exist. Queue every solid
+  // visual here, then fold it into `props` so bodies, projectiles, aim rays and
+  // cameras all query the same collision registry.
+  const pendingStaticProps = [];
+  function queueStaticObstacle(root, {
+    radius = 1, hitY = 0, hitSpheres = null, hitBoxes = null, label = 'OBSTACLE',
+  } = {}){
+    const p = {
+      kind: 'scenery', structKind: label.toLowerCase().replace(/\s+/g, '-'),
+      team: 'NEUTRAL', root, alive: true, isProp: true, isShip: false,
+      scenery: true, indestructible: true, radius, hitY,
+      hp: 999999, maxHp: 999999, big: false, label,
+      vel: new THREE.Vector3(), goal: null,
+    };
+    if (hitSpheres?.length) p.hitSpheres = hitSpheres;
+    if (hitBoxes?.length) p.hitBoxes = hitBoxes;
+    pendingStaticProps.push(p);
+    return p;
+  }
   // A named authored battlefield overrides the biome palette,
   // terrain shape, fog + light and drapes an authored structure layout
   const activeMap = (opts.mapId && env === 'ground') ? MAP_BY_ID[opts.mapId] : null;
@@ -459,7 +482,40 @@ export function startBattle(renderer, opts, onEnd){
         return (rolling + ridge) * clamp((d - 90) / 300, 0.1, 1);
       };
     }
-    const geo = new THREE.PlaneGeometry(4400, 4400, 120, 120);
+    // The rendered terrain and gameplay collision now read the exact same triangle
+    // height field. Previously gameplay sampled the continuous noise function while
+    // the visible mesh used a coarse approximation, leaving occasional invisible
+    // ledges (or letting a foot sink through a visible ridge).
+    // Cover the full 5.2 km movement radius. Falling back to analytic noise beyond
+    // the old 2.2 km mesh created invisible hills near the arena boundary.
+    const TERRAIN_SIZE = 11000, TERRAIN_SEGMENTS = 280;
+    const terrainHalf = TERRAIN_SIZE / 2, terrainStep = TERRAIN_SIZE / TERRAIN_SEGMENTS;
+    const rawTerrainHeight = hfn;
+    const terrainHeights = new Float32Array((TERRAIN_SEGMENTS + 1) ** 2);
+    for (let iz = 0; iz <= TERRAIN_SEGMENTS; iz++){
+      const z = -terrainHalf + iz * terrainStep;
+      for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++){
+        const x = -terrainHalf + ix * terrainStep;
+        terrainHeights[ix + iz * (TERRAIN_SEGMENTS + 1)] = rawTerrainHeight(x, z);
+      }
+    }
+    hfn = (x, z) => {
+      if (x < -terrainHalf || x > terrainHalf || z < -terrainHalf || z > terrainHalf) return rawTerrainHeight(x, z);
+      const gx = clamp((x + terrainHalf) / terrainStep, 0, TERRAIN_SEGMENTS);
+      const gz = clamp((z + terrainHalf) / terrainStep, 0, TERRAIN_SEGMENTS);
+      const ix = Math.min(TERRAIN_SEGMENTS - 1, Math.floor(gx));
+      const iz = Math.min(TERRAIN_SEGMENTS - 1, Math.floor(gz));
+      const tx = gx - ix, tz = gz - iz, stride = TERRAIN_SEGMENTS + 1;
+      const a = terrainHeights[ix + iz * stride];
+      const b = terrainHeights[ix + (iz + 1) * stride];
+      const c = terrainHeights[ix + 1 + (iz + 1) * stride];
+      const d = terrainHeights[ix + 1 + iz * stride];
+      // PlaneGeometry splits each quad a-b-d and b-c-d; use that same diagonal.
+      return tx + tz <= 1
+        ? a + (d - a) * tx + (b - a) * tz
+        : c + (b - c) * (1 - tx) + (d - c) * (1 - tz);
+    };
+    const geo = new THREE.PlaneGeometry(TERRAIN_SIZE, TERRAIN_SIZE, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS);
     geo.rotateX(-Math.PI / 2);
     const pos = geo.attributes.position, colors = new Float32Array(pos.count * 3);
     const lo = new THREE.Color(biome.lo), hi = new THREE.Color(biome.hi), tmpC = new THREE.Color();
@@ -485,6 +541,10 @@ export function startBattle(renderer, opts, onEnd){
         rock.position.set(x, hfn(x, z) + r * 0.3, z);
         rock.rotation.set(rng.next() * 3, rng.next() * 3, 0);
         scene.add(rock);
+        queueStaticObstacle(rock, {
+          radius: r * 0.82, hitY: 0, label: 'ROCK',
+          hitSpheres: [{ x: 0, y: 0, z: 0, r: r * 0.82 }],
+        });
       }
       // mech-scale cover in the combat zone: mesas and ruined wall segments
       for (let i = 0; i < 12; i++){
@@ -494,16 +554,25 @@ export function startBattle(renderer, opts, onEnd){
         mesa.position.set(x, hfn(x, z) + r * 0.45, z);
         mesa.rotation.y = rng.next() * 3;
         scene.add(mesa);
+        queueStaticObstacle(mesa, {
+          radius: r, hitY: 0, label: 'MESA',
+          hitBoxes: [{ x: 0, y: 0, z: 0, hx: r * 0.82, hy: r * 0.7, hz: r * 0.82 }],
+        });
       }
       const ruinMat = new THREE.MeshStandardMaterial({ color: 0x6b6f74, roughness: 0.9 });
       for (let i = 0; i < 14; i++){
         const a = rng.range(0, Math.PI * 2), d = rng.range(180, 900);
         const x = Math.sin(a) * d, z = Math.cos(a) * d;
-        const wall = new THREE.Mesh(new THREE.BoxGeometry(rng.range(28, 60), rng.range(10, 22), 4), ruinMat);
-        wall.position.set(x, hfn(x, z) + 4, z);
+        const ww = rng.range(28, 60), wh = rng.range(10, 22), wd = 4;
+        const wall = new THREE.Mesh(new THREE.BoxGeometry(ww, wh, wd), ruinMat);
+        wall.position.set(x, hfn(x, z) + wh / 2, z);
         wall.rotation.y = rng.range(0, Math.PI);
         wall.rotation.z = rng.range(-0.12, 0.12);
         scene.add(wall);
+        queueStaticObstacle(wall, {
+          radius: Math.hypot(ww, wd) / 2, hitY: 0, label: 'RUINED WALL',
+          hitBoxes: [{ x: 0, y: 0, z: 0, hx: ww / 2, hy: wh / 2, hz: wd / 2 }],
+        });
       }
     } else if (!activeMap.urban) {
       // A distant hill-fringe keeps rural authored valleys from looking bare. Urban maps supply
@@ -515,11 +584,15 @@ export function startBattle(renderer, opts, onEnd){
         rock.position.set(x, hfn(x, z) + r * 0.3, z);
         rock.rotation.set(rng.next() * 3, rng.next() * 3, 0);
         scene.add(rock);
+        queueStaticObstacle(rock, {
+          radius: r * 0.82, hitY: 0, label: 'ROCK',
+          hitSpheres: [{ x: 0, y: 0, z: 0, r: r * 0.82 }],
+        });
       }
     }
   } else if (env === 'colony'){
     hfn = () => 0;
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(4200, 4200), new THREE.MeshStandardMaterial({ color: 0x707a70, roughness: 1 }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(11000, 11000), new THREE.MeshStandardMaterial({ color: 0x707a70, roughness: 1 }));
     floor.rotation.x = -Math.PI / 2; scene.add(floor);
     const bMat = new THREE.MeshStandardMaterial({ color: 0x8a93a0, roughness: 0.9 });
     const wMat = new THREE.MeshStandardMaterial({ color: 0x222831, emissive: 0xb8d0e0, emissiveIntensity: 0.5 });
@@ -528,6 +601,10 @@ export function startBattle(renderer, opts, onEnd){
       if (Math.hypot(x, z) < 180) continue;
       const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), bMat);
       b.position.set(x, h / 2, z); scene.add(b);
+      queueStaticObstacle(b, {
+        radius: Math.SQRT1_2 * w, hitY: 0, label: 'COLONY BUILDING',
+        hitBoxes: [{ x: 0, y: 0, z: 0, hx: w / 2, hy: h / 2, hz: w / 2 }],
+      });
       if (rng.chance(0.5)){
         const win = new THREE.Mesh(new THREE.BoxGeometry(w * 0.7, h * 0.6, 1), wMat);
         win.position.set(x, h * 0.5, z + w / 2 + 0.6); scene.add(win);
@@ -543,11 +620,16 @@ export function startBattle(renderer, opts, onEnd){
     earth.position.set(2400, 600, -5200); scene.add(earth);
     const aMat = new THREE.MeshStandardMaterial({ color: 0x6a6a72, roughness: 0.95 });
     for (let i = 0; i < 42; i++){
-      const a = new THREE.Mesh(new THREE.IcosahedronGeometry(rng.range(8, 55), 0), aMat);
+      const ar = rng.range(8, 55);
+      const a = new THREE.Mesh(new THREE.IcosahedronGeometry(ar, 0), aMat);
       a.position.copy(new THREE.Vector3().randomDirection().multiplyScalar(rng.range(450, 2700)));
       a.rotation.set(rng.next() * 3, rng.next() * 3, rng.next() * 3);
       a.userData.spin = rng.range(0.02, 0.12);
       scene.add(a); spinners.push(a);
+      queueStaticObstacle(a, {
+        radius: ar * 0.86, hitY: 0, label: 'ASTEROID',
+        hitSpheres: [{ x: 0, y: 0, z: 0, r: ar * 0.86 }],
+      });
     }
   }
   scene.add(new THREE.HemisphereLight(biome.sky, biome.lo, env === 'space' ? 0.8 : (activeMap ? activeMap.light.ambient : 1.0)));
@@ -562,6 +644,7 @@ export function startBattle(renderer, opts, onEnd){
 
   // ---------- mechs ----------
   const mechs = [];
+  let staticCollidersReady = false;
   const collisionGrid = new Map(); // reused each frame for broad-phase body separation
 
   // ---------- far-LOD instancing ----------
@@ -724,6 +807,7 @@ export function startBattle(renderer, opts, onEnd){
       : [{ x: 0, y: 13, z: 1.8, r: 3.5, mult: 2.5 }];                               // humanoid cockpit (chest)
     mechs.push(m);
     if (m.alwaysFull){ ensureDetail(m); m.lodNear = true; } // the player is always full-detail
+    if (staticCollidersReady) relocateBodyOutOfStatic(m);
     if (deployCarrierPassengers) deployCarrierPassengers(m);
     return m;
   }
@@ -825,6 +909,7 @@ export function startBattle(renderer, opts, onEnd){
 
   // ---------- props: destructible mission structures, vehicles & capital ships ----------
   const props = [];
+  props.push(...pendingStaticProps);
   function spawnProp(kind, team, pos, hp){
     const isSpaceShip = kind === 'musai' || kind === 'chivvay' || kind === 'salamis' || kind === 'magellan' || kind === 'columbus' || kind === 'solfortress';
     const isLandShip = kind === 'bigtray' || kind === 'dabude' || kind === 'gallop';
@@ -1094,6 +1179,49 @@ export function startBattle(renderer, opts, onEnd){
       gallop:  [{ x: 0, y: 10, z: -17, r: 19 }, { x: 0, y: 11, z: 2, r: 27 }, { x: 0, y: 10, z: 19, r: 19 }],
     };
     if (LAND_HS[kind]) p.hitSpheres = LAND_HS[kind];
+    const PROP_BOXES = {
+      base: [
+        { x: 0, y: 7, z: 0, hx: 13, hy: 7, hz: 10 },
+        { x: 13, y: 3, z: 4, hx: 5, hy: 3, hz: 7 },
+      ],
+      truck: [
+        { x: 0, y: 3.5, z: -1, hx: 3.5, hy: 3.5, hz: 8 },
+        { x: 0, y: 2.6, z: 9, hx: 3, hy: 1.5, hz: 2.5 },
+      ],
+      musai: [
+        { x: 0, y: 12, z: 8, hx: 7, hy: 6, hz: 38 },
+        { x: 0, y: 11, z: 46, hx: 5, hy: 5, hz: 11 },
+        { x: -12.5, y: 11, z: -30, hx: 3, hy: 3, hz: 12 },
+        { x: 12.5, y: 11, z: -30, hx: 3, hy: 3, hz: 12 },
+      ],
+      chivvay: [
+        { x: 0, y: 14, z: -4, hx: 15, hy: 8, hz: 46 },
+        { x: 0, y: 27, z: 0, hx: 8.5, hy: 11, hz: 21 },
+        { x: 0, y: 14, z: 46, hx: 9, hy: 5, hz: 13 },
+      ],
+      salamis: [
+        { x: 0, y: 12, z: 7, hx: 9, hy: 6, hz: 46 },
+        { x: 0, y: 23, z: 1, hx: 5, hy: 10, hz: 8 },
+        { x: 0, y: 14, z: -32, hx: 9, hy: 5, hz: 14 },
+      ],
+      magellan: [
+        { x: 0, y: 13, z: 2, hx: 12, hy: 7, hz: 52 },
+        { x: 0, y: 29, z: -3, hx: 5, hy: 13, hz: 8 },
+        { x: 0, y: 12, z: -45, hx: 10, hy: 6, hz: 10 },
+      ],
+      columbus: [
+        { x: 0, y: 14, z: 0, hx: 14, hy: 9, hz: 40 },
+        { x: 0, y: 23, z: -2, hx: 10, hy: 4, hz: 27 },
+        { x: 0, y: 13, z: -38, hx: 11, hy: 6, hz: 9 },
+      ],
+      solfortress: [{ x: 0, y: 16, z: 40, hx: 14, hy: 7, hz: 10 }],
+    };
+    const PROP_SPHERES = {
+      depot: [{ x: 0, y: 9, z: 0, r: 7 }, { x: 16, y: 9, z: 2, r: 7 }],
+      solfortress: [{ x: 0, y: 16, z: 0, r: 46 }, { x: 0, y: 16, z: 35, r: 22 }, { x: 0, y: 16, z: -35, r: 22 }],
+    };
+    if (PROP_BOXES[kind]) p.hitBoxes = PROP_BOXES[kind];
+    if (PROP_SPHERES[kind]) p.hitSpheres = PROP_SPHERES[kind];
     // WEAK POINTS (world units — props render unscaled): the bridge/command tower and engine blocks.
     // Hitting them deals 2.5× damage. (local x=beam, y=up, z=prow)
     const SHIP_WEAK = {
@@ -1155,10 +1283,11 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // ---------- authored map structures ----------
-  // Military structures and city blocks → destructible NEUTRAL props; historic landmarks →
-  // indestructible solid cover; roads, rivers, rubble, vegetation and rocks → ground dressing.
+  // Military structures and city blocks → destructible NEUTRAL props; historic landmarks,
+  // rubble, trunks, rocks and river embankments → indestructible solid cover. Flat roads,
+  // pads and water surfaces remain traversable ground dressing.
   const DESTRUCT_KINDS = new Set(['wall', 'gate', 'guntower', 'watchtower', 'radar', 'fueltank', 'hangar', 'barracks', 'bunker', 'commandpost', 'base', 'depot', 'cityblock']);
-  const SOLID_KINDS = new Set(['churchtower', 'townhouse']);
+  const SOLID_KINDS = new Set(['churchtower', 'townhouse', 'river', 'rubble', 'treecluster', 'rockcluster']);
   function buildMapStructures(map){
     const M = {
       stone:    new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 0.95 }),
@@ -1195,10 +1324,11 @@ export function startBattle(renderer, opts, onEnd){
     const cone = (r, h, m, x = 0, y = 0, z = 0, seg = 8) => { const e = new THREE.Mesh(new THREE.ConeGeometry(r, h, seg), m); e.position.set(x, y, z); return e; };
     const ico = (r, m, x = 0, y = 0, z = 0, det = 0) => { const e = new THREE.Mesh(new THREE.IcosahedronGeometry(r, det), m); e.position.set(x, y, z); return e; };
 
-    // build a structure's mesh; returns { g, radius, hitY, hp, big, label, hitSpheres }
+    // build a structure's mesh plus local collider primitives. `hitBoxes` entries are
+    // yaw-oriented boxes {x,y,z,hx,hy,hz,rotY?}; hitSpheres remain useful for round forms.
     function build(kind, s, variant, spec = {}){
       const g = new THREE.Group();
-      let radius = 12 * s, hitY = 8 * s, hp = 800, big = false, label = kind.toUpperCase(), hitSpheres = null;
+      let radius = 12 * s, hitY = 8 * s, hp = 800, big = false, label = kind.toUpperCase(), hitSpheres = null, hitBoxes = null;
       switch (kind){
         case 'wall': {
           const L = 42 * s, h = 16 * s, th = 6 * s;
@@ -1206,7 +1336,8 @@ export function startBattle(renderer, opts, onEnd){
           for (let x = -L / 2 + 3; x <= L / 2 - 3; x += 6) g.add(box(3.4, 3.2, th + 0.6, M.dstone, x, h + 1.4, 0)); // crenellations
           g.add(box(L, 2, th + 1.2, M.dstone, 0, h - 1, 0)); // wall-walk lip
           hitY = h * 0.5; hp = 720 * s; label = 'RAMPART WALL';
-          hitSpheres = [{ x: -L * 0.32, y: h * 0.5, z: 0, r: 10 * s }, { x: 0, y: h * 0.5, z: 0, r: 10 * s }, { x: L * 0.32, y: h * 0.5, z: 0, r: 10 * s }];
+          radius = Math.hypot(L, th) / 2;
+          hitBoxes = [{ x: 0, y: h * 0.5, z: 0, hx: L / 2, hy: h * 0.5 + 1.6, hz: th / 2 + 0.3 }];
           break;
         }
         case 'gate': {
@@ -1218,7 +1349,12 @@ export function startBattle(renderer, opts, onEnd){
           g.add(box(px * 2 + 11 * s, 5 * s, 8 * s, M.stone, 0, h - 2, 0)); // lintel
           g.add(box(px * 2 - 4 * s, 3, 6 * s, M.dmetal, 0, h - 5, 0));     // portcullis header
           hitY = h * 0.5; hp = 960 * s; label = 'TOWN GATE';
-          hitSpheres = [{ x: -px, y: h * 0.5, z: 0, r: 8 * s }, { x: px, y: h * 0.5, z: 0, r: 8 * s }];
+          radius = px + 6 * s;
+          hitBoxes = [
+            { x: -px, y: h / 2, z: 0, hx: 5.5 * s, hy: h / 2 + 1, hz: 5.5 * s },
+            { x: px, y: h / 2, z: 0, hx: 5.5 * s, hy: h / 2 + 1, hz: 5.5 * s },
+            { x: 0, y: h - 2, z: 0, hx: px + 5.5 * s, hy: 2.5 * s, hz: 4 * s },
+          ];
           break;
         }
         case 'guntower': {
@@ -1228,6 +1364,7 @@ export function startBattle(renderer, opts, onEnd){
           g.add(box(12 * s, 6 * s, 12 * s, M.metal, 0, h + 4 * s, 0));    // gun house
           for (const sx of [-1, 1]) g.add(cyl(0.7 * s, 0.7 * s, 12 * s, M.dmetal, sx * 2 * s, h + 4 * s, 6 * s, 6).rotateX(Math.PI / 2)); // twin barrels fwd
           radius = 8 * s; hitY = h * 0.55; hp = 700 * s; label = 'GUN TOWER';
+          hitBoxes = [{ x: 0, y: (h + 7 * s) / 2, z: 0, hx: 7 * s, hy: (h + 7 * s) / 2, hz: 7 * s }];
           break;
         }
         case 'watchtower': {
@@ -1237,6 +1374,10 @@ export function startBattle(renderer, opts, onEnd){
           g.add(cyl(0.3 * s, 0.3 * s, 9 * s, M.dmetal, 0, h + 4 * s, 0, 5)); // antenna
           g.add(ico(0.9 * s, M.red, 0, h + 8.5 * s, 0));                  // warning light
           radius = 5 * s; hitY = h * 0.5; hp = 420 * s; label = 'COMMS MAST';
+          hitBoxes = [
+            { x: 0, y: h / 2, z: 0, hx: 2.4 * s, hy: h / 2, hz: 2.4 * s },
+            { x: 0, y: h - 1, z: 0, hx: 3.5 * s, hy: 0.8 * s, hz: 3.5 * s },
+          ];
           break;
         }
         case 'radar': {
@@ -1245,6 +1386,10 @@ export function startBattle(renderer, opts, onEnd){
           const dish = cyl(8.5 * s, 8.5 * s, 1.2 * s, M.dish, 0, 13 * s, 1 * s, 16); dish.rotation.x = -0.9; g.add(dish);
           g.add(cyl(0.4 * s, 0.4 * s, 5 * s, M.dmetal, 0, 13 * s, 3 * s)); // feed horn
           radius = 9 * s; hitY = 8 * s; hp = 460 * s; label = 'RADAR ARRAY';
+          hitBoxes = [
+            { x: 0, y: 7 * s, z: 0, hx: 5.5 * s, hy: 7 * s, hz: 5.5 * s },
+            { x: 0, y: 13 * s, z: 1 * s, hx: 8.5 * s, hy: 4.8 * s, hz: 2.4 * s },
+          ];
           break;
         }
         case 'fueltank': {
@@ -1255,6 +1400,10 @@ export function startBattle(renderer, opts, onEnd){
           }
           g.add(box(20 * s, 1.4 * s, 18 * s, M.dmetal, 0, 0.7 * s, 0));   // bund pad
           radius = 12 * s; hitY = 9 * s; hp = 520 * s; big = true; label = 'FUEL TANKS';
+          hitSpheres = [[-6, -5], [6, -5], [0, 6]].map(([x, z]) => ({ x: x * s, y: 16 * s, z: z * s, r: 4.1 * s }));
+          hitBoxes = [{ x: 0, y: 0.7 * s, z: 0, hx: 10 * s, hy: 0.7 * s, hz: 9 * s }];
+          for (const [x, z] of [[-6, -5], [6, -5], [0, 6]])
+            hitBoxes.push({ x: x * s, y: 8 * s, z: z * s, hx: 4 * s, hy: 8 * s, hz: 4 * s });
           break;
         }
         case 'hangar': {
@@ -1264,7 +1413,8 @@ export function startBattle(renderer, opts, onEnd){
           g.add(box(w * 0.68, h * 0.85, 2, M.dmetal, 0, h * 0.42, L / 2 + 0.4)); // blast door
           g.add(box(w * 0.68, 1.5, 2.2, M.red, 0, h * 0.85, L / 2 + 0.5));
           hitY = h * 0.7; hp = 1500 * s; label = 'MS HANGAR';
-          hitSpheres = [{ x: 0, y: h * 0.6, z: -L * 0.3, r: 17 * s }, { x: 0, y: h * 0.6, z: 0, r: 18 * s }, { x: 0, y: h * 0.6, z: L * 0.3, r: 17 * s }];
+          radius = Math.hypot(w, L) / 2;
+          hitBoxes = [{ x: 0, y: h, z: 0, hx: w / 2, hy: h, hz: L / 2 }];
           break;
         }
         case 'barracks': {
@@ -1274,7 +1424,8 @@ export function startBattle(renderer, opts, onEnd){
           for (let x = -L / 2 + 5; x < L / 2; x += 8) g.add(box(2.4, 2.4, 0.4, M.glass, x, 6 * s, 7.6 * s));
           g.add(cyl(0.25, 0.25, 8 * s, M.dmetal, L / 2 - 3, 15 * s, 0));  // whip antenna
           hitY = 6 * s; hp = 620 * s; label = 'BARRACKS';
-          hitSpheres = [{ x: -L * 0.32, y: 6 * s, z: 0, r: 11 * s }, { x: 0, y: 6 * s, z: 0, r: 11 * s }, { x: L * 0.32, y: 6 * s, z: 0, r: 11 * s }];
+          radius = Math.hypot(L, 16 * s) / 2;
+          hitBoxes = [{ x: 0, y: 6.35 * s, z: 0, hx: L / 2 + 1, hy: 6.35 * s, hz: 8 * s }];
           break;
         }
         case 'bunker': {
@@ -1282,6 +1433,7 @@ export function startBattle(renderer, opts, onEnd){
           g.add(box(17 * s, 3.5 * s, 17 * s, M.dstone, 0, 10 * s, 0));    // sloped cap
           g.add(box(19 * s, 2.2 * s, 2, M.dmetal, 0, 6 * s, 11 * s));     // firing slit
           radius = 13 * s; hitY = 5 * s; hp = 860 * s; label = 'PILLBOX';
+          hitBoxes = [{ x: 0, y: 5.9 * s, z: 0, hx: 11 * s, hy: 5.9 * s, hz: 11 * s }];
           break;
         }
         case 'commandpost': {
@@ -1291,6 +1443,10 @@ export function startBattle(renderer, opts, onEnd){
           g.add(ico(1.6 * s, M.glass, -8 * s, 27 * s, -4 * s));           // beacon
           g.add(box(11 * s, 6 * s, 13 * s, M.metal, 12 * s, 3 * s, 4 * s)); // annex
           radius = 15 * s; hitY = 8 * s; hp = 1400 * s; label = 'COMMAND POST';
+          hitBoxes = [
+            { x: 0, y: 7.75 * s, z: 0, hx: 12 * s, hy: 7.75 * s, hz: 10 * s },
+            { x: 12 * s, y: 3 * s, z: 4 * s, hx: 5.5 * s, hy: 3 * s, hz: 6.5 * s },
+          ];
           break;
         }
         case 'base': {
@@ -1299,6 +1455,10 @@ export function startBattle(renderer, opts, onEnd){
           g.add(ico(3 * s, M.glass, -9 * s, 25 * s, -6 * s));
           g.add(box(12 * s, 7 * s, 16 * s, M.concrete, 13 * s, 3.5 * s, 4 * s));
           radius = 18 * s; hitY = 9 * s; hp = 2000 * s; label = 'GARRISON HQ';
+          hitBoxes = [
+            { x: 0, y: 8 * s, z: 0, hx: 14 * s, hy: 8 * s, hz: 11 * s },
+            { x: 13 * s, y: 3.5 * s, z: 4 * s, hx: 6 * s, hy: 3.5 * s, hz: 8 * s },
+          ];
           break;
         }
         case 'depot': {
@@ -1306,6 +1466,7 @@ export function startBattle(renderer, opts, onEnd){
           for (const [dx, dz] of [[-2, -9], [5, -9], [1, 10]]) g.add(box(7 * s, 6 * s, 7 * s, M.dstone, dx * s, 3 * s, dz * s)); // crates
           g.add(ico(2.2 * s, M.glass, 8 * s, 16 * s, 1 * s));
           radius = 15 * s; hitY = 9 * s; hp = 1100 * s; big = true; label = 'SUPPLY DEPOT';
+          hitBoxes = [{ x: 0, y: 9 * s, z: 0, hx: 16 * s, hy: 9 * s, hz: 14 * s }];
           break;
         }
         case 'churchtower': {
@@ -1317,12 +1478,15 @@ export function startBattle(renderer, opts, onEnd){
             g.add(cyl(2 * s, 2 * s, 5 * s, M.dstone, 0, h + 10 * s, 0, 10)); // lantern
             g.add(cyl(0.3, 0.3, 5 * s, M.dmetal, 0, h + 15 * s, 0));         // finial
             radius = 11 * s; hitY = 14 * s;
+            hitBoxes = [{ x: 0, y: h / 2, z: 0, hx: 10 * s, hy: h / 2, hz: 10 * s }];
+            hitSpheres = [{ x: 0, y: h + 5 * s, z: 0, r: 9.5 * s }];
           } else if (variant === 'keep'){
             const h = 40 * s;
             g.add(box(16 * s, h, 16 * s, M.dstone, 0, h / 2, 0));
             for (let x = -7 * s; x <= 7 * s; x += 4.6 * s) for (const dz of [-1, 1]) g.add(box(2.6 * s, 3 * s, 2.4 * s, M.stone, x, h + 1.4 * s, dz * 7 * s)); // battlements
             g.add(cyl(0.3, 0.3, 8 * s, M.dmetal, 0, h + 6 * s, 0));
             radius = 11 * s; hitY = h * 0.5;
+            hitBoxes = [{ x: 0, y: h / 2, z: 0, hx: 8 * s, hy: h / 2, hz: 8 * s }];
           } else { // 'spire' (Gothic) or 'lean' (leaning tower)
             const inner = new THREE.Group(); g.add(inner);
             if (variant === 'lean') inner.rotation.z = 0.06;
@@ -1333,6 +1497,13 @@ export function startBattle(renderer, opts, onEnd){
             inner.add(cone(11.5 * s, variant === 'lean' ? 20 * s : 34 * s, M.slate, 0, h + (variant === 'lean' ? 12 : 19) * s, 0, 4)); // spire
             inner.add(box(3.4 * s, 3.4 * s, 0.4, M.glass, 0, h * 0.62, 7.6 * s)); // clock face
             radius = 11 * s; hitY = h * 0.5;
+            const spireH = (variant === 'lean' ? 20 : 34) * s;
+            hitBoxes = [
+              { x: 0, y: h / 2, z: 0, hx: 7.5 * s, hy: h / 2, hz: 7.5 * s },
+              { x: 0, y: h + spireH * 0.18, z: 0, hx: 9.5 * s, hy: spireH * 0.18, hz: 9.5 * s },
+              { x: 0, y: h + spireH * 0.50, z: 0, hx: 6.2 * s, hy: spireH * 0.14, hz: 6.2 * s },
+              { x: 0, y: h + spireH * 0.78, z: 0, hx: 3.2 * s, hy: spireH * 0.12, hz: 3.2 * s },
+            ];
           }
           hp = 999999; label = 'TOWER';
           break;
@@ -1345,6 +1516,10 @@ export function startBattle(renderer, opts, onEnd){
           g.add(box(2 * s, 4 * s, 2 * s, M.dstone, w * 0.28, h + 4 * s, -d * 0.28)); // chimney
           for (let yy = 6; yy < h - 3; yy += 7) for (const xx of [-w * 0.26, w * 0.26]) g.add(box(2.2, 3, 0.4, M.glass, xx, yy, d / 2 + 0.1)); // windows
           radius = 10 * s; hitY = 10 * s; hp = 999999; label = 'TOWNHOUSE';
+          hitBoxes = [
+            { x: 0, y: h / 2, z: 0, hx: w / 2, hy: h / 2, hz: d / 2 },
+            { x: 0, y: h + 4.5 * s, z: 0, hx: w * 0.66, hy: 4.5 * s, hz: d * 0.66 },
+          ];
           break;
         }
         case 'cityblock': {
@@ -1398,12 +1573,15 @@ export function startBattle(renderer, opts, onEnd){
           radius = Math.max(w, d) * .47;
           hitY = slab + h * .5; hp = (1450 + h * 18) * Math.max(.72, s); big = h > 70;
           label = variant === 'civic' ? 'CIVIC BUILDING' : variant === 'apartment' ? 'APARTMENT BLOCK' : 'CITY BUILDING';
-          const hitR = Math.min(bodyW, bodyD) * .4;
-          hitSpheres = [
-            { x: 0, y: slab + h * .22, z: 0, r: hitR },
-            { x: 0, y: slab + h * .52, z: 0, r: hitR },
-            { x: 0, y: slab + h * .82, z: 0, r: hitR },
-          ];
+          if (variant === 'tower'){
+            const podiumH = Math.min(15 * s, h * 0.2), upperH = h - podiumH;
+            hitBoxes = [
+              { x: 0, y: slab + podiumH / 2, z: 0, hx: w / 2, hy: podiumH / 2 + slab, hz: d / 2 },
+              { x: 0, y: slab + podiumH + upperH / 2, z: 0, hx: bodyW / 2, hy: upperH / 2, hz: bodyD / 2 },
+            ];
+          } else {
+            hitBoxes = [{ x: 0, y: slab + h / 2, z: 0, hx: w / 2, hy: h / 2 + slab, hz: d / 2 }];
+          }
           break;
         }
         case 'cityroad': {
@@ -1433,32 +1611,63 @@ export function startBattle(renderer, opts, onEnd){
         case 'river': {
           const L = 340 * s;
           const w = new THREE.Mesh(new THREE.BoxGeometry(L, 1.2, 34 * s), M.water); w.position.set(0, -0.9, 0); g.add(w); // long axis = X (E-W)
-          for (const dz of [-1, 1]) g.add(box(L, 2.2, 3, M.rubble, 0, 0.4, dz * 18 * s)); // stone embankments
-          return { g, mode: 'decor' };
+          // Leave a real MS-scale break at the middle for the authored bridge/ford.
+          // The visible stone and the collider use the same two split segments.
+          const gap = 128, bankL = (L - gap) / 2, bankX = gap / 2 + bankL / 2;
+          for (const dz of [-1, 1]) for (const sx of [-1, 1])
+            g.add(box(bankL, 2.2, 3, M.rubble, sx * bankX, 0.4, dz * 18 * s));
+          radius = Math.hypot(L, 39 * s) / 2; hitY = 0.4; label = 'RIVER EMBANKMENT';
+          hitBoxes = [];
+          for (const side of [-1, 1]) for (const sx of [-1, 1])
+            hitBoxes.push({ x: sx * bankX, y: 0.4, z: side * 18 * s, hx: bankL / 2, hy: 1.5, hz: 1.5 * s });
+          break;
         }
         case 'rubble': {
           const R = 22 * s;
-          for (let i = 0; i < 14; i++){ const a = rng.next() * 7, d = rng.next() * R; g.add(ico(rng.range(1.4, 4) * s, M.rubble, Math.cos(a) * d, rng.range(0.4, 2.4) * s, Math.sin(a) * d, 0)); }
-          for (let i = 0; i < 5; i++){ const a = rng.next() * 7, d = rng.next() * R; const b = box(rng.range(3, 7) * s, rng.range(3, 6) * s, rng.range(3, 7) * s, M.dstone, Math.cos(a) * d, 1.5 * s, Math.sin(a) * d); b.rotation.set(rng.next(), rng.next() * 3, rng.next()); g.add(b); }
-          return { g, mode: 'decor' };
+          hitSpheres = []; hitBoxes = [];
+          for (let i = 0; i < 14; i++){
+            const a = rng.next() * 7, d = rng.next() * R, rr = rng.range(1.4, 4) * s;
+            const x = Math.cos(a) * d, y = rng.range(0.4, 2.4) * s, z = Math.sin(a) * d;
+            g.add(ico(rr, M.rubble, x, y, z, 0));
+            if (rr > 2.2) hitSpheres.push({ x, y, z, r: rr * 0.82 });
+          }
+          for (let i = 0; i < 5; i++){
+            const a = rng.next() * 7, d = rng.next() * R;
+            const bw = rng.range(3, 7) * s, bh = rng.range(3, 6) * s, bd = rng.range(3, 7) * s;
+            const x = Math.cos(a) * d, z = Math.sin(a) * d;
+            const b = box(bw, bh, bd, M.dstone, x, bh / 2, z); b.rotation.set(rng.next(), rng.next() * 3, rng.next()); g.add(b);
+            hitBoxes.push({ x, y: bh / 2, z, hx: bw / 2, hy: bh / 2, hz: bd / 2, rotY: b.rotation.y });
+          }
+          radius = R + 5 * s; hitY = 2.5 * s; label = 'RUBBLE';
+          break;
         }
         case 'treecluster': {
           const R = 42 * s;
+          hitBoxes = [];
           for (let i = 0; i < 16; i++){
             const a = rng.next() * 7, d = rng.next() * R, tx = Math.cos(a) * d, tz = Math.sin(a) * d, th = rng.range(10, 18);
             g.add(cyl(0.7, 1.1, th * 0.4, M.trunk, tx, th * 0.2, tz, 5));
             g.add(cone(rng.range(3.5, 5.5), th, rng.next() > 0.5 ? M.foliage : M.foliage2, tx, th * 0.55, tz, 6));
+            hitBoxes.push({ x: tx, y: th * 0.2, z: tz, hx: 1.1, hy: th * 0.2, hz: 1.1 });
           }
-          return { g, mode: 'decor' };
+          radius = R + 2; hitY = 5; label = 'TREES';
+          break;
         }
         case 'rockcluster': {
           const R = 28 * s;
-          for (let i = 0; i < 9; i++){ const a = rng.next() * 7, d = rng.next() * R; const r = rng.range(3, 9) * s; const e = ico(r, M.rubble, Math.cos(a) * d, r * 0.35, Math.sin(a) * d, 0); e.rotation.set(rng.next() * 3, rng.next() * 3, 0); g.add(e); }
-          return { g, mode: 'decor' };
+          hitSpheres = [];
+          for (let i = 0; i < 9; i++){
+            const a = rng.next() * 7, d = rng.next() * R, r = rng.range(3, 9) * s;
+            const x = Math.cos(a) * d, y = r * 0.35, z = Math.sin(a) * d;
+            const e = ico(r, M.rubble, x, y, z, 0); e.rotation.set(rng.next() * 3, rng.next() * 3, 0); g.add(e);
+            hitSpheres.push({ x, y, z, r: r * 0.82 });
+          }
+          radius = R + 9 * s; hitY = 4 * s; label = 'ROCKS';
+          break;
         }
         default: return { g, mode: 'decor' };
       }
-      return { g, mode: SOLID_KINDS.has(kind) ? 'solid' : DESTRUCT_KINDS.has(kind) ? 'destruct' : 'decor', radius, hitY, hp, big, label, hitSpheres };
+      return { g, mode: SOLID_KINDS.has(kind) ? 'solid' : DESTRUCT_KINDS.has(kind) ? 'destruct' : 'decor', radius, hitY, hp, big, label, hitSpheres, hitBoxes };
     }
 
     for (const st of map.structures){
@@ -1478,6 +1687,7 @@ export function startBattle(renderer, opts, onEnd){
         radius: r.radius, hitY: r.hitY, hp: r.hp, maxHp: r.hp, big: r.big, label: r.label,
         vel: new THREE.Vector3(), goal: null };
       if (r.hitSpheres) p.hitSpheres = r.hitSpheres;
+      if (r.hitBoxes) p.hitBoxes = r.hitBoxes;
       props.push(p);
     }
   }
@@ -1839,6 +2049,7 @@ export function startBattle(renderer, opts, onEnd){
   const hoverJetMatZ = new THREE.MeshBasicMaterial({ color: 0xffb45e, transparent: true, opacity: 0.9, depthWrite: false, blending: THREE.AdditiveBlending });
 
   const tmpV = new THREE.Vector3(), tmpV2 = new THREE.Vector3(), tmpV3 = new THREE.Vector3();
+  const cameraRayOrigin = new THREE.Vector3(), cameraRayDir = new THREE.Vector3();
 
   // ---------- multi-sphere hitboxes for big, non-spherical units (GAW carrier, landships) ----------
   // A unit's `hitSpheres` is an array of LOCAL {x,y,z,r} (x=right, y=up, z=forward/prow). fillWorldSpheres
@@ -1859,6 +2070,202 @@ export function startBattle(renderer, opts, onEnd){
     return n;
   }
   const hitSphereRadius = (unit, sphere) => sphere.r * (unit.hitSphereBody ? (unit.suit?.scale || 1) : 1);
+
+  // Collider primitives are stored in each prop's local space. These helpers are
+  // the one route used by fire, aiming, camera cover and physical movement, so a
+  // building cannot be solid to the player yet transparent to a shell (or vice versa).
+  const COLLIDER_CANDIDATE = {}, COLLIDER_HIT = {}, TERRAIN_HIT = {};
+  const WORLD_BOX = {};
+  function fillWorldBox(unit, box, out = WORLD_BOX){
+    const yaw = unit.root.rotation.y || 0, cy = Math.cos(yaw), sy = Math.sin(yaw);
+    const lx = box.x || 0, lz = box.z || 0;
+    out.x = unit.root.position.x + lx * cy + lz * sy;
+    out.y = unit.root.position.y + (box.y || 0);
+    out.z = unit.root.position.z - lx * sy + lz * cy;
+    out.hx = box.hx; out.hy = box.hy; out.hz = box.hz;
+    out.yaw = yaw + (box.rotY || 0);
+    return out;
+  }
+  function copyColliderHit(out, hit){
+    out.t = hit.t; out.x = hit.x; out.y = hit.y; out.z = hit.z;
+    out.nx = hit.nx; out.ny = hit.ny; out.nz = hit.nz;
+    out.inside = !!hit.inside;
+  }
+  function rayColliderHit(unit, origin, dir, maxT, out = COLLIDER_HIT, minT = 0){
+    let best = maxT + 1, found = false;
+    const boxes = unit.hitBoxes;
+    if (boxes?.length){
+      for (const box of boxes){
+        const wb = fillWorldBox(unit, box);
+        if (rayYawBox(
+          origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
+          wb.x, wb.y, wb.z, wb.hx, wb.hy, wb.hz, wb.yaw,
+          COLLIDER_CANDIDATE, minT, Math.min(maxT, best),
+        )){
+          best = COLLIDER_CANDIDATE.t; copyColliderHit(out, COLLIDER_CANDIDATE); found = true;
+        }
+      }
+    }
+    if (unit.hitSpheres?.length){
+      const yaw = unit.isProp ? unit.root.rotation.y : (unit.yaw ?? unit.root.rotation.y);
+      const n = fillWorldSpheres(unit, yaw);
+      for (let i = 0; i < n; i++){
+        const c = HS_SCRATCH[i], r = hitSphereRadius(unit, unit.hitSpheres[i]);
+        if (raySphere(
+          origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
+          c.x, c.y, c.z, r, COLLIDER_CANDIDATE, minT, Math.min(maxT, best),
+        )){
+          best = COLLIDER_CANDIDATE.t; copyColliderHit(out, COLLIDER_CANDIDATE); found = true;
+        }
+      }
+    }
+    if (!boxes?.length && !unit.hitSpheres?.length){
+      const c = unit.root.position;
+      const cy = c.y + (unit.isProp ? (unit.hitY || 0) : aimHeight(unit));
+      const r = unit.isProp ? unit.radius : (unit.air ? 6 + 6 * (unit.suit.scale || 1) : 7.5 * (unit.suit.scale || 1));
+      if (raySphere(
+        origin.x, origin.y, origin.z, dir.x, dir.y, dir.z,
+        c.x, cy, c.z, r, COLLIDER_CANDIDATE, minT, maxT,
+      )){
+        copyColliderHit(out, COLLIDER_CANDIDATE); found = true;
+      }
+    }
+    return found;
+  }
+  const CLOSEST_COLLIDER_POINT = new THREE.Vector3(), LOS_DIR = new THREE.Vector3();
+  function closestColliderPoint(unit, point, out = CLOSEST_COLLIDER_POINT){
+    let bestSq = Infinity, found = false;
+    const consider = (x, y, z) => {
+      const dx = point.x - x, dy = point.y - y, dz = point.z - z, d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < bestSq){ bestSq = d2; out.set(x, y, z); found = true; }
+    };
+    for (const box of unit.hitBoxes || []){
+      const wb = fillWorldBox(unit, box), cy = Math.cos(wb.yaw), sy = Math.sin(wb.yaw);
+      const rx = point.x - wb.x, rz = point.z - wb.z;
+      const lx = cy * rx - sy * rz, ly = point.y - wb.y, lz = sy * rx + cy * rz;
+      const qx = clamp(lx, -wb.hx, wb.hx), qy = clamp(ly, -wb.hy, wb.hy), qz = clamp(lz, -wb.hz, wb.hz);
+      consider(wb.x + cy * qx + sy * qz, wb.y + qy, wb.z - sy * qx + cy * qz);
+    }
+    if (unit.hitSpheres?.length){
+      const yaw = unit.isProp ? unit.root.rotation.y : (unit.yaw ?? unit.root.rotation.y);
+      const n = fillWorldSpheres(unit, yaw);
+      for (let i = 0; i < n; i++){
+        const c = HS_SCRATCH[i], r = hitSphereRadius(unit, unit.hitSpheres[i]);
+        const dx = point.x - c.x, dy = point.y - c.y, dz = point.z - c.z, d = Math.hypot(dx, dy, dz);
+        if (d <= r) consider(point.x, point.y, point.z);
+        else consider(c.x + dx * r / d, c.y + dy * r / d, c.z + dz * r / d);
+      }
+    }
+    if (!unit.hitBoxes?.length && !unit.hitSpheres?.length){
+      const c = unit.root.position, cy = c.y + (unit.isProp ? (unit.hitY || 0) : aimHeight(unit));
+      const r = unit.isProp ? unit.radius : (unit.air ? 6 + 6 * (unit.suit.scale || 1) : 7.5 * (unit.suit.scale || 1));
+      const dx = point.x - c.x, dy = point.y - cy, dz = point.z - c.z, d = Math.hypot(dx, dy, dz);
+      if (d <= r) consider(point.x, point.y, point.z);
+      else consider(c.x + dx * r / d, cy + dy * r / d, c.z + dz * r / d);
+    }
+    return found ? Math.sqrt(bestSq) : Infinity;
+  }
+  function hasSolidCoverBetween(from, to){
+    LOS_DIR.subVectors(to, from);
+    const distance = LOS_DIR.length();
+    if (distance <= 0.2) return false;
+    LOS_DIR.multiplyScalar(1 / distance);
+    const limit = distance - 0.12;
+    for (const prop of props){
+      if (!prop.alive) continue;
+      if (rayColliderHit(prop, from, LOS_DIR, limit, COLLIDER_HIT, 0.08)) return true;
+    }
+    return rayTerrainHit(from, LOS_DIR, limit, TERRAIN_HIT, 0.08, 5);
+  }
+  function rayTerrainHit(origin, dir, maxT, out = TERRAIN_HIT, minT = 0, step = 8){
+    if (!hfn || maxT < minT) return false;
+    let lo = minT;
+    const heightDelta = t => origin.y + dir.y * t
+      - groundY(origin.x + dir.x * t, origin.z + dir.z * t);
+    if (heightDelta(lo) <= 0){
+      out.t = lo; out.x = origin.x + dir.x * lo; out.y = origin.y + dir.y * lo; out.z = origin.z + dir.z * lo;
+      return true;
+    }
+    const steps = Math.max(1, Math.ceil((maxT - minT) / step));
+    for (let i = 1; i <= steps; i++){
+      const hi = minT + (maxT - minT) * i / steps;
+      const hiDelta = heightDelta(hi);
+      if (hiDelta <= 0){
+        let a = lo, b = hi;
+        for (let j = 0; j < 8; j++){
+          const mid = (a + b) * 0.5;
+          if (heightDelta(mid) <= 0) b = mid; else a = mid;
+        }
+        out.t = b; out.x = origin.x + dir.x * b; out.y = origin.y + dir.y * b; out.z = origin.z + dir.z * b;
+        return true;
+      }
+      lo = hi;
+    }
+    return false;
+  }
+  function staticCircleBlocked(x, z, radius, minY, maxY){
+    for (const prop of props){
+      if (!prop.alive || !prop.scenery) continue;
+      for (const box of prop.hitBoxes || []){
+        const wb = fillWorldBox(prop, box);
+        if (maxY <= wb.y - wb.hy || minY >= wb.y + wb.hy) continue;
+        if (circleYawRectPenetration(x, z, radius, wb.x, wb.z, wb.hx, wb.hz, wb.yaw)) return true;
+      }
+      if (prop.hitSpheres?.length){
+        const n = fillWorldSpheres(prop, prop.root.rotation.y);
+        for (let i = 0; i < n; i++){
+          const c = HS_SCRATCH[i], r = hitSphereRadius(prop, prop.hitSpheres[i]);
+          if (maxY <= c.y - r || minY >= c.y + r) continue;
+          if (Math.hypot(x - c.x, z - c.z) < radius + r) return true;
+        }
+      } else if (!prop.hitBoxes?.length && prop.radius){
+        const c = prop.root.position, cy = c.y + (prop.hitY || 0), r = prop.radius;
+        if (maxY > cy - r && minY < cy + r && Math.hypot(x - c.x, z - c.z) < radius + r) return true;
+      }
+    }
+    return false;
+  }
+  function staticObstacleBlocksSpawn(m, x, y, z){
+    const radius = bodyRadius(m), s = m.suit.scale || 1;
+    const bodyHeight = m.suit.dimensions?.height ? m.suit.dimensions.height * s
+      : m.suit.style === 'tank' ? 10 * s
+      : m.suit.style === 'guntank' || m.suit.style === 'crane' || m.suit.style === 'zakutank' ? 15 * s
+      : 16 * s;
+    return staticCircleBlocked(x, z, radius, y, y + bodyHeight);
+  }
+  function relocateBodyOutOfStatic(m){
+    if (SPACE || m.air || !m.alive) return false;
+    const originX = m.root.position.x, originZ = m.root.position.z;
+    const baseGround = groundY(originX, originZ), rest = m.suit.hover ? 3 : 0;
+    if (!staticObstacleBlocksSpawn(m, originX, baseGround + rest, originZ)) return false;
+    const hash = Math.sin(originX * 12.9898 + originZ * 78.233) * 43758.5453;
+    const baseAngle = (hash - Math.floor(hash)) * Math.PI * 2;
+    for (let ring = 1; ring <= 20; ring++){
+      const distance = 10 + ring * 8, spokes = 10 + ring * 2;
+      for (let i = 0; i < spokes; i++){
+        const angle = baseAngle + i / spokes * Math.PI * 2;
+        const x = originX + Math.cos(angle) * distance, z = originZ + Math.sin(angle) * distance;
+        const y = groundY(x, z) + rest;
+        if (staticObstacleBlocksSpawn(m, x, y, z)) continue;
+        m.root.position.set(x, y, z);
+        if (m.suit.troopCapacity && infantry?.units?.length){
+          const shiftX = x - originX, shiftZ = z - originZ;
+          for (const u of infantry.units){
+            if (!u.alive || u.team !== m.team || Math.hypot(u.x - originX, u.z - originZ) > 11) continue;
+            u.x += shiftX; u.z += shiftZ;
+          }
+        }
+        m._collisionPrev?.copy(m.root.position);
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // The initial deployment happens before props are assembled. Resolve it once
+  // now, then use the same deterministic relocation for every later reinforcement.
+  for (const m of mechs) relocateBodyOutOfStatic(m);
+  staticCollidersReady = true;
 
   // Vertical offset from a unit's root to its CENTRE OF MASS — where every weapon, lock, lead-solve and
   // reticle should aim. Humanoid MS sit ~9·scale up (torso). AIRCRAFT mass-centres sit far lower
@@ -2201,12 +2608,15 @@ export function startBattle(renderer, opts, onEnd){
       } else {
         d = m.root.position.distanceTo(pos);
       }
-      if (d < r * 2.4) damage(m, dmg * clamp(1 - d / (r * 2.4), 0.15, 1), pos, attacker, false, weaponName);
+      const reach = r * 2.4;
+      const targetPoint = tmpV2.copy(m.root.position); targetPoint.y += aimHeight(m);
+      if (d < reach && !hasSolidCoverBetween(pos, targetPoint))
+        damage(m, dmg * clamp(1 - d / reach, 0.15, 1), pos, attacker, false, weaponName);
     }
     for (const p of props){
       if (!p.alive) continue;
-      const d = p.root.position.distanceTo(pos);
-      if (d < r * 2.4 + p.radius) damageProp(p, dmg * clamp(1 - d / (r * 2.4 + p.radius), 0.15, 1), pos, attacker, weaponName);
+      const reach = r * 2.4, d = closestColliderPoint(p, pos, CLOSEST_COLLIDER_POINT);
+      if (d < reach) damageProp(p, dmg * clamp(1 - d / reach, 0.15, 1), pos, attacker, weaponName);
     }
     killSoldiersNear(pos, r * 1.8);
   }
@@ -2545,14 +2955,6 @@ export function startBattle(renderer, opts, onEnd){
     pvpListenersAttached = false;
   }
 
-  // segment-sphere intersection for fast projectiles
-  function segHit(p0, dirN, len, c, r){
-    tmpV3.subVectors(c, p0);
-    const tca = tmpV3.dot(dirN);
-    if (tca < -r || tca > len + r) return false;
-    return tmpV3.lengthSq() - tca * tca <= r * r;
-  }
-
   // ---------- input ----------
   const keys = new Set();
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
@@ -2672,12 +3074,15 @@ export function startBattle(renderer, opts, onEnd){
 
   function resolvePlayerSlash(m, attack){
     const aim = m.swingAim || new THREE.Vector3(Math.sin(m.yaw), 0, Math.cos(m.yaw));
+    const bladeOrigin = m.root.position.clone(); bladeOrigin.y += 8 * (m.suit.scale || 1);
     let hits = 0;
     for (const enemy of mechs){
       if (enemy.team === m.team || !enemy.alive) continue;
       tmpV2.subVectors(enemy.root.position, m.root.position);
       const d = tmpV2.length();
-      if (d < attack.range && d > 0.001 && tmpV2.multiplyScalar(1 / d).dot(aim) > attack.minDot){
+      const enemyAim = tmpV3.copy(enemy.root.position); enemyAim.y += aimHeight(enemy);
+      if (d < attack.range && d > 0.001 && tmpV2.multiplyScalar(1 / d).dot(aim) > attack.minDot
+        && !hasSolidCoverBetween(bladeOrigin, enemyAim)){
         damage(enemy, m.suit.saber.dmg * attack.dmg,
           enemy.root.position.clone().setY(enemy.root.position.y + 10 * enemy.suit.scale), m, true);
         hits++;
@@ -2685,10 +3090,11 @@ export function startBattle(renderer, opts, onEnd){
     }
     for (const p of props){
       if (p.team === m.team || !p.alive) continue;
-      tmpV2.subVectors(p.root.position, m.root.position);
+      const surfaceDistance = closestColliderPoint(p, bladeOrigin, CLOSEST_COLLIDER_POINT);
+      tmpV2.subVectors(CLOSEST_COLLIDER_POINT, m.root.position);
       const d = tmpV2.length();
-      if (d < attack.range + p.radius && d > 0.001 && tmpV2.multiplyScalar(1 / d).dot(aim) > attack.propDot){
-        damageProp(p, m.suit.saber.dmg * attack.dmg, p.root.position, m, m.suit.saber.name);
+      if (surfaceDistance < attack.range && d > 0.001 && tmpV2.multiplyScalar(1 / d).dot(aim) > attack.propDot){
+        damageProp(p, m.suit.saber.dmg * attack.dmg, CLOSEST_COLLIDER_POINT, m, m.suit.saber.name);
         hits++;
       }
     }
@@ -2796,12 +3202,14 @@ export function startBattle(renderer, opts, onEnd){
     for (const e of mechs){
       if (!e.alive || e.isPlayer || e.team === player.team) continue;
       const d = e.root.position.distanceTo(pos);
-      if (d < R) damage(e, dmg * clamp(1 - d / R, 0.28, 1), e.root.position.clone().setY(e.root.position.y + 6), player, false, 'GROUND STOMP');
+      const targetPoint = tmpV2.copy(e.root.position); targetPoint.y += 6;
+      if (d < R && !hasSolidCoverBetween(pos, targetPoint))
+        damage(e, dmg * clamp(1 - d / R, 0.28, 1), targetPoint.clone(), player, false, 'GROUND STOMP');
     }
     for (const p of props){
       if (!p.alive || p.team === player.team) continue;
-      const d = p.root.position.distanceTo(pos);
-      if (d < R + p.radius) damageProp(p, dmg * clamp(1 - d / (R + p.radius), 0.28, 1), pos, player, 'GROUND STOMP');
+      const d = closestColliderPoint(p, pos, CLOSEST_COLLIDER_POINT);
+      if (d < R) damageProp(p, dmg * clamp(1 - d / R, 0.28, 1), CLOSEST_COLLIDER_POINT, player, 'GROUND STOMP');
     }
     killSoldiersNear(pos, R * 1.3);
     camShake = Math.min(2.2, camShake + 1.3);
@@ -3497,27 +3905,14 @@ export function startBattle(renderer, opts, onEnd){
     let best = Infinity;
     for (const m of mechs){
       if (!m.alive || m.isPlayer) continue;
-      const c = tmpV.copy(m.root.position); c.y += aimHeight(m);
-      const oc = tmpV2.subVectors(c, origin), tca = oc.dot(dir);
-      if (tca < 10) continue;
-      const r = 8 * m.suit.scale, d2 = oc.lengthSq() - tca * tca;
-      if (d2 < r * r){ const hitT = tca - Math.sqrt(r * r - d2); if (hitT < best) best = hitT; } // ray ENTRY point, not centre
+      if (rayColliderHit(m, origin, dir, best === Infinity ? 4000 : best, COLLIDER_HIT, 10)) best = COLLIDER_HIT.t;
     }
     for (const pr of props){
       if (!pr.alive) continue;
-      const c = tmpV.copy(pr.root.position); c.y += pr.hitY;
-      const oc = tmpV2.subVectors(c, origin), tca = oc.dot(dir);
-      if (tca < 10) continue;
-      const d2 = oc.lengthSq() - tca * tca;
-      if (d2 < pr.radius * pr.radius){ const hitT = tca - Math.sqrt(pr.radius * pr.radius - d2); if (hitT < best) best = hitT; }
+      if (rayColliderHit(pr, origin, dir, best === Infinity ? 4000 : best, COLLIDER_HIT, 10)) best = COLLIDER_HIT.t;
     }
-    if (hfn){ // the crosshair meets the ground: march the ray, only as far as the nearest hull hit (if any)
-      const lim = best === Infinity ? 4000 : best;
-      for (let t = 30; t < lim; t += 18){
-        const x = origin.x + dir.x * t, y = origin.y + dir.y * t, z = origin.z + dir.z * t;
-        if (y < groundY(x, z)){ best = t; break; }
-      }
-    }
+    const terrainLimit = best === Infinity ? 4000 : best;
+    if (rayTerrainHit(origin, dir, terrainLimit, TERRAIN_HIT, 10, 18)) best = TERRAIN_HIT.t;
     if (best === Infinity){ // aiming at open sky with no terrain underneath: drop it on the ground ahead
       const gd = 900, fx = origin.x + Math.sin(camYaw) * gd, fz = origin.z + Math.cos(camYaw) * gd;
       return new THREE.Vector3(fx, hfn ? groundY(fx, fz) : 0, fz);
@@ -3551,7 +3946,7 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // The exact world point under the crosshair: cast the camera's center ray
-  // against enemy hit-spheres and the terrain; fall back to a far point.
+    // against exact enemy/prop collider primitives and the terrain; fall back to a far point.
   function crosshairPoint(){
     const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
     const dir = new THREE.Vector3(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
@@ -3559,28 +3954,13 @@ export function startBattle(renderer, opts, onEnd){
     let best = 2000;
     for (const m of mechs){
       if (!m.alive || m.isPlayer) continue;
-      const c = tmpV.copy(m.root.position); c.y += aimHeight(m);
-      const oc = tmpV2.subVectors(c, origin);
-      const tca = oc.dot(dir);
-      if (tca < 10 || tca > best) continue;
-      const d2 = oc.lengthSq() - tca * tca;
-      const r = 7.5 * m.suit.scale;
-      if (d2 < r * r) best = tca;
+      if (rayColliderHit(m, origin, dir, best, COLLIDER_HIT, 10)) best = COLLIDER_HIT.t;
     }
     for (const pr of props){
       if (!pr.alive) continue;
-      const c = tmpV.copy(pr.root.position); c.y += pr.hitY;
-      const oc = tmpV2.subVectors(c, origin);
-      const tca = oc.dot(dir);
-      if (tca < 10 || tca > best) continue;
-      if (oc.lengthSq() - tca * tca < pr.radius * pr.radius) best = tca;
+      if (rayColliderHit(pr, origin, dir, best, COLLIDER_HIT, 10)) best = COLLIDER_HIT.t;
     }
-    if (hfn){ // terrain intersection by coarse march
-      for (let t = 30; t < best; t += 25){
-        const x = origin.x + dir.x * t, y = origin.y + dir.y * t, z = origin.z + dir.z * t;
-        if (y < groundY(x, z)){ best = Math.min(best, t); break; }
-      }
-    }
+    if (rayTerrainHit(origin, dir, best, TERRAIN_HIT, 10, 20)) best = TERRAIN_HIT.t;
     return origin.clone().addScaledVector(dir, best);
   }
 
@@ -4327,63 +4707,42 @@ export function startBattle(renderer, opts, onEnd){
           p.vel.copy(cur).multiplyScalar(spd);
         }
       }
+      if (!SPACE && p.splash) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
       const stepLen = p.vel.length() * dt;
       const dirN = tmpV.copy(p.vel).normalize();
-      let hit = false;
+      let hit = false, hitKind = null, hitTarget = null, bestT = stepLen;
+
+      // Find the globally nearest time-of-impact across suits, obstacles and
+      // terrain. The old array-order pass could damage a suit behind a wall
+      // because suits were checked before scenery, even when the wall was nearer.
       for (const m of mechs){
         if (!m.alive || m === p.owner || m.team === p.team) continue;
-        let c = null;
-        if (m.hitSpheres){ // big airframes (GAW): test the spread of spheres covering wings/length
-          const n = fillWorldSpheres(m, m.yaw);
-          for (let i = 0; i < n; i++) if (segHit(p.pos, dirN, stepLen, HS_SCRATCH[i], hitSphereRadius(m, m.hitSpheres[i]))){ c = HS_SCRATCH[i]; break; }
-        } else {
-          const cc = tmpV2.copy(m.root.position); cc.y += aimHeight(m); // centre the hitbox on the COM the aim targets
-          if (segHit(p.pos, dirN, stepLen, cc, m.air ? (6 + 6 * m.suit.scale) : 7.5 * m.suit.scale)) c = cc; // fighters are wide
-        }
-        if (c){
-          const hp = p.pos.clone().addScaledVector(dirN, Math.min(stepLen, p.pos.distanceTo(c)));
-          if (p.splash){
-            explosion(hp, p.splash, clamp(380 / hp.distanceTo(player.root.position), 0.05, 0.3));
-            if (!p.networkGhost) splashDamage(hp, p.splash, p.dmg, p.owner, p.weaponName);
-          } else if (!p.networkGhost) damage(m, p.dmg, hp, p.owner, false, p.weaponName);
-          hit = true; break;
+        if (rayColliderHit(m, p.pos, dirN, bestT, COLLIDER_HIT)){
+          bestT = COLLIDER_HIT.t; hitKind = 'mech'; hitTarget = m;
         }
       }
-      if (!hit) for (const pr of props){
-        if (!pr.alive || pr.team === p.team) continue;
-        let c = null;
-        if (pr.hitSpheres){ // landships: spheres strung along the hull instead of one fat ball
-          const n = fillWorldSpheres(pr, pr.root.rotation.y);
-          for (let i = 0; i < n; i++) if (segHit(p.pos, dirN, stepLen, HS_SCRATCH[i], pr.hitSpheres[i].r)){ c = HS_SCRATCH[i]; break; }
-        } else {
-          const cc = tmpV2.copy(pr.root.position); cc.y += pr.hitY;
-          if (segHit(p.pos, dirN, stepLen, cc, pr.radius)) c = cc;
-        }
-        if (c){
-          const hp = p.pos.clone().addScaledVector(dirN, Math.min(stepLen, p.pos.distanceTo(c)));
-          if (p.splash){
-            explosion(hp, p.splash, clamp(380 / hp.distanceTo(player.root.position), 0.05, 0.3));
-            if (!p.networkGhost) splashDamage(hp, p.splash, p.dmg, p.owner, p.weaponName);
-          } else if (!p.networkGhost) damageProp(pr, p.dmg, hp, p.owner, p.weaponName);
-          hit = true; break;
+      for (const pr of props){
+        if (!pr.alive || pr === p.owner) continue;
+        if (rayColliderHit(pr, p.pos, dirN, bestT, COLLIDER_HIT)){
+          bestT = COLLIDER_HIT.t; hitKind = 'prop'; hitTarget = pr;
         }
       }
-      if (!SPACE && p.splash) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // artillery lobs hard; bombs drop; shells barely arc
-      // terrain is solid: march the travel segment so fast rounds can't tunnel through ridges
-      if (!hit && hfn){
-        const steps = Math.max(1, Math.ceil(stepLen / 8));
-        for (let s = 1; s <= steps; s++){
-          tmpV2.copy(p.pos).addScaledVector(p.vel, dt * s / steps);
-          if (tmpV2.y < groundY(tmpV2.x, tmpV2.z)){
-            p.pos.copy(tmpV2);
-            if (p.splash){
-              explosion(p.pos, p.splash, clamp(380 / p.pos.distanceTo(player.root.position), 0.04, 0.25));
-              if (!p.networkGhost) splashDamage(p.pos, p.splash, p.dmg, p.owner, p.weaponName);
-            }
-            if (!p.networkGhost) killSoldiersNear(p.pos, p.splash ? p.splash * 1.6 : 3);
-            hit = true; break;
-          }
+      if (rayTerrainHit(p.pos, dirN, bestT, TERRAIN_HIT, 0, 8)){
+        bestT = TERRAIN_HIT.t; hitKind = 'terrain'; hitTarget = null;
+      }
+
+      if (hitKind){
+        p.pos.addScaledVector(dirN, bestT);
+        if (p.splash){
+          explosion(p.pos, p.splash, clamp(380 / p.pos.distanceTo(player.root.position), 0.04, 0.3));
+          if (!p.networkGhost) splashDamage(p.pos, p.splash, p.dmg, p.owner, p.weaponName);
+        } else if (!p.networkGhost && hitKind === 'mech'){
+          damage(hitTarget, p.dmg, p.pos, p.owner, false, p.weaponName);
+        } else if (!p.networkGhost && hitKind === 'prop' && hitTarget.team !== p.team){
+          damageProp(hitTarget, p.dmg, p.pos, p.owner, p.weaponName);
         }
+        if (!p.networkGhost && hitKind === 'terrain') killSoldiersNear(p.pos, p.splash ? p.splash * 1.6 : 3);
+        hit = true;
       }
       if (!hit) p.pos.addScaledVector(p.vel, dt);
       if (hit || p.life <= 0){
@@ -4637,9 +4996,15 @@ export function startBattle(renderer, opts, onEnd){
         continue;
       }
       tmpV.normalize();
-      p.root.position.addScaledVector(tmpV, p.speed * dt);
-      p.root.rotation.y = Math.atan2(tmpV.x, tmpV.z);
-      if (hfn && !SPACE) p.root.position.y = groundY(p.root.position.x, p.root.position.z);
+      const baseYaw = Math.atan2(tmpV.x, tmpV.z), step = p.speed * dt;
+      let moved = false;
+      for (const turn of [0, 0.55, -0.55, 1.05, -1.05]){
+        const yaw = baseYaw + turn, nx = p.root.position.x + Math.sin(yaw) * step, nz = p.root.position.z + Math.cos(yaw) * step;
+        const ny = hfn && !SPACE ? groundY(nx, nz) : p.root.position.y;
+        if (!SPACE && staticCircleBlocked(nx, nz, p.kind === 'truck' ? 4 : Math.min(12, p.radius), ny, ny + 7)) continue;
+        p.root.position.set(nx, ny, nz); p.root.rotation.y = yaw; moved = true; break;
+      }
+      if (!moved) p.root.rotation.y = baseYaw;
     }
   }
 
@@ -4881,6 +5246,26 @@ export function startBattle(renderer, opts, onEnd){
       desired.y += 21 - sp * 5;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 2.5);
       camera.position.lerp(desired, started ? Math.min(1, 11 * dt) : 1);
+    }
+
+    // Third-person cameras also respect the same obstacle hulls. Pull the eye in
+    // front of the nearest wall instead of letting the view drift through a city
+    // block while the mobile suit itself remains correctly blocked outside.
+    if (!firstPerson && player.alive){
+      cameraRayOrigin.copy(p);
+      cameraRayOrigin.y += player.air ? aimHeight(player) : player.suit.vehicle ? 1.8 : 11 * (player.suit.scale || 1);
+      cameraRayDir.subVectors(camera.position, cameraRayOrigin);
+      const cameraDistance = cameraRayDir.length();
+      if (cameraDistance > 0.1){
+        cameraRayDir.multiplyScalar(1 / cameraDistance);
+        let nearest = cameraDistance;
+        for (const pr of props){
+          if (!pr.alive) continue;
+          if (rayColliderHit(pr, cameraRayOrigin, cameraRayDir, nearest, COLLIDER_HIT, 0.05) && !COLLIDER_HIT.inside)
+            nearest = COLLIDER_HIT.t;
+        }
+        if (nearest < cameraDistance) camera.position.copy(cameraRayOrigin).addScaledVector(cameraRayDir, Math.max(0.5, nearest - 0.65));
+      }
     }
 
     // cockpit weapon: sway with motion, kick on fire (mobile suits only — not when flying a plane)
@@ -5139,6 +5524,7 @@ export function startBattle(renderer, opts, onEnd){
   // test is 3D (a jet 30m overhead won't shove a mech below it), but on the ground
   // the push is horizontal so units stay on the deck instead of being launched/buried.
   const CELL = 16;
+  const MOVE_HIT = {}, PENETRATION_HIT = {};
   function bodyRadius(m){
     const s = m.suit.scale || 1, st = m.suit.style;
     if (Number.isFinite(m.suit.collisionRadius)) return m.suit.collisionRadius * s;
@@ -5150,12 +5536,179 @@ export function startBattle(renderer, opts, onEnd){
     if (st === 'acguy' || st === 'dom') return 4.6 * s;
     return 4.0 * s;                            // humanoid MS / gundam / gm / zaku / etc.
   }
+  const groundVehicle = m => !!m.suit.vehicle || m.suit.style === 'tank' || m.suit.style === 'apc';
+  function bodyVerticalBounds(m, rootY, out){
+    const s = m.suit.scale || 1;
+    if (m.air){ const half = Math.max(m._r || bodyRadius(m), 3 * s); out.min = rootY - half; out.max = rootY + half; return out; }
+    const height = m.suit.dimensions?.height ? m.suit.dimensions.height * s
+      : m.suit.style === 'tank' ? 10 * s
+      : m.suit.style === 'guntank' || m.suit.style === 'crane' || m.suit.style === 'zakutank' ? 15 * s
+      : 16 * s; // collision hull excludes antenna tips, so an 18 m MS still clears authored gates
+    out.min = rootY; out.max = rootY + height;
+    return out;
+  }
+  const BODY_BOUNDS = {};
+  function bodyOverlapsY(m, rootY, minY, maxY){
+    const b = bodyVerticalBounds(m, rootY, BODY_BOUNDS);
+    return b.max > minY + 0.001 && b.min < maxY - 0.001;
+  }
+  function cancelInto(m, nx, ny, nz){
+    const vn = m.vel.x * nx + m.vel.y * ny + m.vel.z * nz;
+    if (vn < 0){ m.vel.x -= nx * vn; m.vel.y -= ny * vn; m.vel.z -= nz * vn; }
+  }
+  function applySweptContact(m, hit, start, end, threeD = false){
+    const dx = end.x - start.x, dy = threeD ? end.y - start.y : 0, dz = end.z - start.z;
+    const travel = Math.hypot(dx, dy, dz);
+    const t = Math.max(0, hit.t - (travel > 0 ? 0.01 / travel : 0));
+    let rx = dx * (1 - t), ry = dy * (1 - t), rz = dz * (1 - t);
+    const inward = rx * hit.nx + ry * (hit.ny || 0) + rz * hit.nz;
+    if (inward < 0){ rx -= hit.nx * inward; ry -= (hit.ny || 0) * inward; rz -= hit.nz * inward; }
+    m.root.position.x = start.x + dx * t + rx + hit.nx * 0.01;
+    if (threeD) m.root.position.y = start.y + dy * t + ry + (hit.ny || 0) * 0.01;
+    m.root.position.z = start.z + dz * t + rz + hit.nz * 0.01;
+    cancelInto(m, hit.nx, threeD ? (hit.ny || 0) : 0, hit.nz);
+  }
+  function enforceTerrainSlope(m){
+    if (SPACE || !hfn || m.air || !m._collisionPrev) return;
+    const start = m._collisionPrev, end = m.root.position;
+    const dx = end.x - start.x, dz = end.z - start.z, distance = Math.hypot(dx, dz);
+    if (distance < 0.001) return;
+    const oldGround = groundY(start.x, start.z);
+    const restOffset = m.suit.hover ? 3 : 0;
+    const oldClearance = start.y - oldGround - restOffset;
+    // A suit already in a real jump/flight arc clears the ridge instead of being
+    // treated as a ground circle. Hover travel still follows and collides with it.
+    if (!groundVehicle(m) && oldClearance > 5 && !m.hovering && (m.groundHoverBlend || 0) < 0.15) return;
+    const hoverTravel = !!m.hovering || (m.groundHoverBlend || 0) > 0.15;
+    const grade = groundVehicle(m) ? 0.62 : hoverTravel ? 1.35 : 1.05;
+    const stepHeight = groundVehicle(m) ? 0.45 : hoverTravel ? 1.15 : 0.8;
+    const pathPassable = (tx, tz) => {
+      const pdx = tx - start.x, pdz = tz - start.z, pathLength = Math.hypot(pdx, pdz);
+      const samples = Math.max(1, Math.ceil(pathLength / 2));
+      for (let i = 1; i <= samples; i++){
+        const t = i / samples;
+        const climb = groundY(start.x + pdx * t, start.z + pdz * t) - oldGround;
+        if (climb > stepHeight + pathLength * t * grade) return false;
+      }
+      return true;
+    };
+    if (pathPassable(end.x, end.z)) return;
+
+    const canX = pathPassable(end.x, start.z);
+    const canZ = pathPassable(start.x, end.z);
+    if (canX && (!canZ || Math.abs(dx) >= Math.abs(dz))){ end.z = start.z; }
+    else if (canZ){ end.x = start.x; }
+    else { end.x = start.x; end.z = start.z; }
+    const correctedGround = groundY(end.x, end.z);
+    end.y = correctedGround + restOffset + Math.max(0, oldClearance);
+    const forwardSpeed = m.vel.x * (dx / distance) + m.vel.z * (dz / distance);
+    if (forwardSpeed > 0){ m.vel.x -= dx / distance * forwardSpeed; m.vel.z -= dz / distance * forwardSpeed; }
+  }
+  function collideBodyWithSphere(m, cx, cy, cz, sphereRadius){
+    const start = m._collisionPrev || m.root.position, end = m.root.position;
+    const radius = sphereRadius + m._r;
+    if (SPACE){
+      const startInside = (start.x - cx) ** 2 + (start.y - cy) ** 2 + (start.z - cz) ** 2 < radius * radius;
+      if (!startInside && segmentSphere(start.x, start.y, start.z, end.x, end.y, end.z, cx, cy, cz, radius, MOVE_HIT))
+        applySweptContact(m, MOVE_HIT, start, end, true);
+      const dx = end.x - cx, dy = end.y - cy, dz = end.z - cz, d = Math.hypot(dx, dy, dz);
+      if (d < radius){
+        const inv = d > 0.0001 ? 1 / d : 0, nx = d > 0.0001 ? dx * inv : 1, ny = d > 0.0001 ? dy * inv : 0, nz = d > 0.0001 ? dz * inv : 0;
+        const push = radius - d + 0.01;
+        end.x += nx * push; end.y += ny * push; end.z += nz * push;
+        cancelInto(m, nx, ny, nz);
+      }
+      return;
+    }
+
+    const sx = start.x - cx, sz = start.z - cz;
+    const startInside = sx * sx + sz * sz < radius * radius;
+    if (!startInside && segmentSphere(start.x, 0, start.z, end.x, 0, end.z, cx, 0, cz, radius, MOVE_HIT)){
+      const contactY = start.y + (end.y - start.y) * MOVE_HIT.t;
+      if (bodyOverlapsY(m, contactY, cy - sphereRadius, cy + sphereRadius)) applySweptContact(m, MOVE_HIT, start, end, false);
+    }
+    if (!bodyOverlapsY(m, end.y, cy - sphereRadius, cy + sphereRadius)) return;
+    let dx = end.x - cx, dz = end.z - cz, d = Math.hypot(dx, dz);
+    if (d >= radius) return;
+    if (d < 0.0001){
+      dx = start.x - end.x; dz = start.z - end.z; d = Math.hypot(dx, dz);
+      if (d < 0.0001){ dx = 1; dz = 0; d = 1; }
+    }
+    const nx = dx / d, nz = dz / d, push = radius - Math.hypot(end.x - cx, end.z - cz) + 0.01;
+    end.x += nx * push; end.z += nz * push;
+    cancelInto(m, nx, 0, nz);
+  }
+  function pushOutOfExpandedSpaceBox(m, wb){
+    const p = m.root.position, hx = wb.hx + m._r, hy = wb.hy + m._r, hz = wb.hz + m._r;
+    const cy = Math.cos(wb.yaw), sy = Math.sin(wb.yaw), rx = p.x - wb.x, rz = p.z - wb.z;
+    const lx = cy * rx - sy * rz, ly = p.y - wb.y, lz = sy * rx + cy * rz;
+    if (Math.abs(lx) > hx || Math.abs(ly) > hy || Math.abs(lz) > hz) return;
+    const fx = hx - Math.abs(lx), fy = hy - Math.abs(ly), fz = hz - Math.abs(lz);
+    let lnx = lx < 0 ? -1 : 1, lny = 0, lnz = 0, push = fx;
+    if (fy < push){ lnx = 0; lny = ly < 0 ? -1 : 1; push = fy; }
+    if (fz < push){ lnx = 0; lny = 0; lnz = lz < 0 ? -1 : 1; push = fz; }
+    const nx = cy * lnx + sy * lnz, nz = -sy * lnx + cy * lnz;
+    p.x += nx * (push + 0.01); p.y += lny * (push + 0.01); p.z += nz * (push + 0.01);
+    cancelInto(m, nx, lny, nz);
+  }
+  function collideBodyWithBox(m, wb){
+    const start = m._collisionPrev || m.root.position, end = m.root.position;
+    if (SPACE){
+      if (segmentYawBox(
+        start.x, start.y, start.z, end.x, end.y, end.z,
+        wb.x, wb.y, wb.z, wb.hx + m._r, wb.hy + m._r, wb.hz + m._r, wb.yaw, MOVE_HIT,
+      )) applySweptContact(m, MOVE_HIT, start, end, true);
+      pushOutOfExpandedSpaceBox(m, wb);
+      return;
+    }
+
+    // Resolve actual vertical crossings first. A descending suit can land on a
+    // roof; an ascending suit bumps the underside. Horizontal blocking is based
+    // on the lower hull, so a gate lintel does not behave like an invisible wall.
+    const boxBottom = wb.y - wb.hy, boxTop = wb.y + wb.hy;
+    const sb = bodyVerticalBounds(m, start.y, BODY_BOUNDS), startMin = sb.min, startMax = sb.max;
+    const eb = bodyVerticalBounds(m, end.y, BODY_BOUNDS), endMin = eb.min, endMax = eb.max;
+    const footprintAtEnd = circleYawRectPenetration(
+      end.x, end.z, m._r, wb.x, wb.z, wb.hx, wb.hz, wb.yaw, PENETRATION_HIT,
+    );
+    if (footprintAtEnd && end.y < start.y && startMin >= boxTop - 0.05 && endMin < boxTop){
+      end.y += boxTop - endMin;
+      if (m.vel.y < 0) m.vel.y = 0;
+    } else if (footprintAtEnd && end.y > start.y && startMax <= boxBottom + 0.05 && endMax > boxBottom){
+      end.y -= endMax - boxBottom;
+      if (m.vel.y > 0) m.vel.y = 0;
+    }
+    const currentBounds = bodyVerticalBounds(m, end.y, BODY_BOUNDS);
+    const lowerHullTop = currentBounds.min + Math.min(4 * (m.suit.scale || 1), (currentBounds.max - currentBounds.min) * 0.3);
+    if (boxBottom >= lowerHullTop) return;
+
+    const startTouches = circleYawRectPenetration(
+      start.x, start.z, m._r, wb.x, wb.z, wb.hx, wb.hz, wb.yaw, PENETRATION_HIT,
+    );
+    const startEmbedded = startTouches && (PENETRATION_HIT.inside || PENETRATION_HIT.depth > 0.0001);
+    if (!startEmbedded && sweepCircleYawRect(
+      start.x, start.z, end.x - start.x, end.z - start.z, m._r,
+      wb.x, wb.z, wb.hx, wb.hz, wb.yaw, MOVE_HIT,
+    )){
+      const contactY = start.y + (end.y - start.y) * MOVE_HIT.t;
+      if (bodyOverlapsY(m, contactY, wb.y - wb.hy, wb.y + wb.hy)) applySweptContact(m, MOVE_HIT, start, end, false);
+    }
+    if (!bodyOverlapsY(m, end.y, wb.y - wb.hy, wb.y + wb.hy)) return;
+    if (circleYawRectPenetration(
+      end.x, end.z, m._r, wb.x, wb.z, wb.hx, wb.hz, wb.yaw, PENETRATION_HIT,
+    )){
+      end.x += PENETRATION_HIT.nx * (PENETRATION_HIT.depth + 0.01);
+      end.z += PENETRATION_HIT.nz * (PENETRATION_HIT.depth + 0.01);
+      cancelInto(m, PENETRATION_HIT.nx, 0, PENETRATION_HIT.nz);
+    }
+  }
   function resolveCollisions(dt){
     collisionGrid.clear();
     const live = [];
     for (const m of mechs){
       if (!m.alive) continue;
       m._ci = live.length; m._r = bodyRadius(m); live.push(m);
+      enforceTerrainSlope(m);
       const key = Math.floor(m.root.position.x / CELL) + ',' + Math.floor(m.root.position.z / CELL);
       let cell = collisionGrid.get(key);
       if (!cell){ cell = []; collisionGrid.set(key, cell); }
@@ -5178,7 +5731,14 @@ export function startBattle(renderer, opts, onEnd){
             if (dx * dx + dy * dy + dz * dz >= minD * minD) continue;
             // the player carries more "mass" so grunts give way without shoving the player around
             let wa = 0.5, wb = 0.5;
-            if (a.isPlayer){ wa = 0.25; wb = 0.75; } else if (b.isPlayer){ wa = 0.75; wb = 0.25; }
+            if (PVP && (a.networkRemote || b.networkRemote)){
+              // Each peer owns only its local pilot. Treat the network proxy as
+              // kinematic so both peers push their own authoritative body, rather
+              // than applying opposite 25/75 player-mass splits.
+              if (a.networkRemote){ wa = 0; wb = 1; }
+              else { wa = 1; wb = 0; }
+            } else if (a.isPlayer){ wa = 0.25; wb = 0.75; }
+            else if (b.isPlayer){ wa = 0.75; wb = 0.25; }
             let nx, ny = 0, nz, overlap;
             if (SPACE){
               const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001;
@@ -5200,38 +5760,34 @@ export function startBattle(renderer, opts, onEnd){
           }
         }
     }
-    // --- mech vs solid props (bases, depots, capital ships): push the mech out, prop holds ---
-    const cap = MAXPUSH * 2;
-    const pushOut = (m, cx, cy, cz, sr) => {       // shove mech m out of a solid sphere centred at (cx,cy,cz)
-      const pm = m.root.position, vm = m.vel, minD = sr + m._r;
-      const dx = pm.x - cx, dy = pm.y - cy, dz = pm.z - cz;
-      if (dx * dx + dy * dy + dz * dz >= minD * minD) return;
-      if (SPACE){
-        const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001;
-        const push = Math.min(minD - d, cap), nx = dx / d, ny = dy / d, nz = dz / d;
-        pm.x += nx * push; pm.y += ny * push; pm.z += nz * push;
-        const vn = vm.x * nx + vm.y * ny + vm.z * nz;
-        if (vn < 0){ vm.x -= nx * vn; vm.y -= ny * vn; vm.z -= nz * vn; }
-      } else {
-        let dh = Math.hypot(dx, dz), ex = dx, ez = dz;
-        if (dh < 0.001){ ex = 1; ez = 0; dh = 1; }
-        const overlap = minD - dh;
-        if (overlap <= 0) return;
-        const push = Math.min(overlap, cap), nx = ex / dh, nz = ez / dh;
-        pm.x += nx * push; pm.z += nz * push;
-        const vn = vm.x * nx + vm.z * nz;
-        if (vn < 0){ vm.x -= nx * vn; vm.z -= nz * vn; }
-      }
-    };
+    // --- mech vs solid props: exact local primitives, including swept contacts ---
     for (const p of props){
       if (!p.alive) continue;
-      if (p.hitSpheres){                            // landships: a chain of solid spheres along the hull
-        const n = fillWorldSpheres(p, p.root.rotation.y);
-        for (const m of live) for (let i = 0; i < n; i++){ const s = HS_SCRATCH[i]; pushOut(m, s.x, s.y, s.z, p.hitSpheres[i].r); }
-      } else if (p.radius){
-        const pp = p.root.position;
-        for (const m of live) pushOut(m, pp.x, pp.y, pp.z, p.radius);
+      if (p.hitBoxes?.length){
+        for (const box of p.hitBoxes){
+          const wb = fillWorldBox(p, box);
+          for (const m of live) collideBodyWithBox(m, wb);
+        }
       }
+      if (p.hitSpheres?.length){
+        const n = fillWorldSpheres(p, p.root.rotation.y);
+        for (let i = 0; i < n; i++){
+          const s = HS_SCRATCH[i], r = hitSphereRadius(p, p.hitSpheres[i]);
+          for (const m of live) collideBodyWithSphere(m, s.x, s.y, s.z, r);
+        }
+      } else if (!p.hitBoxes?.length && p.radius){
+        const pp = p.root.position;
+        for (const m of live) collideBodyWithSphere(m, pp.x, pp.y + (p.hitY || 0), pp.z, p.radius);
+      }
+    }
+    // A horizontal separation can move a body onto a neighbouring terrain
+    // triangle. Re-seat grounded bodies so no collision response leaves wheels
+    // underground; airborne suits retain their jump height.
+    if (!SPACE && hfn) for (const m of live){
+      if (m.air) continue;
+      const floor = groundY(m.root.position.x, m.root.position.z) + (m.suit.hover ? 3 : 0);
+      if (groundVehicle(m)){ m.root.position.y = floor; m.vel.y = 0; }
+      else if (m.root.position.y < floor){ m.root.position.y = floor; if (m.vel.y < 0) m.vel.y = 0; }
     }
   }
 
@@ -5354,8 +5910,16 @@ export function startBattle(renderer, opts, onEnd){
         if (role) cockpitRoleCounts[role] = (cockpitRoleCounts[role] || 0) + 1;
       });
       const terrainY = SPACE ? null : groundY(player.root.position.x, player.root.position.z);
+      const colliderSummary = props.reduce((acc, p) => {
+        if (!p.alive) return acc;
+        acc.props++;
+        acc.boxes += p.hitBoxes?.length || 0;
+        acc.spheres += p.hitSpheres?.length || (!p.hitBoxes?.length && p.radius ? 1 : 0);
+        return acc;
+      }, { props: 0, boxes: 0, spheres: 0 });
       return {
         kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
+        collision: { ...colliderSummary, terrain: hfn ? 'shared-triangle-heightfield' : null },
         pvp: {
           enabled: PVP,
           role: multiplayer?.role || null,
@@ -5490,6 +6054,7 @@ export function startBattle(renderer, opts, onEnd){
           .map(m => ({ wingId: m.wingId, alive: m.alive, hp: m.hp })),
         props: props.map(p => ({ kind: p.kind, team: p.team, p: p.root.position.toArray(),
           rotY: +p.root.rotation.y.toFixed(3), isShip: p.isShip,
+          label: p.label || null, hitBoxes: p.hitBoxes?.length || 0, hitSpheres: p.hitSpheres?.length || 0,
           hp: p.hp, alive: p.alive, arrived: p.arrived, escaped: p.escaped })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,
         nFed: mechs.filter(m => m.alive && m.team === 'FED' && !m.isPlayer).length,
@@ -5510,6 +6075,14 @@ export function startBattle(renderer, opts, onEnd){
     update(dt){
       dt = Math.min(dt, 0.05);
       if (!paused && !ended){
+        // Preserve each body's frame start for swept collision. This is what keeps
+        // 3x hover travel, sand-kicks and very fast APCs from crossing thin walls
+        // between two rendered frames.
+        for (const m of mechs){
+          if (!m.alive) continue;
+          if (!m._collisionPrev) m._collisionPrev = new THREE.Vector3();
+          m._collisionPrev.copy(m.root.position);
+        }
         updatePrediction(dt); // P aim-assist: maintain the 0.5s lock before the player fires
         playerUpdate(dt);
         lodTimer -= dt;
