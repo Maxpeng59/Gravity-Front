@@ -2,6 +2,8 @@
 
 A browser-based Universal Century mobile-suit combat game.
 
+**Play the public build:** <https://maxpeng59.github.io/Gravity-Front/>
+
 > **Unofficial fan project.** Gravity Front is not affiliated with or endorsed by
 > Bandai Namco, Sunrise, or the owners of the Gundam trademarks and designs.
 
