@@ -6,3 +6,12 @@ __pycache__/
 # Unused third-party Sketchfab asset; keep it local unless its CC-BY attribution
 # and license are intentionally included in a future public release.
 assets/models/gouf.glb
+
+# Generated Sites build and local tooling output.
+node_modules/
+dist/
+.next/
+.vinext/
+.wrangler/
+public/game/
+*.tgz
