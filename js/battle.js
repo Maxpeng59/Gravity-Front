@@ -389,7 +389,7 @@ export function startBattle(renderer, opts, onEnd){
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
-  hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · N SNIPER OPTICS' : '');
+  hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -2451,7 +2451,14 @@ export function startBattle(renderer, opts, onEnd){
       ? muzzleNode.getWorldPosition(new THREE.Vector3())
       : approximateMuzzle(m, w);
     m.lastMuzzleWorld = muzzle.clone();
-    if (m.isPlayer) vgKick = Math.min(0.22, vgKick + (w.type === 'bazooka' ? 0.2 : 0.07));
+    if (m.isPlayer){
+      vgKick = Math.min(0.22, vgKick + (w.type === 'bazooka' ? 0.2 : 0.07));
+      if (sniperMode && isSniperWeapon(w)){
+        camPitch = clamp(camPitch + (w.recoil ? 0.032 : 0.018), -1.15, 1.15);
+        sniperSteady = Math.max(0, sniperSteady - (w.recoil ? 0.34 : 0.22));
+        sniperBreath = Math.max(0, sniperBreath - 0.08);
+      }
+    }
     // converge on the crosshair point when one is provided (player fire)
     const base = aimPoint ? aimPoint.clone().sub(muzzle).normalize() : dir.clone();
     const geo = w.type === 'beam' ? beamGeo : w.type === 'mg' ? mgGeo : bzGeo;
@@ -2965,7 +2972,9 @@ export function startBattle(renderer, opts, onEnd){
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
   let locked = false, firstPerson = false, sniperMode = false, sniperPreviousView = false;
-  let sniperSteady = 0, sniperZoom = 0;
+  let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
+  let sniperHoldingBreath = false, sniperBreathBlocked = false;
+  let sniperSwayYaw = 0, sniperSwayPitch = 0, sniperLatched = false, sniperRmbHeld = false;
 
   function setSniperMode(enabled, quiet = false){
     if (enabled){
@@ -2976,11 +2985,12 @@ export function startBattle(renderer, opts, onEnd){
       }
       if (!sniperMode) sniperPreviousView = firstPerson;
       sniperMode = true; firstPerson = true; player.blocking = false;
-      if (!quiet) setMsg('SNIPER OPTICS ONLINE — HOLD STILL TO STABILIZE · N TO EXIT', 2.2);
+      if (!quiet) setMsg('SNIPER ADS — LMB FIRE · SHIFT HOLD BREATH · RELEASE RMB OR N TO EXIT', 2.4);
       return true;
     }
     if (!sniperMode) return false;
     sniperMode = false; firstPerson = sniperPreviousView; sniperSteady = 0;
+    sniperHoldingBreath = false; sniperRmbHeld = false; sniperLatched = false;
     if (!quiet) setMsg('SNIPER OPTICS DISENGAGED', 1.2);
     return true;
   }
@@ -3003,9 +3013,21 @@ export function startBattle(renderer, opts, onEnd){
   const onMouseDown = e => {
     if (!locked){ canvas.requestPointerLock(); return; }
     if (e.button === 0) mouseDown = true;
-    if (e.button === 2 && hasSaber) trySaber();
+    if (e.button === 2){
+      const weapon = player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
+      if (isSniperWeapon(weapon)){
+        sniperRmbHeld = true;
+        if (!sniperMode) setSniperMode(true);
+      } else if (hasSaber) trySaber();
+    }
   };
-  const onMouseUp = e => { if (e.button === 0) mouseDown = false; };
+  const onMouseUp = e => {
+    if (e.button === 0) mouseDown = false;
+    if (e.button === 2 && sniperRmbHeld){
+      sniperRmbHeld = false;
+      if (!sniperLatched) setSniperMode(false, true);
+    }
+  };
   const onCtx = e => e.preventDefault();
   const onKeyDown = e => {
     if (PVP && !locked) return;
@@ -3029,7 +3051,11 @@ export function startBattle(renderer, opts, onEnd){
       if (sniperMode) setSniperMode(false, true);
       firstPerson = !firstPerson; setMsg(firstPerson ? 'COCKPIT VIEW' : 'PURSUIT CAMERA', 1.2);
     }
-    if (k === 'n' && !e.repeat) setSniperMode(!sniperMode);
+    if (k === 'n' && !e.repeat){
+      if (sniperMode && sniperRmbHeld && !sniperLatched) sniperLatched = true;
+      else if (sniperMode){ sniperLatched = false; setSniperMode(false); }
+      else if (setSniperMode(true)) sniperLatched = true;
+    }
     if (k === 'p'){ assistOn = !assistOn; setMsg(assistOn ? 'AIM SYSTEM ON — prediction + auto-aim on lock' : 'AIM SYSTEM OFF', 1.4); }
     if (k === 'f' && (player.parts.shield || hasSaber)){ // guard raises the shield OR the melee weapon; either parries a frontal melee strike
       if (sniperMode) setSniperMode(false, true);
@@ -3049,6 +3075,7 @@ export function startBattle(renderer, opts, onEnd){
     if (locked){ started = true; setMsg('', 0); }
     else {
       keys.clear(); mouseDown = false;
+      if (sniperRmbHeld && !sniperLatched) setSniperMode(false, true);
       if (PVP) setMsg('DUEL LIVE — CLICK TO RE-ENGAGE CONTROLS', 9999);
       else if (started) setMsg('PAUSED — CLICK TO RESUME · X TO WITHDRAW', 9999);
     }
@@ -3708,7 +3735,7 @@ export function startBattle(renderer, opts, onEnd){
     m.yaw += turnStep;
     m.pitch += clamp(wantPitch - m.pitch, -turn * dt, turn * dt);
     // throttle: SHIFT boost · S brake · otherwise cruise
-    const boosting = keys.has('shift') && m.fuel > 0, braking = keys.has('s');
+    const boosting = !sniperMode && keys.has('shift') && m.fuel > 0, braking = keys.has('s');
     m.boosting = boosting;
     if (boosting) m.fuel = Math.max(0, m.fuel - 18 * dt); else m.fuel = Math.min(m.maxFuel, m.fuel + 12 * dt);
     const targetSpd = boosting ? w.boost : braking ? w.boost * 0.5 : w.boost * 0.78;
@@ -3773,7 +3800,7 @@ export function startBattle(renderer, opts, onEnd){
     m.groundHoverPhase = (m.groundHoverPhase || 0) + dt;
     m.sandKickCd = Math.max(0, (m.sandKickCd || 0) - dt);
     const sandKicking = (m.sandKickT || 0) > 0;
-    const shiftBoosting = !wantsHover && keys.has('shift') && m.fuel > 0;
+    const shiftBoosting = !sniperMode && !wantsHover && keys.has('shift') && m.fuel > 0;
     m.boosting = shiftBoosting || sandKicking || wantsHover;
 
     if (SPACE){
@@ -4102,11 +4129,12 @@ export function startBattle(renderer, opts, onEnd){
   }
   function drawSniperScope(){
     const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
-    const radius = Math.min(innerWidth, innerHeight) * 0.43;
+    const radius = Math.min(innerWidth, innerHeight) * 0.43 * lerp(0.84, 1, sniperZoom);
     const sight = crosshairPoint();
     const range = Math.round(camera.position.distanceTo(sight));
     const color = sniperSteady > 0.82 ? '#66ffd0' : '#ffd24a';
     loCtx.save();
+    loCtx.globalAlpha = clamp(sniperZoom * 1.15, 0, 1);
     loCtx.fillStyle = 'rgba(0,3,7,.88)';
     loCtx.beginPath();
     loCtx.rect(0, 0, innerWidth, innerHeight);
@@ -4114,6 +4142,11 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.fill('evenodd');
     loCtx.strokeStyle = 'rgba(160,230,220,.72)'; loCtx.lineWidth = 1.3;
     loCtx.beginPath(); loCtx.arc(cx, cy, radius, 0, Math.PI * 2); loCtx.stroke();
+    const lens = loCtx.createRadialGradient(cx, cy, radius * 0.12, cx, cy, radius);
+    lens.addColorStop(0, 'rgba(75,135,125,.015)');
+    lens.addColorStop(.72, 'rgba(32,82,78,.045)');
+    lens.addColorStop(1, 'rgba(0,12,16,.42)');
+    loCtx.fillStyle = lens; loCtx.beginPath(); loCtx.arc(cx, cy, radius - 2, 0, Math.PI * 2); loCtx.fill();
     loCtx.strokeStyle = color; loCtx.lineWidth = 1;
     loCtx.beginPath();
     loCtx.moveTo(cx - radius, cy); loCtx.lineTo(cx - 18, cy);
@@ -4134,7 +4167,13 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.fillText(`STABILITY ${Math.round(sniperSteady * 100)}%`, left, top + 36);
     loCtx.strokeStyle = '#263e48'; loCtx.strokeRect(left, top + 46, 128, 6);
     loCtx.fillStyle = color; loCtx.fillRect(left + 1, top + 47, 126 * sniperSteady, 4);
-    loCtx.textAlign = 'right'; loCtx.fillText('N · EXIT OPTICS', cx + radius - 24, cy + radius - 24);
+    loCtx.fillStyle = '#b9ddd8'; loCtx.fillText(`BREATH ${Math.round(sniperBreath * 100)}%`, left, top + 70);
+    loCtx.strokeStyle = '#263e48'; loCtx.strokeRect(left, top + 80, 128, 6);
+    loCtx.fillStyle = sniperBreath < 0.2 ? '#ff6b55' : '#70bfe8'; loCtx.fillRect(left + 1, top + 81, 126 * sniperBreath, 4);
+    loCtx.fillStyle = sniperHoldingBreath ? '#66ffd0' : '#b9ddd8';
+    loCtx.fillText(sniperHoldingBreath ? 'BREATH HELD · SIGHT LOCKED' : sniperBreathBlocked ? 'CATCHING BREATH' : 'SHIFT · HOLD BREATH', left, top + 104);
+    loCtx.textAlign = 'right'; loCtx.fillStyle = '#b9ddd8';
+    loCtx.fillText(sniperLatched ? 'N · EXIT ADS' : 'RELEASE RMB · EXIT ADS', cx + radius - 24, cy + radius - 24);
     loCtx.restore();
   }
   // ARTILLERY overlay: the ballistic trajectory line from the muzzle + a pulsing impact ring where it lands.
@@ -5197,7 +5236,7 @@ export function startBattle(renderer, opts, onEnd){
       wHtml += `<br>ARMAMENT LOAD <span class="ammo">${Math.round(player.suit.carriedWeaponMass)} t · MOVE ${Math.round(player.suit.mobilityMultiplier * 100)}%</span>`;
     }
     if (sniperMode && isSniperWeapon(w)){
-      wHtml += `<br>SNIPER OPTICS <span class="ammo" style="color:${sniperSteady > 0.82 ? 'var(--ok)' : 'var(--acc)'}">N ENGAGED · STABILITY ${Math.round(sniperSteady * 100)}%</span>`;
+      wHtml += `<br>SNIPER ADS <span class="ammo" style="color:${sniperSteady > 0.82 ? 'var(--ok)' : 'var(--acc)'}">RMB/N · STABILITY ${Math.round(sniperSteady * 100)}% · BREATH ${Math.round(sniperBreath * 100)}%</span>`;
     }
     wEl.innerHTML = wHtml;
     objEl.textContent = objectiveText();
@@ -5250,18 +5289,36 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- camera ----------
   function cameraUpdate(dt){
     const p = player.root.position;
-    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
-    const fwd = tmpV.set(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
-    let lookOverride = null; // branches that don't look straight along the aim set this
-
+    const motion = player.vel.length();
     if (sniperMode){
-      const motion = player.vel.length();
-      sniperSteady = clamp(sniperSteady + (motion < 3.5 && !player.boosting ? 1.45 : -2.6) * dt, 0, 1);
+      if (!keys.has('shift')) sniperBreathBlocked = false;
+      sniperHoldingBreath = keys.has('shift') && !sniperBreathBlocked && sniperBreath > 0.01
+        && motion < 3.5 && !player.boosting;
+      if (sniperHoldingBreath){
+        sniperBreath = Math.max(0, sniperBreath - 0.22 * dt);
+        if (sniperBreath <= 0.01){ sniperHoldingBreath = false; sniperBreathBlocked = true; }
+      } else sniperBreath = Math.min(1, sniperBreath + (sniperBreathBlocked ? 0.11 : 0.16) * dt);
+      sniperSteady = clamp(sniperSteady + (motion < 3.5 && !player.boosting
+        ? (sniperHoldingBreath ? 3.4 : 1.15) : -2.8) * dt, 0, 1);
       sniperZoom = lerp(sniperZoom, 1, Math.min(1, 7 * dt));
+      const tNow = performance.now() * 0.001;
+      const movePenalty = clamp(motion / 14, 0, 1);
+      const swayAmp = sniperHoldingBreath ? 0.00018 : lerp(0.0065, 0.0011, sniperSteady) * (1 + movePenalty * 1.7);
+      sniperSwayYaw = (Math.sin(tNow * 1.73) + Math.sin(tNow * 0.61 + 1.2) * 0.42) * swayAmp;
+      sniperSwayPitch = (Math.cos(tNow * 1.31 + 0.4) + Math.sin(tNow * 0.47) * 0.35) * swayAmp * 0.72;
     } else {
       sniperSteady = Math.max(0, sniperSteady - 4 * dt);
       sniperZoom = lerp(sniperZoom, 0, Math.min(1, 9 * dt));
+      sniperBreath = Math.min(1, sniperBreath + 0.22 * dt);
+      sniperHoldingBreath = false;
+      sniperSwayYaw = lerp(sniperSwayYaw, 0, Math.min(1, 12 * dt));
+      sniperSwayPitch = lerp(sniperSwayPitch, 0, Math.min(1, 12 * dt));
     }
+    const aimYaw = camYaw + sniperSwayYaw * sniperZoom;
+    const aimPitch = clamp(camPitch + sniperSwayPitch * sniperZoom, -1.15, 1.15);
+    const cp = Math.cos(aimPitch), sp = Math.sin(aimPitch);
+    const fwd = tmpV.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp);
+    let lookOverride = null; // branches that don't look straight along the aim set this
     hud.classList.toggle('sniper-mode', sniperMode);
     const cockpitVisible = firstPerson && !sniperMode && player.alive && !player.air && !player.suit.vehicle;
     hud.classList.toggle('cockpit-view', cockpitVisible);
@@ -5423,12 +5480,13 @@ export function startBattle(renderer, opts, onEnd){
     if (lookOverride){
       camera.lookAt(lookOverride);
     } else {
-      const look = tmpV.set(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp)
+      const look = tmpV.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp)
         .multiplyScalar(firstPerson ? 120 : 90).add(camera.position);
       camera.lookAt(look);
     }
     const normalFov = (player.boosting ? 8 : 0) + (firstPerson ? 68 : 62);
-    camera.fov = lerp(camera.fov, sniperMode ? 18 : normalFov, (sniperMode ? 8 : 4) * dt);
+    const adsFov = lerp(normalFov, 18, sniperZoom);
+    camera.fov = lerp(camera.fov, adsFov, (sniperMode ? 10 : 5) * dt);
     camera.updateProjectionMatrix();
   }
 
@@ -6106,7 +6164,8 @@ export function startBattle(renderer, opts, onEnd){
         cockpitRoleCounts, cockpitScale: cockpitInterior.scale.toArray(),
         cameraFov: camera.fov, cameraAspect: camera.aspect,
         sniperMode, sniperCapable: player.wi !== SABER_SLOT && isSniperWeapon(player.suit.weapons[player.wi]),
-        sniperSteady, sniperZoom,
+        sniperSteady, sniperZoom, sniperBreath, sniperHoldingBreath, sniperBreathBlocked,
+        sniperSwayYaw, sniperSwayPitch, sniperLatched, sniperRmbHeld,
         viewShieldVisible: viewShield.visible,
         viewShieldSide: viewShield.userData.screenSide || 'left',
         viewShieldPosition: viewShield.position.toArray(),

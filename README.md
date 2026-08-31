@@ -26,9 +26,13 @@ weapons; the live equipment-load meter shows light, medium, or heavy burden and
 the resulting movement value.
 
 Precision rifles and direct-fire long guns support dedicated sniper optics.
-Select a compatible weapon and press **N** to enter or leave the 6× sight. The
-suit moves slowly while scoped, mouse sensitivity drops, and accuracy improves
-as the stability meter fills while the unit remains still.
+Select a compatible weapon and hold **RMB** for FPS-style aim-down-sights, or
+press **N** to latch the 6× sight until **N** is pressed again. **LMB** fires
+through the centered optic. The suit braces and moves slowly while scoped,
+mouse sensitivity drops, and the sight sways until stability builds. Hold
+**Shift** while planted to steady the sight and hold the pilot's breath; the
+breath meter drains, firing kicks the optic and costs stability, and releasing
+RMB returns immediately to the previous camera unless the sight was latched.
 
 ## Campaign Challenge Runs and PvP equipment
 
