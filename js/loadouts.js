@@ -142,3 +142,9 @@ export function applyWeaponLoadout(suit, loadout){
 export function mobilityPercent(profile){
   return Math.round((profile?.mobility ?? 1) * 100);
 }
+
+export function isSniperWeapon(weapon){
+  return !!weapon && !weapon.arc && weapon.type !== 'bomb' && weapon.type !== 'lockmissile'
+    && (!!weapon.scope || (weapon.pref || 0) >= 750
+      || /SNIPER|ANTI-SHIP|ANTI-MATERIEL|180MM|MAGELLA TOP|SATELLITE CANNON/.test(String(weapon.name || '').toUpperCase()));
+}

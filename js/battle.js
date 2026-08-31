@@ -12,7 +12,7 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { applyWeaponLoadout } from './loadouts.js';
+import { applyWeaponLoadout, isSniperWeapon } from './loadouts.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
@@ -378,17 +378,18 @@ export function startBattle(renderer, opts, onEnd){
   cockpitEl.classList.add('hidden');
   cockpitEl.dataset.faction = suitById(opts.playerSuitId)?.faction || 'FED';
   killFeedEl.replaceChildren();
-  const hintSuit = suitById(opts.playerSuitId);
+  const hintSuit = applyWeaponLoadout(suitById(opts.playerSuitId), opts.playerLoadout || null);
   const hintGroundManeuver = env === 'ground' && hintSuit && !hintSuit.air && !hintSuit.vehicle && !hintSuit.noJump
     && !['tank','guntank','zakutank','crane','apc','fighter'].includes(hintSuit.style);
   const hintHoverProfile = hintSuit?.landType ? 'E AUTO-HOVER 3× · 80% ENERGY' : 'E AUTO-HOVER 2×';
-  hintEl.textContent = hintSuit && hintSuit.air
+  const baseHint = hintSuit && hintSuit.air
     ? `MOUSE STEER · LMB FIRE · SHIFT BOOST · S BRAKE · V VIEW · R RELOAD · Q/TAB/1-${hintSuit.weapons.length} WEAPON · P AIM SYSTEM · M MUTE ALL · ESC PAUSE`
     : hintSuit && hintSuit.vehicle
     ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
+  hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · N SNIPER OPTICS' : '');
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -2458,9 +2459,10 @@ export function startBattle(renderer, opts, onEnd){
     // w.pellets sub-shots leave in one pull (each with its own spread); w.life shortens range (spray gun)
     for (let s = 0; s < (w.pellets || 1); s++){
       const d = base.clone();
-      d.x += (rng.next() - 0.5) * 2 * w.spread;
-      d.y += (rng.next() - 0.5) * 2 * w.spread;
-      d.z += (rng.next() - 0.5) * 2 * w.spread;
+      const spread = w.spread * (m.isPlayer && sniperMode && isSniperWeapon(w) ? lerp(0.38, 0.06, sniperSteady) : 1);
+      d.x += (rng.next() - 0.5) * 2 * spread;
+      d.y += (rng.next() - 0.5) * 2 * spread;
+      d.z += (rng.next() - 0.5) * 2 * spread;
       d.normalize();
       const mesh = w.shell ? makeShell(w.shellScale || 1.05, w.ap) : new THREE.Mesh(geo, mat);
       mesh.position.copy(muzzle);
@@ -2962,7 +2964,26 @@ export function startBattle(renderer, opts, onEnd){
   const keys = new Set();
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
-  let locked = false, firstPerson = false;
+  let locked = false, firstPerson = false, sniperMode = false, sniperPreviousView = false;
+  let sniperSteady = 0, sniperZoom = 0;
+
+  function setSniperMode(enabled, quiet = false){
+    if (enabled){
+      const weapon = player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
+      if (!isSniperWeapon(weapon)){
+        if (!quiet) setMsg('SNIPER OPTICS UNAVAILABLE — EQUIP AND SELECT A PRECISION WEAPON', 2.2);
+        return false;
+      }
+      if (!sniperMode) sniperPreviousView = firstPerson;
+      sniperMode = true; firstPerson = true; player.blocking = false;
+      if (!quiet) setMsg('SNIPER OPTICS ONLINE — HOLD STILL TO STABILIZE · N TO EXIT', 2.2);
+      return true;
+    }
+    if (!sniperMode) return false;
+    sniperMode = false; firstPerson = sniperPreviousView; sniperSteady = 0;
+    if (!quiet) setMsg('SNIPER OPTICS DISENGAGED', 1.2);
+    return true;
+  }
 
   function groundManeuverEligible(m = player){
     return env === 'ground' && !m.air && !m.suit.vehicle && !m.suit.noJump
@@ -2975,8 +2996,9 @@ export function startBattle(renderer, opts, onEnd){
 
   const onMouseMove = e => {
     if (!locked) return;
-    camYaw -= e.movementX * 0.0026;
-    camPitch = clamp(camPitch - e.movementY * 0.0024, -1.15, 1.15); // mouse up = look up
+    const sensitivity = sniperMode ? lerp(0.00082, 0.00046, sniperSteady) : 0.0026;
+    camYaw -= e.movementX * sensitivity;
+    camPitch = clamp(camPitch - e.movementY * sensitivity * 0.92, -1.15, 1.15); // mouse up = look up
   };
   const onMouseDown = e => {
     if (!locked){ canvas.requestPointerLock(); return; }
@@ -3003,9 +3025,14 @@ export function startBattle(renderer, opts, onEnd){
       const idx = +k - 1;
       if (player.suit.weapons[idx] || (hasSaber && idx === SABER_SLOT)) switchWeapon(idx);
     }
-    if (k === 'v'){ firstPerson = !firstPerson; setMsg(firstPerson ? 'COCKPIT VIEW' : 'PURSUIT CAMERA', 1.2); }
+    if (k === 'v'){
+      if (sniperMode) setSniperMode(false, true);
+      firstPerson = !firstPerson; setMsg(firstPerson ? 'COCKPIT VIEW' : 'PURSUIT CAMERA', 1.2);
+    }
+    if (k === 'n' && !e.repeat) setSniperMode(!sniperMode);
     if (k === 'p'){ assistOn = !assistOn; setMsg(assistOn ? 'AIM SYSTEM ON — prediction + auto-aim on lock' : 'AIM SYSTEM OFF', 1.4); }
     if (k === 'f' && (player.parts.shield || hasSaber)){ // guard raises the shield OR the melee weapon; either parries a frontal melee strike
+      if (sniperMode) setSniperMode(false, true);
       player.blocking = !player.blocking;
       setMsg(player.blocking ? (player.wi === SABER_SLOT ? 'BLADE GUARD — PARRY READY' : 'GUARD — RAISED') : 'GUARD DOWN', 1.2);
     }
@@ -3047,6 +3074,7 @@ export function startBattle(renderer, opts, onEnd){
     vgMeleeOverride = i !== SABER_SLOT && player.swingT > 0;
     buildViewGun(vgMeleeOverride);
     const nw = player.suit.weapons[i];
+    if (sniperMode && !isSniperWeapon(nw)) setSniperMode(false, true);
     if (nw && nw.arc) setMsg('ARTILLERY MODE — LOB ONTO FAR TARGETS', 1.8);
     else if (nw && player.parts.turretDock) setMsg('DIRECT FIRE — ANTI-MATERIEL CANNON', 1.4);
     sfx('ui', 0.12);
@@ -3107,6 +3135,7 @@ export function startBattle(renderer, opts, onEnd){
 
   function trySaber(forcedKind){
     if (player.meleeT > 0 || !player.alive || !hasSaber) return false;
+    if (sniperMode) setSniperMode(false, true);
     const kind = selectPlayerSlash(forcedKind);
     const attack = PLAYER_SLASHES[kind];
     player.meleeT = attack.recovery;
@@ -3755,7 +3784,8 @@ export function startBattle(renderer, opts, onEnd){
       if (keys.has(' ')) m.vel.y += acc * 0.8 * dt;
       if (keys.has('c')) m.vel.y -= acc * 0.8 * dt;
       m.vel.multiplyScalar(1 - 0.5 * dt);
-      const cap = (shiftBoosting ? w.boost * 1.6 : w.walk * 2.2) * (w.spaceSpeedMul || 1) * (m.blocking ? 0.5 : 1);
+      const cap = (shiftBoosting ? w.boost * 1.6 : w.walk * 2.2) * (w.spaceSpeedMul || 1) * (m.blocking ? 0.5 : 1)
+        * (sniperMode ? 0.32 : 1);
       if (m.vel.length() > cap) m.vel.setLength(cap);
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 20 * (w.spaceBoostDrainMul || 1) * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 14 * dt);
@@ -3823,7 +3853,7 @@ export function startBattle(renderer, opts, onEnd){
       }
       if (grounded && !hasInput && !sandKicking && !wantsHover){ m.vel.x *= 1 - Math.min(1, 8 * dt); m.vel.z *= 1 - Math.min(1, 8 * dt); }
       const hcap = (sandKicking ? w.boost * 1.28 : wantsHover ? w.walk * hoverTravelMultiplier : (shiftBoosting ? w.boost : w.walk))
-        * legFactor * (w.hover && !wantsHover ? 1.15 : 1) * (m.blocking ? 0.5 : 1);
+        * legFactor * (w.hover && !wantsHover ? 1.15 : 1) * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
       const hv = Math.hypot(m.vel.x, m.vel.z);
       if (hv > hcap){ m.vel.x *= hcap / hv; m.vel.z *= hcap / hv; }
       if (shiftBoosting && hasInput && !wantsHover) m.fuel = Math.max(0, m.fuel - 24 * dt);
@@ -4053,6 +4083,7 @@ export function startBattle(renderer, opts, onEnd){
   // P aim-assist: once the prediction has LOCKED a target, snap the player's shots to its lead so they hit
   function playerAimPoint(w){
     if (w && w.arc) return artilleryTarget();   // artillery lobs to the designated ground/target impact point
+    if (sniperMode && isSniperWeapon(w)) return crosshairPoint(); // optics stay fully manual; no aim-assist snap
     if (assistOn && predLocked && predLocked.alive && w && w.type !== 'lockmissile') return leadPoint(predLocked, w.speed || 1200);
     return crosshairPoint();
   }
@@ -4063,10 +4094,48 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.clearRect(0, 0, innerWidth, innerHeight);
     if (!player.alive) return;
     const aw = player.suit.weapons[player.wi];
-    if (aw && aw.arc && !player.air) drawArtillery(); // artillery mode owns the aiming overlay (trajectory + impact)
+    if (sniperMode && isSniperWeapon(aw)) drawSniperScope();
+    else if (aw && aw.arc && !player.air) drawArtillery(); // artillery mode owns the aiming overlay (trajectory + impact)
     else if (assistOn) drawPredict();                 // whole aim system (prediction overlay) toggles with P
     drawReticle();
     drawCritFlash();
+  }
+  function drawSniperScope(){
+    const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
+    const radius = Math.min(innerWidth, innerHeight) * 0.43;
+    const sight = crosshairPoint();
+    const range = Math.round(camera.position.distanceTo(sight));
+    const color = sniperSteady > 0.82 ? '#66ffd0' : '#ffd24a';
+    loCtx.save();
+    loCtx.fillStyle = 'rgba(0,3,7,.88)';
+    loCtx.beginPath();
+    loCtx.rect(0, 0, innerWidth, innerHeight);
+    loCtx.arc(cx, cy, radius, 0, Math.PI * 2, true);
+    loCtx.fill('evenodd');
+    loCtx.strokeStyle = 'rgba(160,230,220,.72)'; loCtx.lineWidth = 1.3;
+    loCtx.beginPath(); loCtx.arc(cx, cy, radius, 0, Math.PI * 2); loCtx.stroke();
+    loCtx.strokeStyle = color; loCtx.lineWidth = 1;
+    loCtx.beginPath();
+    loCtx.moveTo(cx - radius, cy); loCtx.lineTo(cx - 18, cy);
+    loCtx.moveTo(cx + 18, cy); loCtx.lineTo(cx + radius, cy);
+    loCtx.moveTo(cx, cy - radius); loCtx.lineTo(cx, cy - 18);
+    loCtx.moveTo(cx, cy + 18); loCtx.lineTo(cx, cy + radius); loCtx.stroke();
+    loCtx.lineWidth = 2; loCtx.beginPath(); loCtx.arc(cx, cy, 3.5, 0, Math.PI * 2); loCtx.stroke();
+    for (let i = 1; i <= 5; i++){
+      const d = i * radius / 8;
+      loCtx.beginPath(); loCtx.moveTo(cx - 4, cy + d); loCtx.lineTo(cx + 4, cy + d); loCtx.stroke();
+      loCtx.beginPath(); loCtx.moveTo(cx - 4, cy - d); loCtx.lineTo(cx + 4, cy - d); loCtx.stroke();
+    }
+    const left = cx - radius + 24, top = cy - radius + 34;
+    loCtx.fillStyle = color; loCtx.font = 'bold 12px monospace'; loCtx.textAlign = 'left';
+    loCtx.fillText('PRECISION OPTICS · 6×', left, top);
+    loCtx.fillStyle = '#b9ddd8'; loCtx.font = '11px monospace';
+    loCtx.fillText(`RANGE ${range}m`, left, top + 18);
+    loCtx.fillText(`STABILITY ${Math.round(sniperSteady * 100)}%`, left, top + 36);
+    loCtx.strokeStyle = '#263e48'; loCtx.strokeRect(left, top + 46, 128, 6);
+    loCtx.fillStyle = color; loCtx.fillRect(left + 1, top + 47, 126 * sniperSteady, 4);
+    loCtx.textAlign = 'right'; loCtx.fillText('N · EXIT OPTICS', cx + radius - 24, cy + radius - 24);
+    loCtx.restore();
   }
   // ARTILLERY overlay: the ballistic trajectory line from the muzzle + a pulsing impact ring where it lands.
   function drawArtillery(){
@@ -5127,6 +5196,9 @@ export function startBattle(renderer, opts, onEnd){
     if (player.suit.mobilityMultiplier != null){
       wHtml += `<br>ARMAMENT LOAD <span class="ammo">${Math.round(player.suit.carriedWeaponMass)} t · MOVE ${Math.round(player.suit.mobilityMultiplier * 100)}%</span>`;
     }
+    if (sniperMode && isSniperWeapon(w)){
+      wHtml += `<br>SNIPER OPTICS <span class="ammo" style="color:${sniperSteady > 0.82 ? 'var(--ok)' : 'var(--acc)'}">N ENGAGED · STABILITY ${Math.round(sniperSteady * 100)}%</span>`;
+    }
     wEl.innerHTML = wHtml;
     objEl.textContent = objectiveText();
     const real = mechs.filter(m => m.alive && !m.isPlayer).length;
@@ -5182,7 +5254,16 @@ export function startBattle(renderer, opts, onEnd){
     const fwd = tmpV.set(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
     let lookOverride = null; // branches that don't look straight along the aim set this
 
-    const cockpitVisible = firstPerson && player.alive && !player.air && !player.suit.vehicle;
+    if (sniperMode){
+      const motion = player.vel.length();
+      sniperSteady = clamp(sniperSteady + (motion < 3.5 && !player.boosting ? 1.45 : -2.6) * dt, 0, 1);
+      sniperZoom = lerp(sniperZoom, 1, Math.min(1, 7 * dt));
+    } else {
+      sniperSteady = Math.max(0, sniperSteady - 4 * dt);
+      sniperZoom = lerp(sniperZoom, 0, Math.min(1, 9 * dt));
+    }
+    hud.classList.toggle('sniper-mode', sniperMode);
+    const cockpitVisible = firstPerson && !sniperMode && player.alive && !player.air && !player.suit.vehicle;
     hud.classList.toggle('cockpit-view', cockpitVisible);
     cockpitEl.classList.toggle('hidden', !cockpitVisible);
     cockpitInterior.visible = cockpitVisible;
@@ -5282,7 +5363,7 @@ export function startBattle(renderer, opts, onEnd){
       vgMeleeOverride = false;
       buildViewGun();
     }
-    viewGun.visible = firstPerson && player.alive && !player.air && !player.blocking;
+    viewGun.visible = firstPerson && !sniperMode && player.alive && !player.air && !player.blocking;
     if (viewGun.visible){
       vgKick = Math.max(0, vgKick - vgKick * Math.min(1, 9 * dt));
       const tNow = performance.now() * 0.001;
@@ -5322,7 +5403,7 @@ export function startBattle(renderer, opts, onEnd){
 
     // Cockpit shield: the same family silhouette as the exterior plate, held low on its canonical
     // side so the protected pilot retains a usable central monitor sightline.
-    if (firstPerson && player.blocking && player.alive && !player.shieldBroken
+    if (firstPerson && !sniperMode && player.blocking && player.alive && !player.shieldBroken
       && player.shieldMax > 0 && player.parts?.shield && player.wi !== SABER_SLOT){
       viewShield.visible = true;
       const t = clamp(player.blockPose || 0, 0, 1);
@@ -5346,7 +5427,8 @@ export function startBattle(renderer, opts, onEnd){
         .multiplyScalar(firstPerson ? 120 : 90).add(camera.position);
       camera.lookAt(look);
     }
-    camera.fov = lerp(camera.fov, (player.boosting ? 8 : 0) + (firstPerson ? 68 : 62), 4 * dt);
+    const normalFov = (player.boosting ? 8 : 0) + (firstPerson ? 68 : 62);
+    camera.fov = lerp(camera.fov, sniperMode ? 18 : normalFov, (sniperMode ? 8 : 4) * dt);
     camera.updateProjectionMatrix();
   }
 
@@ -5811,6 +5893,7 @@ export function startBattle(renderer, opts, onEnd){
       if ('fire' in o) mouseDown = o.fire;
       if ('fp' in o) firstPerson = o.fp;
       if ('view' in o){ firstPerson = !!o.view; buildViewGun(vgMeleeOverride); }
+      if ('sniper' in o) setSniperMode(!!o.sniper, true);
       if ('keys' in o){ keys.clear(); for (const k of o.keys) keys.add(k); }
       if ('hover' in o){ if (o.hover) keys.add('e'); else keys.delete('e'); }
       if ('blocking' in o) player.blocking = !!o.blocking;
@@ -6022,6 +6105,8 @@ export function startBattle(renderer, opts, onEnd){
         cockpitMeshVisible: cockpitInterior.visible, cockpitMeshChildren: cockpitInterior.children.length,
         cockpitRoleCounts, cockpitScale: cockpitInterior.scale.toArray(),
         cameraFov: camera.fov, cameraAspect: camera.aspect,
+        sniperMode, sniperCapable: player.wi !== SABER_SLOT && isSniperWeapon(player.suit.weapons[player.wi]),
+        sniperSteady, sniperZoom,
         viewShieldVisible: viewShield.visible,
         viewShieldSide: viewShield.userData.screenSide || 'left',
         viewShieldPosition: viewShield.position.toArray(),

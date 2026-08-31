@@ -12,9 +12,9 @@ import { enterBridge, leaveBridge } from './bridge.js';
 import { music } from './music.js';
 import { preloadModels } from './models.js';
 import {
-  applyWeaponLoadout, canModifyWeapons, mobilityPercent,
-  normalizeWeaponLoadout, weaponLoadoutOptions, weaponLoadoutProfile,
+  applyWeaponLoadout,
 } from './loadouts.js';
+import { renderEquipmentPanel } from './equipment-ui.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -824,47 +824,12 @@ function statBar(label, frac){
 function renderCustomLoadout(){
   const box = $('custom-loadout'); if (!box) return;
   const suit = suitById(custom.suit);
-  box.innerHTML = '';
-  box.classList.toggle('fixed', !canModifyWeapons(suit));
-  if (!canModifyWeapons(suit)){
-    box.textContent = suit.air ? 'Aircraft weapon stations are fixed for this sortie.' : 'Integrated or specialist armament — no field-compatible hand weapon rack.';
-    return;
-  }
-  const options = weaponLoadoutOptions(suit);
-  const current = normalizeWeaponLoadout(suit, custom.loadouts[suit.id]);
-  const profile = weaponLoadoutProfile(suit, current);
-  const summary = el('div', 'loadout-summary');
-  summary.innerHTML = `<b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
-  box.appendChild(summary);
-  const selects = el('div', 'loadout-selects');
-  const primaryField = el('label', 'loadout-field', 'PRIMARY');
-  const primary = document.createElement('select');
-  const stock = document.createElement('option'); stock.value = 'stock'; stock.textContent = 'STOCK COMPLETE RACK'; primary.appendChild(stock);
-  for (const item of options.primary){
-    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; primary.appendChild(option);
-  }
-  primary.value = current.primary;
-  primary.onchange = () => {
-    if (primary.value === 'stock') delete custom.loadouts[suit.id];
-    else custom.loadouts[suit.id] = { primary: primary.value, support: 'none' };
-    sfx('ui', 0.1); renderCustom();
-  };
-  primaryField.appendChild(primary); selects.appendChild(primaryField);
-  const supportField = el('label', 'loadout-field', 'SUPPORT');
-  const support = document.createElement('select');
-  const none = document.createElement('option'); none.value = 'none'; none.textContent = 'NONE · LIGHT RACK'; support.appendChild(none);
-  for (const item of options.support){
-    if (item.id === current.primary) continue;
-    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; support.appendChild(option);
-  }
-  support.disabled = current.primary === 'stock';
-  support.value = current.primary === 'stock' ? 'none' : current.support;
-  support.onchange = () => {
-    custom.loadouts[suit.id] = { primary: primary.value, support: support.value };
-    sfx('ui', 0.1); renderCustom();
-  };
-  supportField.appendChild(support); selects.appendChild(supportField);
-  box.appendChild(selects);
+  renderEquipmentPanel(box, suit, custom.loadouts[suit.id], next => {
+    if (!next) delete custom.loadouts[suit.id];
+    else custom.loadouts[suit.id] = next;
+    sfx('ui', 0.1);
+    renderCustom();
+  });
 }
 
 function renderCustom(){

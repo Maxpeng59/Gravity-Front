@@ -20,6 +20,16 @@ movement speed. Fixed equipment such as head vulcans, built-in cannons, and arm
 weapons stays attached. Campaign configurations are saved per mobile suit and
 are also used when that suit deploys as a wingman.
 
+The Unit Readout presents equipment as right-hand and support slots backed by
+an armament inventory. Restore the factory rack or equip individual compatible
+weapons; the live equipment-load meter shows light, medium, or heavy burden and
+the resulting movement value.
+
+Precision rifles and direct-fire long guns support dedicated sniper optics.
+Select a compatible weapon and press **N** to enter or leave the 6× sight. The
+suit moves slowly while scoped, mouse sensitivity drops, and accuracy improves
+as the stability meter fills while the unit remains still.
+
 ## Start a PvP duel
 
 1. Both players open the same deployed game and choose **PVP DUEL — ONLINE**.

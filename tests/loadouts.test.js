@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { suitById } from '../js/data.js';
 import {
-  applyWeaponLoadout, canModifyWeapons, normalizeWeaponLoadout,
+  applyWeaponLoadout, canModifyWeapons, isSniperWeapon, normalizeWeaponLoadout,
   weaponLoadoutOptions, weaponLoadoutProfile,
 } from '../js/loadouts.js';
 
@@ -39,4 +39,12 @@ test('carried weapon mass produces a bounded real movement tradeoff', () => {
   const applied = applyWeaponLoadout(gm, heavy.loadout);
   assert.equal(applied.walk, gm.walk * heavy.mobility);
   assert.equal(applied.boost, gm.boost * heavy.mobility);
+});
+
+test('precision weapons expose sniper optics while ordinary and artillery weapons do not', () => {
+  const gmSniper = weaponLoadoutOptions(suitById('gm')).primary.find(w => w.id === 'fed_sniper').weapon;
+  const beamSpray = weaponLoadoutOptions(suitById('gm')).primary.find(w => w.id === 'fed_beam_spray').weapon;
+  assert.equal(isSniperWeapon(gmSniper), true);
+  assert.equal(isSniperWeapon(beamSpray), false);
+  assert.equal(isSniperWeapon({ name: 'ARTILLERY BOMBARDMENT', type: 'bazooka', arc: true, pref: 1200 }), false);
 });

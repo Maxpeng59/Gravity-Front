@@ -4,10 +4,7 @@
 import * as THREE from 'three';
 import { el, ucDate, fmtCr, RNG } from './util.js';
 import { suitById, AIRCRAFT, isAircraft, SHIP_MODULES, CREW_ROLES, TIMELINE } from './data.js';
-import {
-  canModifyWeapons, mobilityPercent, normalizeWeaponLoadout,
-  weaponLoadoutOptions, weaponLoadoutProfile,
-} from './loadouts.js';
+import { renderEquipmentPanel } from './equipment-ui.js';
 import {
   worldById, dist, controlOf, materialize, dematerialize, intelRadius,
   shipSpeed, maxHull, hangarBays, airCap, crewCap, simDay, news, applyOutcome,
@@ -577,47 +574,12 @@ const suitValue = s => s.cost || 32000;
 
 function appendLoadoutEditor(card, def, su){
   const editor = el('div', 'loadout-editor');
-  if (!canModifyWeapons(def)){
-    editor.classList.add('fixed');
-    editor.textContent = 'FIXED ARMAMENT · specialist or integrated weapon system';
-    card.appendChild(editor);
-    return;
-  }
-  const options = weaponLoadoutOptions(def);
-  const current = normalizeWeaponLoadout(def, su.loadout);
-  const profile = weaponLoadoutProfile(def, current);
-  const summary = el('div', 'loadout-summary');
-  summary.innerHTML = `UNIT READOUT · ARMAMENT CONTROL<br><b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
-  editor.appendChild(summary);
-  const selects = el('div', 'loadout-selects');
-  const primaryField = el('label', 'loadout-field', 'PRIMARY');
-  const primary = document.createElement('select');
-  const stock = document.createElement('option'); stock.value = 'stock'; stock.textContent = 'STOCK COMPLETE RACK'; primary.appendChild(stock);
-  for (const item of options.primary){
-    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; primary.appendChild(option);
-  }
-  primary.value = current.primary;
-  primary.onchange = () => {
-    if (primary.value === 'stock') delete su.loadout;
-    else su.loadout = { primary: primary.value, support: 'none' };
-    ctx.save(); renderPane();
-  };
-  primaryField.appendChild(primary); selects.appendChild(primaryField);
-  const supportField = el('label', 'loadout-field', 'SUPPORT');
-  const support = document.createElement('select');
-  const none = document.createElement('option'); none.value = 'none'; none.textContent = 'NONE · LIGHT RACK'; support.appendChild(none);
-  for (const item of options.support){
-    if (item.id === current.primary) continue;
-    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; support.appendChild(option);
-  }
-  support.disabled = current.primary === 'stock';
-  support.value = current.primary === 'stock' ? 'none' : current.support;
-  support.onchange = () => {
-    su.loadout = { primary: primary.value, support: support.value };
-    ctx.save(); renderPane();
-  };
-  supportField.appendChild(support); selects.appendChild(supportField);
-  editor.appendChild(selects);
+  renderEquipmentPanel(editor, def, su.loadout, next => {
+    if (!next) delete su.loadout;
+    else su.loadout = next;
+    ctx.save();
+    renderPane();
+  });
   card.appendChild(editor);
 }
 

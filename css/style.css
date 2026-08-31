@@ -93,14 +93,35 @@ button.sel{border-color:var(--acc);color:var(--acc);background:rgba(60,50,14,.35
 .enemy-row .mk{flex:0 0 auto;width:13px;text-align:center;font-size:10px;font-weight:bold;font-family:var(--mono)}
 .loadout-editor{border:1px solid var(--line);background:rgba(8,15,25,.72);padding:8px;margin:3px 0 7px}
 .loadout-editor.fixed{color:var(--dim);font-size:9px;line-height:1.5;letter-spacing:.06em}
-.loadout-summary{font-size:9px;color:var(--dim);line-height:1.5;margin-bottom:7px}
-.loadout-summary b{color:var(--acc);font-weight:normal}
-.loadout-selects{display:grid;grid-template-columns:1fr 1fr;gap:7px}
-.loadout-field{display:block;min-width:0;color:var(--dim);font-size:8px;letter-spacing:.12em}
-.loadout-field select{display:block;width:100%;margin-top:3px;font-size:9px;padding:4px;letter-spacing:0}
+.equipment-fixed-title{color:var(--acc);font-size:9px;letter-spacing:.16em;margin-bottom:5px}
+.equipment-fixed-copy{line-height:1.5}
+.equipment-head{padding:2px 1px 8px;border-bottom:1px solid var(--line)}
+.equipment-title{display:flex;justify-content:space-between;align-items:center;color:var(--dim);font-size:9px;letter-spacing:.14em}
+.equipment-title b{color:#fff;font-size:12px;font-weight:normal;letter-spacing:.04em}
+.equipment-load-track{height:7px;margin:6px 0 5px;background:#101b29;border:1px solid #263f5b}
+.equipment-load-track i{display:block;height:100%;background:linear-gradient(90deg,#4aa3ff,#ffd24a,#ff6b55)}
+.equipment-burden{color:var(--dim);font-size:8px;letter-spacing:.08em}
+.equipment-burden.light-load{color:var(--ok)}.equipment-burden.heavy-load{color:var(--zeon)}
+.equipment-slots{display:grid;grid-template-columns:1fr 1fr;gap:5px;margin:8px 0}
+.equipment-slot{min-width:0;padding:6px;border:1px solid var(--line2);background:linear-gradient(145deg,rgba(22,38,56,.9),rgba(7,13,22,.92))}
+.equipment-slot.empty{border-style:dashed;opacity:.72}
+.equipment-slot-label{display:block;color:var(--dim);font-size:7px;letter-spacing:.16em;margin-bottom:4px}
+.equipment-slot-value{display:block;color:#fff;font-size:8px;line-height:1.35;font-weight:normal;overflow-wrap:anywhere}
+.equipment-inventory-title{color:var(--acc);font-size:8px;letter-spacing:.17em;margin:9px 0 5px}
+.equipment-inventory{display:flex;flex-direction:column;gap:4px}
+.equipment-item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:center;padding:6px;
+  border:1px solid var(--line);background:rgba(7,13,22,.88)}
+.equipment-item.selected{border-color:var(--acc);background:rgba(58,47,16,.38)}
+.equipment-item-copy{min-width:0}.equipment-item-copy b{display:block;color:#fff;font-size:8.5px;font-weight:normal;line-height:1.35}
+.equipment-item-copy span{display:block;color:var(--dim);font-size:7px;line-height:1.35;margin-top:2px}
+.equipment-actions{display:flex;flex-direction:column;gap:3px;min-width:67px}
+button.equipment-action{padding:3px 5px;text-align:center;font-size:7px;letter-spacing:.07em}
+button.equipment-action.equipped{color:var(--ok);border-color:var(--ok);opacity:1}
 .row-card.ms-card{flex-wrap:wrap}
 .row-card.ms-card>.loadout-editor{flex:1 0 100%;margin:0}
-@media (max-width:760px){.loadout-selects{grid-template-columns:1fr}}
+.custom-col.preview .fold.open{display:flex;flex-direction:column;min-height:0;flex:1}
+.custom-col.preview .fold.open .fold-b{min-height:0;overflow-y:auto}
+@media (max-width:760px){.equipment-slots{grid-template-columns:1fr}}
 
 /* ---------- PvP duel lobby ---------- */
 .pvp-screen{overflow-y:auto;padding:28px 18px}
@@ -192,6 +213,10 @@ select{background:#0d1828;color:var(--txt);border:1px solid var(--line2);font-fa
 #lockon{position:absolute;inset:0;width:100%;height:100%;z-index:1}
 #crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;
   z-index:3;font-size:26px;font-weight:700;text-shadow:0 0 4px #000,0 0 10px rgba(74,163,255,.8)}
+#hud.sniper-mode #crosshair{display:none}
+#hud.sniper-mode .hud-br{opacity:.32}
+#hud.sniper-mode .hud-hint{color:#8fb9b4;opacity:.72}
+#hud.sniper-mode .hud-tc{opacity:.55}
 .cockpit-frame{--pit-glow:#53e2ff;--pit-soft:#6cf0d1;--pit-warn:#ff4852;position:absolute;inset:0;z-index:2;
   overflow:hidden;filter:drop-shadow(0 6px 16px rgba(0,0,0,.82));isolation:isolate}
 .cockpit-frame[data-faction="ZEON"]{--pit-glow:#a2ed78;--pit-soft:#75df9b;--pit-warn:#ff7b43}
