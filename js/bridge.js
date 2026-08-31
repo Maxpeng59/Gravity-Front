@@ -587,7 +587,7 @@ function appendLoadoutEditor(card, def, su){
   const current = normalizeWeaponLoadout(def, su.loadout);
   const profile = weaponLoadoutProfile(def, current);
   const summary = el('div', 'loadout-summary');
-  summary.innerHTML = `ARMAMENT MOD · <b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
+  summary.innerHTML = `UNIT READOUT · ARMAMENT CONTROL<br><b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
   editor.appendChild(summary);
   const selects = el('div', 'loadout-selects');
   const primaryField = el('label', 'loadout-field', 'PRIMARY');

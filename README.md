@@ -12,8 +12,8 @@ A browser-based Universal Century mobile-suit combat game.
 Compatible mobile suits can exchange their hand-carried primary and support
 weapons for Universal Century alternatives. The editor is available in both:
 
-- **Custom Battle → Armament Modification**
-- **Campaign → Hangar**, on each owned suit card
+- **Custom Battle → Unit Readout → Armament Control**
+- **Campaign → Hangar**, inside each owned unit readout
 
 Weapon mass changes the suit's walking, boost, hover, sand-kick, and space
 movement speed. Fixed equipment such as head vulcans, built-in cannons, and arm

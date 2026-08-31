@@ -880,7 +880,12 @@ function renderCustom(){
     card.appendChild(statBar('ARMR', s.hp / 5500));
     card.appendChild(statBar('SPD', s.boost / 240));
     card.appendChild(statBar('PWR', Math.max(...s.weapons.map(w => w.dmg * Math.min(w.rof, 3))) / 900));
-    card.onclick = () => { custom.suit = s.id; sfx('ui', 0.1); renderCustom(); };
+    card.onclick = () => {
+      custom.suit = s.id;
+      sfx('ui', 0.1);
+      renderCustom();
+      setFold('readout', true);
+    };
     grid.appendChild(card);
   }
 
@@ -994,9 +999,9 @@ $('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom
 $('btn-clear-ally').onclick = () => { custom.allies = []; renderCustom(); };
 // foldable readout / map accordion — at most ONE panel open, so the preview column never scrolls.
 // Toggling: click an open header/button to fold it away; opening one folds the other.
-function setFold(which){
+function setFold(which, forceOpen = false){
   const p = $('fold-' + which); if (!p) return;
-  const willOpen = !p.classList.contains('open');
+  const willOpen = forceOpen || !p.classList.contains('open');
   for (const w of ['readout', 'map']){ const q = $('fold-' + w); if (q) q.classList.toggle('open', w === which && willOpen); }
   if (which === 'map' && willOpen) spawnMap.show();        // draw once the canvas has real dimensions
 }

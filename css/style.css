@@ -60,6 +60,9 @@ button.sel{border-color:var(--acc);color:var(--acc);background:rgba(60,50,14,.35
 .ms-stats .sl b{color:var(--acc);font-weight:normal}
 .ms-stats .wl{font-size:9.5px;color:var(--dim);margin-top:5px;line-height:1.55}
 .ms-stats .wl b{color:var(--txt);font-weight:normal}
+.readout-section-label{margin-top:9px;padding-top:8px;border-top:1px solid var(--line);color:var(--acc);
+  font-size:9px;letter-spacing:.18em}
+.readout-loadout{margin:5px 0 1px;background:rgba(5,11,19,.82)}
 .spawn-map{width:100%;height:228px;flex-shrink:0;display:block;border:1px solid var(--line2);
   background:#08131f;cursor:grab;touch-action:none}
 .spawn-map:active{cursor:grabbing}
