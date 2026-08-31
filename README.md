@@ -34,12 +34,13 @@ mouse sensitivity drops, and the sight sways until stability builds. Hold
 breath meter drains, firing kicks the optic and costs stability, and releasing
 RMB returns immediately to the previous camera unless the sight was latched.
 
-On ground maps, humanoid mobile suits can press **K** to kneel. Lowering into
-the firing stance takes two seconds, as does standing again; movement is locked
-through both transitions and while kneeling. The braced posture reduces weapon
-spread and improves sniper stability. Allied and hostile pilots use the same
-posture automatically when they have a ranged target in their effective firing
-band, then stand to reposition or meet a close threat.
+Humanoid mobile suits can press **K** to kneel wherever they are, including
+while airborne or operating in space. Lowering into the firing stance takes two
+seconds, as does standing again; movement is locked through both transitions
+and while kneeling. The braced posture reduces weapon spread and improves
+sniper stability. Allied and hostile pilots use the same posture automatically
+when they have a ranged target in their effective firing band, then stand to
+reposition or meet a close threat.
 
 ## Campaign Challenge Runs and PvP equipment
 

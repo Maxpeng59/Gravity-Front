@@ -395,7 +395,7 @@ export function startBattle(renderer, opts, onEnd){
     ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
-    : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · ${env === 'ground' ? 'K KNEEL · ' : ''}J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE`;
+    : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
   hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
 
   let msgT = 0;
@@ -3022,7 +3022,7 @@ export function startBattle(renderer, opts, onEnd){
   }
   const NON_KNEEL_STYLES = new Set(['tank', 'guntank', 'zakutank', 'crane', 'apc', 'fighter']);
   function kneelEligible(m = player){
-    return env === 'ground' && !m.air && !m.suit.vehicle && !NON_KNEEL_STYLES.has(m.suit.style);
+    return !m.air && !m.suit.vehicle && !NON_KNEEL_STYLES.has(m.suit.style);
   }
   function setKneelTarget(m, target){
     if (!kneelEligible(m)) return false;
@@ -3032,16 +3032,11 @@ export function startBattle(renderer, opts, onEnd){
   }
   function togglePlayerKneel(){
     if (!kneelEligible(player)){
-      setMsg(SPACE ? 'KNEELING UNAVAILABLE IN SPACE' : 'THIS CHASSIS CANNOT KNEEL', 1.5);
+      setMsg('THIS CHASSIS CANNOT KNEEL', 1.5);
       return;
     }
     if (player.stomping || player.hovering || player.sandKickT > 0){
       setMsg('FINISH THE CURRENT MANEUVER BEFORE CHANGING POSTURE', 1.5);
-      return;
-    }
-    const floor = groundY(player.root.position.x, player.root.position.z) + (player.suit.hover ? 3 : 0);
-    if (player.root.position.y > floor + 1){
-      setMsg('LAND BEFORE CHANGING POSTURE', 1.5);
       return;
     }
     setKneelTarget(player, !player.kneelTarget);
@@ -3616,7 +3611,7 @@ export function startBattle(renderer, opts, onEnd){
       range: d,
       preferredRange: pref,
       currentlyKneeling: m.kneelTarget || (m.kneelBlend || 0) > 0.5,
-      eligible: kneelEligible(m) && !hurt && !m.blocking && role !== 'brawler' && role !== 'skirmisher',
+      eligible: kneelEligible(m) && !m.dropping && !hurt && !m.blocking && role !== 'brawler' && role !== 'skirmisher',
       ranged: !!w && !w.arc,
       hasTarget: !!t?.alive,
       hasLineOfSight: true,
@@ -3748,7 +3743,10 @@ export function startBattle(renderer, opts, onEnd){
     if (boost) m.fuel = Math.max(0, m.fuel - (commanderIntent ? commanderIntent.boostDrain : 18) * dt);
     else m.fuel = Math.min(m.maxFuel, m.fuel + (commanderIntent ? commanderIntent.recharge : 12) * dt);
     m.vel.lerp(desired, clamp(accel * dt, 0, 1));
-    if (postureLocked){ m.vel.x = 0; m.vel.z = 0; }
+    if (postureLocked){
+      m.vel.x = 0; m.vel.z = 0;
+      if (SPACE) m.vel.y = 0;
+    }
 
     // dodge impulse — rare and small on the ground, sharp in space
     if (!commanderIntent && !postureLocked) ai.tDodge -= dt;
@@ -3892,6 +3890,7 @@ export function startBattle(renderer, opts, onEnd){
       if (m.vel.length() > cap) m.vel.setLength(cap);
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 20 * (w.spaceBoostDrainMul || 1) * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 14 * dt);
+      if (postureLocked){ m.vel.set(0, 0, 0); m.thrusting = false; }
     } else {
       const cushionGrounded = grounded || wantsHover || (m.groundHoverBlend > 0.15 && m.root.position.y <= restY + 4.5);
       const acc = cushionGrounded ? (w.groundAccel || 70) : 30;
@@ -3964,6 +3963,7 @@ export function startBattle(renderer, opts, onEnd){
       else if (wantsHover) { /* the cushion already drained fuel above */ }
       else if (grounded) m.fuel = Math.min(m.maxFuel, m.fuel + 18 * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 8 * dt);
+      if (postureLocked){ m.vel.set(0, 0, 0); m.thrusting = false; }
     }
 
     const fallSpeed = -m.vel.y;
@@ -4786,6 +4786,7 @@ export function startBattle(renderer, opts, onEnd){
           const dh = Math.max(1, Math.hypot(tp.x - m.root.position.x, tp.z - m.root.position.z));
           poseAim(m.parts, Math.atan2((tp.y + aimHeight(m.ai.target)) - (m.root.position.y + weaponHeight(m)), dh), k);
         } else poseAim(m.parts, -0.4, k);
+        applyKneelPose(m);
         updateMeleePose(m, dt);
         updateHoverLegJets(m, dt); // pose first so each plume starts at the current animated sole
         for (const fl of m.parts.flames) fl.scale.y = lerp(fl.scale.y, 1, 8 * dt); // thrusters lit
