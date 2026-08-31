@@ -14,6 +14,13 @@ import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { applyWeaponLoadout, isSniperWeapon } from './loadouts.js';
 import {
+  advanceKneelBlend,
+  kneelAimErrorMultiplier,
+  kneelSpreadMultiplier,
+  kneelState,
+  shouldAiKneel,
+} from './combat-posture.js';
+import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
 } from './collision-math.js';
@@ -387,8 +394,8 @@ export function startBattle(renderer, opts, onEnd){
     : hintSuit && hintSuit.vehicle
     ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
-    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
-    : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
+    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
+    : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · ${env === 'ground' ? 'K KNEEL · ' : ''}J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE`;
   hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
 
   let msgT = 0;
@@ -752,6 +759,7 @@ export function startBattle(renderer, opts, onEnd){
       shieldMax: shieldCap, shieldHp: shieldCap, shieldBroken: false, shieldHitT: 99,
       legDmg: 0, sensorDmg: 0, alive: true, boosting: false, deadT: 0,
       hovering: false, groundHoverBlend: 0, groundHoverPhase: 0, hoverDustT: 0,
+      kneelTarget: false, kneelBlend: 0, kneelState: 'standing',
       hoverJetT: 0, hoverJetEmitted: 0,
       sandKickT: 0, sandKickDuration: 0.42, sandKickCd: 0, sandKickDustT: 0,
       sandKickDir: new THREE.Vector3(0, 0, 1),
@@ -2466,7 +2474,8 @@ export function startBattle(renderer, opts, onEnd){
     // w.pellets sub-shots leave in one pull (each with its own spread); w.life shortens range (spray gun)
     for (let s = 0; s < (w.pellets || 1); s++){
       const d = base.clone();
-      const spread = w.spread * (m.isPlayer && sniperMode && isSniperWeapon(w) ? lerp(0.38, 0.06, sniperSteady) : 1);
+      const spread = w.spread * kneelSpreadMultiplier(m.kneelBlend)
+        * (m.isPlayer && sniperMode && isSniperWeapon(w) ? lerp(0.38, 0.06, sniperSteady) : 1);
       d.x += (rng.next() - 0.5) * 2 * spread;
       d.y += (rng.next() - 0.5) * 2 * spread;
       d.z += (rng.next() - 0.5) * 2 * spread;
@@ -2846,6 +2855,9 @@ export function startBattle(renderer, opts, onEnd){
     m.thrusting = !!message.thrusting;
     if (Number.isFinite(Number(message.hoverBlend)))
       m.groundHoverBlend = clamp(Number(message.hoverBlend), 0, 1);
+    if (Number.isFinite(Number(message.kneelBlend)))
+      m.netKneelBlend = clamp(Number(message.kneelBlend), 0, 1);
+    m.kneelTarget = !!message.kneelTarget;
     if (Number.isFinite(Number(message.swingT))) m.swingT = clamp(Number(message.swingT), 0, 2);
     if (Number.isFinite(Number(message.swingDuration))) m.swingDuration = clamp(Number(message.swingDuration), 0.1, 2);
     if (['diagonal', 'crosscut', 'overhead', 'thrust'].includes(message.swingKind)) m.swingKind = message.swingKind;
@@ -2873,6 +2885,10 @@ export function startBattle(renderer, opts, onEnd){
     if (Number.isFinite(m.netTargetYaw)) m.yaw += wrapAngle(m.netTargetYaw - m.yaw) * (1 - Math.exp(-18 * dt));
     if (Number.isFinite(m.netTargetPitch)) m.pitch = lerp(m.pitch, m.netTargetPitch, 1 - Math.exp(-14 * dt));
     if (Number.isFinite(m.netTargetBank)) m.bank = lerp(m.bank, m.netTargetBank, 1 - Math.exp(-14 * dt));
+    if (Number.isFinite(m.netKneelBlend)){
+      m.kneelBlend = lerp(m.kneelBlend || 0, m.netKneelBlend, 1 - Math.exp(-16 * dt));
+      m.kneelState = kneelState(m.kneelBlend, m.kneelTarget);
+    }
   }
 
   function pvpStateUpdate(dt){
@@ -2900,6 +2916,8 @@ export function startBattle(renderer, opts, onEnd){
       boosting: !!player.boosting,
       thrusting: !!player.thrusting,
       hoverBlend: player.groundHoverBlend || 0,
+      kneelTarget: !!player.kneelTarget,
+      kneelBlend: player.kneelBlend || 0,
       swingT: player.swingT || 0,
       swingDuration: player.swingDuration || 0.4,
       swingKind: player.swingKind || 'diagonal',
@@ -3002,6 +3020,36 @@ export function startBattle(renderer, opts, onEnd){
   function landTypeMobileSuit(m = player){
     return groundManeuverEligible(m) && !!m.suit.landType;
   }
+  const NON_KNEEL_STYLES = new Set(['tank', 'guntank', 'zakutank', 'crane', 'apc', 'fighter']);
+  function kneelEligible(m = player){
+    return env === 'ground' && !m.air && !m.suit.vehicle && !NON_KNEEL_STYLES.has(m.suit.style);
+  }
+  function setKneelTarget(m, target){
+    if (!kneelEligible(m)) return false;
+    m.kneelTarget = !!target;
+    m.kneelState = kneelState(m.kneelBlend || 0, m.kneelTarget);
+    return true;
+  }
+  function togglePlayerKneel(){
+    if (!kneelEligible(player)){
+      setMsg(SPACE ? 'KNEELING UNAVAILABLE IN SPACE' : 'THIS CHASSIS CANNOT KNEEL', 1.5);
+      return;
+    }
+    if (player.stomping || player.hovering || player.sandKickT > 0){
+      setMsg('FINISH THE CURRENT MANEUVER BEFORE CHANGING POSTURE', 1.5);
+      return;
+    }
+    const floor = groundY(player.root.position.x, player.root.position.z) + (player.suit.hover ? 3 : 0);
+    if (player.root.position.y > floor + 1){
+      setMsg('LAND BEFORE CHANGING POSTURE', 1.5);
+      return;
+    }
+    setKneelTarget(player, !player.kneelTarget);
+    player.blocking = false;
+    setMsg(player.kneelTarget
+      ? 'KNEELING — 2.0s · MOVEMENT LOCKED · STABILITY RISING'
+      : 'RISING — 2.0s · MOVEMENT LOCKED', 2.1);
+  }
   const cyclePlayerWeapon = () => switchWeapon((player.wi + 1) % (player.suit.weapons.length + (hasSaber ? 1 : 0)));
 
   const onMouseMove = e => {
@@ -3056,6 +3104,7 @@ export function startBattle(renderer, opts, onEnd){
       else if (sniperMode){ sniperLatched = false; setSniperMode(false); }
       else if (setSniperMode(true)) sniperLatched = true;
     }
+    if (k === 'k' && !e.repeat) togglePlayerKneel();
     if (k === 'p'){ assistOn = !assistOn; setMsg(assistOn ? 'AIM SYSTEM ON — prediction + auto-aim on lock' : 'AIM SYSTEM OFF', 1.4); }
     if (k === 'f' && (player.parts.shield || hasSaber)){ // guard raises the shield OR the melee weapon; either parries a frontal melee strike
       if (sniperMode) setSniperMode(false, true);
@@ -3088,8 +3137,11 @@ export function startBattle(renderer, opts, onEnd){
   document.addEventListener('keydown', onKeyDown);
   document.addEventListener('keyup', onKeyUp);
   document.addEventListener('pointerlockchange', onLockChange);
-  setMsg(PVP ? 'CLICK TO PILOT — DUEL LIVE' : 'CLICK TO ENGAGE', 9999);
-  paused = !PVP;
+  const localAutoplay = ['localhost', '127.0.0.1', '::1'].includes(location.hostname)
+    && new URLSearchParams(location.search).has('autoplay');
+  setMsg(PVP ? 'CLICK TO PILOT — DUEL LIVE' : localAutoplay ? '' : 'CLICK TO ENGAGE', localAutoplay ? 0 : 9999);
+  paused = !PVP && !localAutoplay;
+  if (localAutoplay) started = true;
 
   function switchWeapon(i){
     if (i === player.wi) return;
@@ -3495,7 +3547,7 @@ export function startBattle(renderer, opts, onEnd){
       ai.tThink = 1.2;
       const foes = mechs.filter(o => o.alive && o.team !== m.team);
       const hostileProps = props.filter(p => p.alive && p.team !== m.team && !p.scenery);
-      if (!foes.length && !hostileProps.length){ ai.target = null; return; }
+      if (!foes.length && !hostileProps.length){ ai.target = null; setKneelTarget(m, false); return; }
       // objective pressure: raiders sometimes ignore mechs and press the structures/convoy
       // (relaxed in grand battles so the landships aren't under permanent all-army siege)
       const propBias = mission.type === 'odessa' ? 0.15 : m.team === 'ZEON' ? 0.45 : 0.3;
@@ -3536,7 +3588,7 @@ export function startBattle(renderer, opts, onEnd){
         ai.grudge = null;
       }
       ai.anchor = missionAnchor(m);       // objective leash, refreshed at think cadence
-      if (!ai.target) return;
+      if (!ai.target){ setKneelTarget(m, false); return; }
       // pick weapon by range
       const d = m.root.position.distanceTo(ai.target.root.position);
       let best = 0, bestScore = 1e9;
@@ -3549,7 +3601,7 @@ export function startBattle(renderer, opts, onEnd){
       if (best !== m.wi){ m.wi = best; resetMuzzleCycle(m, best); m.clip = m.suit.weapons[best].clip; m.reloadT = 0; m.parts?.rebuildGun?.(best); }
     }
     const t = ai.target;
-    if (!t || !t.alive){ ai.meleeRun = null; ai.pass = null; m.hopY = 0; return; }
+    if (!t || !t.alive){ ai.meleeRun = null; ai.pass = null; m.hopY = 0; setKneelTarget(m, false); return; }
 
     const toT = tmpV.subVectors(t.root.position, m.root.position);
     const d = toT.length(); toT.normalize();
@@ -3560,11 +3612,24 @@ export function startBattle(renderer, opts, onEnd){
     const retreatAt = m.vip ? Math.max(tune.retreatHp, 0.55) : tune.retreatHp;
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
     const hurt = !relentless && m.hp < m.maxHp * retreatAt;
+    const rangedPosture = shouldAiKneel({
+      range: d,
+      preferredRange: pref,
+      currentlyKneeling: m.kneelTarget || (m.kneelBlend || 0) > 0.5,
+      eligible: kneelEligible(m) && !hurt && !m.blocking && role !== 'brawler' && role !== 'skirmisher',
+      ranged: !!w && !w.arc,
+      hasTarget: !!t?.alive,
+      hasLineOfSight: true,
+      repositioning: !!ai.pass || !!commanderSpace,
+      meleeRun: !!ai.meleeRun,
+    });
+    setKneelTarget(m, rangedPosture);
 
     // ----- melee charge (ground): lunge in with the blade, swing, then thrust back out -----
     m.meleeT -= dt;
     ai.meleeCd -= dt;
-    const canMelee = !SPACE && tune.melee > 0 && !hurt && m.suit.saber && m.suit.saber.dmg > 0
+    const canMelee = !SPACE && tune.melee > 0 && !hurt && (m.kneelBlend || 0) <= 0.001
+      && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
       && !t.isProp && !t.air && !m.dropping; // never blade-charge an aircraft — the swing can't reach the sky
     if (canMelee && !ai.meleeRun && ai.meleeCd <= 0){
       // doctrine-driven blade work: brawlers (heat-hawk Zakus, Goufs) commit from further out and far
@@ -3581,6 +3646,7 @@ export function startBattle(renderer, opts, onEnd){
       }
     }
     if (ai.meleeRun){
+      setKneelTarget(m, false);
       m.hopT = (m.hopT || 0) - dt;
       m.hopY = m.hopT > 0 ? Math.sin((1 - m.hopT / 0.5) * Math.PI) * 6 : 0;
       const wy = Math.atan2(toT.x, toT.z);
@@ -3672,14 +3738,21 @@ export function startBattle(renderer, opts, onEnd){
       m.yaw += clamp(wrapAngle(travelYaw - m.yaw), -aiTurn * dt, aiTurn * dt);
       desired.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(speed);
     }
+    const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
+    if (postureLocked){
+      desired.set(0, 0, 0);
+      boost = false;
+      m.blocking = false;
+    }
     m.boosting = boost;
     if (boost) m.fuel = Math.max(0, m.fuel - (commanderIntent ? commanderIntent.boostDrain : 18) * dt);
     else m.fuel = Math.min(m.maxFuel, m.fuel + (commanderIntent ? commanderIntent.recharge : 12) * dt);
     m.vel.lerp(desired, clamp(accel * dt, 0, 1));
+    if (postureLocked){ m.vel.x = 0; m.vel.z = 0; }
 
     // dodge impulse — rare and small on the ground, sharp in space
-    if (!commanderIntent) ai.tDodge -= dt;
-    if (!commanderIntent && ai.tDodge <= 0){
+    if (!commanderIntent && !postureLocked) ai.tDodge -= dt;
+    if (!commanderIntent && !postureLocked && ai.tDodge <= 0){
       ai.tDodge = (calm ? rng.range(3.5, 7) : rng.range(1.4, 3.8)) / ai.skill / (m.suit.agile ? 1.45 : 1) / tune.dodge;
       if (m.suit.vehicle){
         // An agile wheeled vehicle dodges by surging through its steering arc,
@@ -3704,7 +3777,9 @@ export function startBattle(renderer, opts, onEnd){
       const lead = tmpV2.copy(t.root.position).addScaledVector(t.vel, d / w.speed);
       lead.y += aimHeight(t);
       const dir = lead.clone().sub(m.root.position).normalize();
-      const err = (ai.err * (1 + m.sensorDmg * 2)) / ai.skill * (commanderIntent ? commanderIntent.aimErrorMul : tune.aimMul);
+      const err = (ai.err * (1 + m.sensorDmg * 2)) / ai.skill
+        * (commanderIntent ? commanderIntent.aimErrorMul : tune.aimMul)
+        * kneelAimErrorMultiplier(m.kneelBlend);
       dir.x += rng.range(-err, err); dir.y += rng.range(-err, err); dir.z += rng.range(-err, err);
       dir.normalize();
       fire(m, dir, m.root.position.clone().addScaledVector(dir, Math.max(50, d)));
@@ -3785,7 +3860,8 @@ export function startBattle(renderer, opts, onEnd){
     const restY = (!SPACE && w.hover) ? gy + 3 : gy;          // hover suits rest a few metres up
     const grounded = !SPACE && m.root.position.y <= restY + 0.5;
     const legFactor = 1 - Math.min(0.45, m.legDmg * 0.6);
-    const wantsHover = groundManeuverEligible(m) && keys.has('e') && m.fuel > 0 && !m.stomping;
+    const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
+    const wantsHover = groundManeuverEligible(m) && !postureLocked && keys.has('e') && m.fuel > 0 && !m.stomping;
     const landHover = landTypeMobileSuit(m);
     const hoverTravelMultiplier = landHover ? 3 : 2;
     const hoverEnergyMultiplier = landHover ? 0.8 : 1;
@@ -3800,7 +3876,7 @@ export function startBattle(renderer, opts, onEnd){
     m.groundHoverPhase = (m.groundHoverPhase || 0) + dt;
     m.sandKickCd = Math.max(0, (m.sandKickCd || 0) - dt);
     const sandKicking = (m.sandKickT || 0) > 0;
-    const shiftBoosting = !sniperMode && !wantsHover && keys.has('shift') && m.fuel > 0;
+    const shiftBoosting = !sniperMode && !wantsHover && !postureLocked && keys.has('shift') && m.fuel > 0;
     m.boosting = shiftBoosting || sandKicking || wantsHover;
 
     if (SPACE){
@@ -3819,7 +3895,7 @@ export function startBattle(renderer, opts, onEnd){
     } else {
       const cushionGrounded = grounded || wantsHover || (m.groundHoverBlend > 0.15 && m.root.position.y <= restY + 4.5);
       const acc = cushionGrounded ? (w.groundAccel || 70) : 30;
-      if (hasInput && !m.stomping && !sandKicking && !wantsHover){
+      if (hasInput && !postureLocked && !m.stomping && !sandKicking && !wantsHover){
         if (w.vehicle && cushionGrounded){
           const wantYaw = Math.atan2(input.x, input.z);
           const turn = w.groundTurn || 5;
@@ -3854,8 +3930,8 @@ export function startBattle(renderer, opts, onEnd){
         m.hoverDustT = 0;
       } else {
         // vernier climb / jump
-        m.thrusting = !grounded && keys.has(' ') && m.fuel > 0 && !w.noJump;
-        if (keys.has(' ') && !w.noJump){
+        m.thrusting = !postureLocked && !grounded && keys.has(' ') && m.fuel > 0 && !w.noJump;
+        if (!postureLocked && keys.has(' ') && !w.noJump){
           if (grounded){ m.vel.y = 16 * (w.jumpMul || 1); }   // ground GMs leap 1.5x higher
           else if (m.fuel > 0){ m.vel.y = Math.min(m.vel.y + 44 * dt, 30); m.fuel = Math.max(0, m.fuel - 22 * dt); }
         }
@@ -3878,8 +3954,9 @@ export function startBattle(renderer, opts, onEnd){
           const trail = m.root.position.clone(); trail.y = gy; dust(trail, 3.1);
         }
       }
-      if (grounded && !hasInput && !sandKicking && !wantsHover){ m.vel.x *= 1 - Math.min(1, 8 * dt); m.vel.z *= 1 - Math.min(1, 8 * dt); }
-      const hcap = (sandKicking ? w.boost * 1.28 : wantsHover ? w.walk * hoverTravelMultiplier : (shiftBoosting ? w.boost : w.walk))
+      if (postureLocked){ m.vel.x = 0; m.vel.z = 0; }
+      else if (grounded && !hasInput && !sandKicking && !wantsHover){ m.vel.x *= 1 - Math.min(1, 8 * dt); m.vel.z *= 1 - Math.min(1, 8 * dt); }
+      const hcap = (postureLocked ? 0 : sandKicking ? w.boost * 1.28 : wantsHover ? w.walk * hoverTravelMultiplier : (shiftBoosting ? w.boost : w.walk))
         * legFactor * (w.hover && !wantsHover ? 1.15 : 1) * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
       const hv = Math.hypot(m.vel.x, m.vel.z);
       if (hv > hcap){ m.vel.x *= hcap / hv; m.vel.z *= hcap / hv; }
@@ -4568,6 +4645,29 @@ export function startBattle(renderer, opts, onEnd){
       || (m.isPlayer && player.wi === SABER_SLOT) || (m.networkRemote && m.networkSaberEquipped);
   }
 
+  function updateKneelTransition(m, dt){
+    if (m.networkRemote) return;
+    if (!kneelEligible(m)) m.kneelTarget = false;
+    m.kneelBlend = advanceKneelBlend(m.kneelBlend || 0, m.kneelTarget, dt);
+    m.kneelState = kneelState(m.kneelBlend, m.kneelTarget);
+  }
+
+  function applyKneelPose(m){
+    const amount = clamp(m.kneelBlend || 0, 0, 1);
+    if (m.detail){
+      m.detail.position.y = -3.6 * (m.suit.scale || 1) * amount;
+      m.detail.rotation.x = -0.055 * amount;
+    }
+    if (amount <= 0 || !m.parts?.legL || !m.parts?.legR) return;
+    // One knee folds under the chassis while the opposite foot plants forward.
+    // This remains readable on every humanoid rig even though the legacy models
+    // use a single articulated group for each complete leg.
+    m.parts.legL.rotation.x = lerp(m.parts.legL.rotation.x, -0.72, amount);
+    m.parts.legR.rotation.x = lerp(m.parts.legR.rotation.x, 1.08, amount);
+    m.parts.legL.rotation.z = lerp(m.parts.legL.rotation.z || 0, -0.16, amount);
+    m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, 0.23, amount);
+  }
+
   function mechUpdate(m, dt){
     if (!m.alive){
       if (m.deadT > 0){
@@ -4580,6 +4680,7 @@ export function startBattle(renderer, opts, onEnd){
       }
       return;
     }
+    updateKneelTransition(m, dt);
     updatePendingMelee(m, dt);
     // GAW carrier: periodically drops a Zaku that descends slowly and can only shoot (no moving)
     if (!m.networkRemote && m.suit.carrier){
@@ -4737,6 +4838,7 @@ export function startBattle(renderer, opts, onEnd){
         m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, 0.2 * side, k * sweep);
       }
     }
+    applyKneelPose(m);
     // combat stance: weapon arm raised, tracking the aim line
     if (m.isPlayer) poseAim(m.parts, camPitch, Math.min(1, 12 * dt));
     else if (m.networkRemote && Number.isFinite(m.netAimPitch))
@@ -5232,6 +5334,15 @@ export function startBattle(renderer, opts, onEnd){
       const travel = landTypeMobileSuit(player) ? '3× AUTO · 80% ENERGY' : '2× AUTO · 100% ENERGY';
       wHtml += `<br>GROUND EFFECT <span class="ammo" style="color:${player.hovering ? 'var(--ok)' : 'var(--dim)'}">E ${player.hovering ? 'HOVER ACTIVE' : 'HOVER READY'} · ${travel} · Q KICK ${kick}</span>`;
     }
+    if (kneelEligible(player)){
+      const posture = player.kneelState || kneelState(player.kneelBlend, player.kneelTarget);
+      const pct = Math.round(clamp(player.kneelBlend || 0, 0, 1) * 100);
+      const label = posture === 'standing' ? 'STANDING · K KNEEL'
+        : posture === 'rising' ? `RISING ${pct}% · MOVEMENT LOCKED`
+        : pct < 100 ? `KNEELING ${pct}% · MOVEMENT LOCKED`
+        : 'KNEELLED · STABILITY BRACED · K RISE';
+      wHtml += `<br>FIRING POSTURE <span class="ammo" style="color:${pct === 100 ? 'var(--ok)' : 'var(--dim)'}">${label}</span>`;
+    }
     if (player.suit.mobilityMultiplier != null){
       wHtml += `<br>ARMAMENT LOAD <span class="ammo">${Math.round(player.suit.carriedWeaponMass)} t · MOVE ${Math.round(player.suit.mobilityMultiplier * 100)}%</span>`;
     }
@@ -5298,12 +5409,14 @@ export function startBattle(renderer, opts, onEnd){
         sniperBreath = Math.max(0, sniperBreath - 0.22 * dt);
         if (sniperBreath <= 0.01){ sniperHoldingBreath = false; sniperBreathBlocked = true; }
       } else sniperBreath = Math.min(1, sniperBreath + (sniperBreathBlocked ? 0.11 : 0.16) * dt);
+      const kneelBrace = clamp(player.kneelBlend || 0, 0, 1);
       sniperSteady = clamp(sniperSteady + (motion < 3.5 && !player.boosting
-        ? (sniperHoldingBreath ? 3.4 : 1.15) : -2.8) * dt, 0, 1);
+        ? (sniperHoldingBreath ? 3.4 + kneelBrace * 0.8 : 1.15 + kneelBrace * 1.3) : -2.8) * dt, 0, 1);
       sniperZoom = lerp(sniperZoom, 1, Math.min(1, 7 * dt));
       const tNow = performance.now() * 0.001;
       const movePenalty = clamp(motion / 14, 0, 1);
-      const swayAmp = sniperHoldingBreath ? 0.00018 : lerp(0.0065, 0.0011, sniperSteady) * (1 + movePenalty * 1.7);
+      const swayAmp = (sniperHoldingBreath ? 0.00018 : lerp(0.0065, 0.0011, sniperSteady) * (1 + movePenalty * 1.7))
+        * lerp(1, 0.45, kneelBrace);
       sniperSwayYaw = (Math.sin(tNow * 1.73) + Math.sin(tNow * 0.61 + 1.2) * 0.42) * swayAmp;
       sniperSwayPitch = (Math.cos(tNow * 1.31 + 0.4) + Math.sin(tNow * 0.47) * 0.35) * swayAmp * 0.72;
     } else {
@@ -5955,6 +6068,7 @@ export function startBattle(renderer, opts, onEnd){
       if ('keys' in o){ keys.clear(); for (const k of o.keys) keys.add(k); }
       if ('hover' in o){ if (o.hover) keys.add('e'); else keys.delete('e'); }
       if ('blocking' in o) player.blocking = !!o.blocking;
+      if ('kneel' in o) setKneelTarget(player, !!o.kneel);
       if ('weapon' in o){
         let wi = null;
         if (o.weapon === 'saber') wi = hasSaber ? SABER_SLOT : null;
@@ -5991,6 +6105,7 @@ export function startBattle(renderer, opts, onEnd){
       if ('yaw' in o) enemy.yaw = o.yaw;
       if ('hp' in o) enemy.hp = clamp(o.hp, 1, enemy.maxHp);
       if ('blocking' in o) enemy.blocking = !!o.blocking;
+      if ('kneel' in o) setKneelTarget(enemy, !!o.kneel);
       if ('fuel' in o) enemy.fuel = clamp(o.fuel, 0, enemy.maxFuel);
       if ('freezeAi' in o && enemy.ai){
         enemy.ai.target = null;
@@ -6100,6 +6215,8 @@ export function startBattle(renderer, opts, onEnd){
           weaponIndex: networkRemote.wi,
           saberEquipped: !!networkRemote.networkSaberEquipped,
           blocking: !!networkRemote.blocking,
+          kneelTarget: !!networkRemote.kneelTarget,
+          kneelBlend: networkRemote.kneelBlend || 0,
         } : null,
         playerSuitId: player.suit.id, playerStyle: player.suit.style,
         firstPerson, viewGunChildren: viewGun.children.length, playerRootVisible: player.root.visible,
@@ -6131,6 +6248,10 @@ export function startBattle(renderer, opts, onEnd){
         pPosition: player.root.position.toArray(), pVel: player.vel.toArray(),
         pShieldHp: player.shieldHp, pShieldMax: player.shieldMax, pShieldBroken: player.shieldBroken, pBlocking: player.blocking,
         pBlockPose: player.blockPose || 0,
+        pKneelEligible: kneelEligible(player),
+        pKneelTarget: !!player.kneelTarget,
+        pKneelBlend: player.kneelBlend || 0,
+        pKneelState: player.kneelState || kneelState(player.kneelBlend, player.kneelTarget),
         groundManeuverEligible: groundManeuverEligible(player),
         landTypeMobileSuit: landTypeMobileSuit(player),
         groundClearance: terrainY === null ? null : player.root.position.y - terrainY,
@@ -6189,6 +6310,7 @@ export function startBattle(renderer, opts, onEnd){
               doctrine: m.suit.spaceDoctrine || null,
               p: m.root.position.toArray(), v: m.vel.toArray(), yaw: m.yaw,
               hp: m.hp, vip: m.vip, fuel: m.fuel, boosting: m.boosting,
+              kneelTarget: !!m.kneelTarget, kneelBlend: m.kneelBlend || 0, kneelState: m.kneelState || 'standing',
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
               phaseSide: s?.side || null, phaseUp: s?.up || null,
