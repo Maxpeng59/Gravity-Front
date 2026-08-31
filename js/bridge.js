@@ -6,13 +6,16 @@ import { el, ucDate, fmtCr, RNG } from './util.js';
 import { suitById, AIRCRAFT, isAircraft, SHIP_MODULES, CREW_ROLES, TIMELINE } from './data.js';
 import { renderEquipmentPanel } from './equipment-ui.js';
 import {
+  CHALLENGE_RUNS, buildChallengeEnemies, completeChallenge, equipmentNames, readPvpProgress,
+} from './challenge-runs.js';
+import {
   worldById, dist, controlOf, materialize, dematerialize, intelRadius,
   shipSpeed, maxHull, hangarBays, airCap, crewCap, simDay, news, applyOutcome,
   rollSalvage, activeWorldCount, zeonPoolFor, WORLD_COUNT,
 } from './galaxy.js';
 
 const $ = id => document.getElementById(id);
-const TABS = ['STAR MAP', 'OPERATIONS', 'HANGAR', 'SHIP', 'CREW', 'INTEL'];
+const TABS = ['STAR MAP', 'OPERATIONS', 'CHALLENGES', 'HANGAR', 'SHIP', 'CREW', 'INTEL'];
 let ctx = null, tab = 'STAR MAP', selectedId = null;
 
 export function enterBridge(c){
@@ -77,7 +80,7 @@ function renderNews(){
 function renderPane(){
   stopShipView();
   const pane = $('bridge-pane'); pane.innerHTML = '';
-  ({ 'STAR MAP': paneMap, OPERATIONS: paneOps, HANGAR: paneHangar, SHIP: paneShip, CREW: paneCrew, INTEL: paneIntel })[tab](pane);
+  ({ 'STAR MAP': paneMap, OPERATIONS: paneOps, CHALLENGES: paneChallenges, HANGAR: paneHangar, SHIP: paneShip, CREW: paneCrew, INTEL: paneIntel })[tab](pane);
 }
 
 // ---------- ship exterior view (SHIP tab) ----------
@@ -427,6 +430,82 @@ function settle(w, c, res){
   if (c.kind === 'FINALE' && res.victory){ ctx.endCampaign(); return; }
   ctx.save();
   enterBridge(ctx);
+}
+
+// ================= CHALLENGE RUNS =================
+function paneChallenges(pane){
+  const S = ctx.S;
+  const progress = readPvpProgress();
+  const cleared = new Set(progress.cleared);
+  const head = el('div', 'panel challenge-intro');
+  head.innerHTML = `<div class="h">SOLO COMBAT EVALUATION · PVP ARMORY CLEARANCE</div>
+    <div class="challenge-copy">Challenge Runs are permanent, high-difficulty ground sorties. You deploy alone: no hangar wingmen, no air wing and no ship fire support. Clear each trial to authorize its equipment for PvP.</div>
+    <div class="kv"><span>TRIALS CLEARED</span><b>${cleared.size} / ${CHALLENGE_RUNS.length}</b></div>
+    <div class="kv"><span>PVP EQUIPMENT UNLOCKED</span><b>${progress.unlocked.length}</b></div>`;
+  pane.appendChild(head);
+
+  CHALLENGE_RUNS.forEach((challenge, index) => {
+    const done = cleared.has(challenge.id);
+    const available = index === 0 || cleared.has(CHALLENGE_RUNS[index - 1].id);
+    const card = el('div', `row-card challenge-card${done ? ' cleared' : ''}${available ? '' : ' locked'}`);
+    const badge = el('div', 'challenge-count', String(challenge.enemyCount));
+    badge.appendChild(el('span', '', challenge.enemyCount === 1 ? 'HOSTILE' : 'HOSTILES'));
+    card.appendChild(badge);
+    const grow = el('div', 'grow');
+    grow.appendChild(el('div', 'ttl', challenge.title));
+    grow.appendChild(el('div', 'sub', challenge.description));
+    grow.appendChild(el('div', 'challenge-rules', 'GROUND · CLEAR-SKY CITY · SOLO · NO TEAMMATES · NO SUPPORT'));
+    grow.appendChild(el('div', 'challenge-reward', `PVP REWARD · ${equipmentNames(challenge.unlocks).join(' · ')}`));
+    card.appendChild(grow);
+    const launch = el('button', done ? 'small' : 'accent', done ? 'REPLAY' : available ? 'BEGIN TRIAL' : 'LOCKED');
+    launch.disabled = !available;
+    launch.onclick = () => confirmChallenge(challenge);
+    card.appendChild(launch);
+    pane.appendChild(card);
+  });
+}
+
+function confirmChallenge(challenge){
+  const S = ctx.S;
+  const suit = S.suits.find(item => item.id === S.active);
+  if (!suit){ ctx.modal('NO ACTIVE UNIT', 'Assign an active mobile suit in the HANGAR first.', [{ label: 'OK' }]); return; }
+  if (suit.hp < 0.15){
+    ctx.modal('UNIT NOT COMBAT-READY', 'Your active suit is below 15% integrity. Repair it before entering a Challenge Run.', [{ label: 'OK' }]);
+    return;
+  }
+  const reward = equipmentNames(challenge.unlocks).join('\n· ');
+  ctx.modal(challenge.title,
+    `${challenge.enemyCount} hostile unit${challenge.enemyCount === 1 ? '' : 's'} on the ground in Clear-Sky City.\n\n`
+      + `SOLO MISSION — no teammates, wingmen, aircraft or ship support will be carried.\n`
+      + `Failure damages your active campaign unit.\n\nPVP CLEARANCE REWARD:\n· ${reward}`,
+    [{ label: 'DEPLOY ALONE', cls: 'accent', fn: () => launchChallenge(challenge) }, { label: 'ABORT' }]);
+}
+
+function launchChallenge(challenge){
+  const S = ctx.S;
+  const terrainSeed = [...`${S.seed}:${challenge.id}`].reduce((hash, char) => Math.imul(hash ^ char.charCodeAt(0), 16777619) >>> 0, 2166136261);
+  launchSortie({
+    env: 'ground', biome: 'verdant', mapId: 'clearcity', terrainSeed,
+    objective: `${challenge.title} · SOLO GROUND CHALLENGE`,
+    enemies: buildChallengeEnemies(challenge), allies: [],
+    spawn: { player: { x: 0, z: -650 } },
+    mission: { type: 'destroy', solo: true, challenge: true },
+  }, res => {
+    if (res.victory){
+      const award = completeChallenge(challenge.id);
+      S.challengeClears ||= [];
+      if (!S.challengeClears.includes(challenge.id)) S.challengeClears.push(challenge.id);
+      const names = equipmentNames(award.newUnlocks);
+      news(S, names.length
+        ? `${challenge.title} cleared. PvP equipment authorized: ${names.join(', ')}.`
+        : `${challenge.title} cleared again. All assigned PvP rewards were already authorized.`, 'good');
+    } else {
+      news(S, `${challenge.title} failed. The evaluation remains uncleared.`, 'warn');
+    }
+    ctx.save();
+    tab = 'CHALLENGES';
+    enterBridge(ctx);
+  });
 }
 
 // ================= INVASION: two-phase planetary liberation =================

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { suitById } from '../js/data.js';
 import {
-  applyWeaponLoadout, canModifyWeapons, isSniperWeapon, normalizeWeaponLoadout,
+  applyWeaponLoadout, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
   weaponLoadoutOptions, weaponLoadoutProfile,
 } from '../js/loadouts.js';
 
@@ -47,4 +47,16 @@ test('precision weapons expose sniper optics while ordinary and artillery weapon
   assert.equal(isSniperWeapon(gmSniper), true);
   assert.equal(isSniperWeapon(beamSpray), false);
   assert.equal(isSniperWeapon({ name: 'ARTILLERY BOMBARDMENT', type: 'bazooka', arc: true, pref: 1200 }), false);
+});
+
+test('PvP restriction falls back to stock and removes a locked support weapon', () => {
+  const gm = suitById('gm');
+  assert.deepEqual(
+    normalizeRestrictedWeaponLoadout(gm, { primary: 'fed_sniper', support: 'none' }, new Set(['fed_90mm'])),
+    { primary: 'stock', support: 'stock' },
+  );
+  assert.deepEqual(
+    normalizeRestrictedWeaponLoadout(gm, { primary: 'fed_90mm', support: 'fed_hyper_bazooka' }, new Set(['fed_90mm'])),
+    { primary: 'fed_90mm', support: 'none' },
+  );
 });

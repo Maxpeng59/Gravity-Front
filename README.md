@@ -30,6 +30,19 @@ Select a compatible weapon and press **N** to enter or leave the 6× sight. The
 suit moves slowly while scoped, mouse sensitivity drops, and accuracy improves
 as the stability meter fills while the unit remains still.
 
+## Campaign Challenge Runs and PvP equipment
+
+The Campaign bridge includes **CHALLENGES**, a sequential set of solo surface
+evaluations against 1, 5, 10, 20, 35, and finally 50 hostile units. Challenge
+Runs never carry hangar wingmen, aircraft, teammates, or ship fire support.
+Clears are saved as device-level PvP progression and permanently authorize the
+listed hand equipment in the online PvP equipment screen. Stock armament stays
+available even before a challenge is cleared.
+
+Online PvP always deploys both pilots on the ground in **Clear-Sky City**. Each
+pilot's equipped right-hand/support loadout is exchanged with the duel packet
+and reproduced for the remote machine.
+
 ## Start a PvP duel
 
 1. Both players open the same deployed game and choose **PVP DUEL — ONLINE**.

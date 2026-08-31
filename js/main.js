@@ -12,9 +12,11 @@ import { enterBridge, leaveBridge } from './bridge.js';
 import { music } from './music.js';
 import { preloadModels } from './models.js';
 import {
-  applyWeaponLoadout,
+  applyWeaponLoadout, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
+  weaponLoadoutProfile,
 } from './loadouts.js';
 import { renderEquipmentPanel } from './equipment-ui.js';
+import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -325,7 +327,7 @@ function newCampaign(){
     air: [{ id: 'saberfish', hp: 1 }], // the air wing starts with a single Saberfish
     crew: [{ name: 'Astra Holt', role: 'mechanic', skill: 2, wage: 150, job: 'MAINTAIN MS' }],
     locId: 'c2', travel: null,
-    worlds: genGalaxy(seed),
+    worlds: genGalaxy(seed), challengeClears: [],
     mods: { fed: 1, zeon: 1 }, flags: {}, eventsSeen: [], news: [],
   };
   clearDetails();
@@ -368,6 +370,7 @@ function loadCampaign(){
   // air wing: old saves predate it; seed a starting Saberfish, drop unknown craft
   if (!Array.isArray(S.air)) S.air = [{ id: 'saberfish', hp: 1 }];
   else S.air = S.air.filter(a => suitById(a.id));
+  if (!Array.isArray(S.challengeClears)) S.challengeClears = [];
   clearDetails();
   show('bridge');
   enterBridge(ctx);
@@ -397,12 +400,14 @@ $('btn-quit').onclick = () => modal('RETURN TO MENU', 'Progress is saved automat
 // the actual duel over a reliable browser-to-browser data channel.
 // Bump this whenever networked combat state changes so cached/older Pages
 // clients fail clearly instead of entering a silently divergent duel.
-const PVP_PROTOCOL = 3;
+const PVP_PROTOCOL = 4;
 const PVP_CALLSIGN_KEY = 'gravityFront.pvp.callsign';
 const PVP_SUIT_KEY = 'gravityFront.pvp.suit';
+const PVP_LOADOUT_KEY = 'gravityFront.pvp.loadouts.v1';
+const PVP_MAP_ID = 'clearcity';
 const pvpSession = {
   link: null, role: null, peer: null, busy: false, inBattle: false,
-  initialized: false, generation: 0,
+  initialized: false, generation: 0, loadouts: {}, unlockedEquipment: new Set(),
 };
 if (LOCAL_DEBUG) Object.defineProperty(window, '__gfPvp', { get: () => pvpSession });
 
@@ -427,21 +432,58 @@ function initPvpLobby(){
     option.textContent = `${suit.faction} · ${suit.name}`;
     suitSelect.appendChild(option);
   }
-  for (const map of MAPS){
+  for (const map of MAPS.filter(item => item.id === PVP_MAP_ID)){
     const option = document.createElement('option');
     option.value = map.id;
     option.textContent = map.name;
     mapSelect.appendChild(option);
   }
-  let savedCallsign = '', savedSuit = '';
+  let savedCallsign = '', savedSuit = '', savedLoadouts = {};
   try {
     savedCallsign = localStorage.getItem(PVP_CALLSIGN_KEY) || '';
     savedSuit = localStorage.getItem(PVP_SUIT_KEY) || '';
+    savedLoadouts = JSON.parse(localStorage.getItem(PVP_LOADOUT_KEY) || '{}');
   } catch {}
+  pvpSession.loadouts = savedLoadouts && typeof savedLoadouts === 'object' ? savedLoadouts : {};
   $('pvp-callsign').value = savedCallsign || `PILOT-${Math.floor(100 + Math.random() * 900)}`;
   suitSelect.value = pvpSuit(savedSuit) ? savedSuit : 'rx78';
-  mapSelect.value = pvpMap('clearcity') ? 'clearcity' : MAPS[0]?.id || '';
+  mapSelect.value = PVP_MAP_ID;
+  renderPvpEquipment();
   renderPvpLobby();
+}
+function currentPvpLoadout(suit){
+  return normalizeRestrictedWeaponLoadout(suit, pvpSession.loadouts[suit.id], pvpSession.unlockedEquipment);
+}
+function savePvpLoadouts(){
+  try { localStorage.setItem(PVP_LOADOUT_KEY, JSON.stringify(pvpSession.loadouts)); } catch {}
+}
+function renderPvpEquipment(){
+  if (!pvpSession.initialized) return;
+  const progress = readPvpProgress();
+  pvpSession.unlockedEquipment = new Set(progress.unlocked);
+  const suit = pvpSuit($('pvp-suit').value) || pvpSuit('rx78') || SUITS[0];
+  const loadout = currentPvpLoadout(suit);
+  if (loadout.primary === 'stock') delete pvpSession.loadouts[suit.id];
+  else pvpSession.loadouts[suit.id] = loadout;
+  savePvpLoadouts();
+  const total = new Set(CHALLENGE_RUNS.flatMap(challenge => challenge.unlocks)).size;
+  $('pvp-progression').textContent = progress.cleared.length
+    ? `CHALLENGE CLEARANCE ${progress.cleared.length}/6 · EQUIPMENT ${progress.unlocked.length}/${total}`
+    : 'STOCK EQUIPMENT ONLY · CLEAR CAMPAIGN CHALLENGE RUNS TO UNLOCK PVP ARMAMENTS';
+  renderEquipmentPanel($('pvp-equipment'), suit, loadout, next => {
+    const normalized = normalizeRestrictedWeaponLoadout(suit, next, pvpSession.unlockedEquipment);
+    if (normalized.primary === 'stock') delete pvpSession.loadouts[suit.id];
+    else pvpSession.loadouts[suit.id] = normalized;
+    savePvpLoadouts();
+    renderPvpEquipment();
+    sendPvpHello();
+  }, {
+    unlockedIds: pvpSession.unlockedEquipment,
+    lockedLabel: item => {
+      const source = challengeForEquipment(item.id);
+      return source ? `LOCKED · CLEAR ${source.title}` : 'LOCKED · CAMPAIGN CHALLENGE REWARD';
+    },
+  });
 }
 function renderPvpLobby(){
   if (!pvpSession.initialized) return;
@@ -455,11 +497,11 @@ function renderPvpLobby(){
   $('btn-pvp-reset').disabled = pvpSession.busy || pvpSession.inBattle || !occupied;
   $('btn-pvp-launch').disabled = pvpSession.busy || pvpSession.inBattle
     || pvpSession.role !== 'host' || !connected || !pvpSession.peer;
-  $('pvp-map').disabled = pvpSession.busy || pvpSession.inBattle || pvpSession.role === 'guest';
+  $('pvp-map').disabled = true;
   $('pvp-suit').disabled = pvpSession.inBattle;
   $('pvp-callsign').disabled = pvpSession.inBattle;
   $('pvp-peer').textContent = pvpSession.peer
-    ? `OPPONENT · ${pvpSession.peer.callsign} · ${pvpSession.peer.suit.name}`
+    ? `OPPONENT · ${pvpSession.peer.callsign} · ${pvpSession.peer.suit.name} · ${weaponLoadoutProfile(pvpSession.peer.suit, pvpSession.peer.loadout).label}`
     : 'OPPONENT · NOT CONNECTED';
 }
 function setPvpBusy(busy){
@@ -488,7 +530,8 @@ function pvpLocalIdentity(){
     localStorage.setItem(PVP_CALLSIGN_KEY, callsign);
     localStorage.setItem(PVP_SUIT_KEY, suit.id);
   } catch {}
-  return { callsign, suitId: suit.id };
+  const loadout = currentPvpLoadout(suit);
+  return { callsign, suitId: suit.id, loadout };
 }
 function sendPvpHello(){
   const link = pvpSession.link;
@@ -506,9 +549,9 @@ function handlePvpMessage(link, message){
       pvpStatus('INCOMPATIBLE GAME VERSION · BOTH PLAYERS MUST USE THE SAME BUILD', 'error');
       return;
     }
-    const suit = pvpSuit(message.suitId);
-    if (!suit) return;
-    pvpSession.peer = { callsign: cleanCallsign(message.callsign), suitId: suit.id, suit };
+    let pilot;
+    try { pilot = validatePvpPilot(message, 'Opponent'); } catch { return; }
+    pvpSession.peer = pilot;
     pvpStatus(`DIRECT LINK READY · ${pvpSession.peer.callsign} CONNECTED`, 'connected');
     renderPvpLobby();
     return;
@@ -564,14 +607,16 @@ function createPvpLink(role){
 function validatePvpPilot(value, label){
   const suit = pvpSuit(value?.suitId);
   if (!suit) throw new Error(`${label} selected an unknown mobile suit.`);
-  return { callsign: cleanCallsign(value.callsign), suitId: suit.id, suit };
+  const loadout = normalizeWeaponLoadout(suit, value?.loadout || null);
+  return { callsign: cleanCallsign(value.callsign), suitId: suit.id, suit, loadout };
 }
 function startPvpBattle(packet){
   if (packet?.protocol !== PVP_PROTOCOL) throw new Error('The launch packet uses an incompatible game version.');
   if (!pvpSession.link?.connected) throw new Error('The direct peer link is no longer connected.');
   if (pvpSession.role !== 'host' && pvpSession.role !== 'guest') throw new Error('Choose Host or Join before launching.');
-  const map = pvpMap(packet.mapId);
-  if (!map) throw new Error('The host selected an unknown battle map.');
+  if (packet.mapId !== PVP_MAP_ID) throw new Error('PvP duels must use the standard Clear-Sky City map.');
+  const map = pvpMap(PVP_MAP_ID);
+  if (!map) throw new Error('The standard PvP city map is unavailable.');
   const host = validatePvpPilot(packet.host, 'Host');
   const guest = validatePvpPilot(packet.guest, 'Guest');
   const local = pvpSession.role === 'host' ? host : guest;
@@ -592,9 +637,11 @@ function startPvpBattle(packet){
     terrainSeed,
     playerSuitId: local.suitId,
     playerHp: 1,
+    playerLoadout: local.loadout,
     playerYaw: pvpSession.role === 'host' ? 0 : Math.PI,
     enemies: [{
       suitId: remote.suitId,
+      loadout: remote.loadout,
       name: remote.callsign,
       pos: remoteSpawn,
       exactPos: true,
@@ -622,6 +669,7 @@ function startPvpBattle(packet){
 $('btn-pvp').onclick = () => {
   music.play('requiem');
   initPvpLobby();
+  renderPvpEquipment();
   discardPvpLink(true);
   pvpStatus('LINK OFFLINE · CHOOSE HOST OR JOIN', 'idle');
   show('menu-pvp');
@@ -730,7 +778,7 @@ $('btn-pvp-copy').onclick = async () => {
 $('btn-pvp-launch').onclick = () => {
   if (pvpSession.role !== 'host' || !pvpSession.link?.connected || !pvpSession.peer) return;
   const host = pvpLocalIdentity();
-  const map = pvpMap($('pvp-map').value);
+  const map = pvpMap(PVP_MAP_ID);
   if (!map) return;
   sendPvpHello();
   const seedArray = new Uint32Array(1);
@@ -739,10 +787,10 @@ $('btn-pvp-launch').onclick = () => {
   const packet = {
     type: 'launch',
     protocol: PVP_PROTOCOL,
-    mapId: map.id,
+    mapId: PVP_MAP_ID,
     terrainSeed: seedArray[0],
     host,
-    guest: { callsign: pvpSession.peer.callsign, suitId: pvpSession.peer.suitId },
+    guest: { callsign: pvpSession.peer.callsign, suitId: pvpSession.peer.suitId, loadout: pvpSession.peer.loadout },
   };
   try {
     pvpSession.link.send(packet);
@@ -751,7 +799,7 @@ $('btn-pvp-launch').onclick = () => {
     pvpStatus(`LAUNCH FAILED · ${error.message}`, 'error');
   }
 };
-$('pvp-suit').addEventListener('change', sendPvpHello);
+$('pvp-suit').addEventListener('change', () => { renderPvpEquipment(); sendPvpHello(); });
 $('pvp-callsign').addEventListener('change', sendPvpHello);
 $('pvp-incoming-code').addEventListener('input', renderPvpLobby);
 addEventListener('beforeunload', () => pvpSession.link?.close());

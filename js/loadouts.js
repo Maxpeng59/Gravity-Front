@@ -103,6 +103,16 @@ export function normalizeWeaponLoadout(suit, loadout){
   return { primary, support: support === primary ? 'none' : support };
 }
 
+export function normalizeRestrictedWeaponLoadout(suit, loadout, unlockedIds){
+  if (!loadout || loadout.primary === 'stock') return { primary: 'stock', support: 'stock' };
+  const unlocked = unlockedIds instanceof Set ? unlockedIds : new Set(unlockedIds || []);
+  if (!unlocked.has(loadout.primary)) return { primary: 'stock', support: 'stock' };
+  const normalized = normalizeWeaponLoadout(suit, loadout);
+  if (normalized.primary !== loadout.primary) return { primary: 'stock', support: 'stock' };
+  if (normalized.support !== 'none' && !unlocked.has(normalized.support)) normalized.support = 'none';
+  return normalized;
+}
+
 export function weaponLoadoutProfile(suit, loadout){
   const normalized = normalizeWeaponLoadout(suit, loadout);
   const stockMass = suit.weapons.reduce((sum, weapon) => sum + estimatedMass(weapon), 0);

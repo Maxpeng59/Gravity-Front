@@ -1,5 +1,5 @@
 import {
-  canModifyWeapons, isSniperWeapon, mobilityPercent, normalizeWeaponLoadout,
+  canModifyWeapons, isSniperWeapon, mobilityPercent, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
   weaponLoadoutOptions, weaponLoadoutProfile,
 } from './loadouts.js';
 
@@ -27,7 +27,7 @@ function action(label, selected, disabled, onClick){
   return button;
 }
 
-export function renderEquipmentPanel(container, suit, loadout, onChange){
+export function renderEquipmentPanel(container, suit, loadout, onChange, config = {}){
   container.replaceChildren();
   container.classList.toggle('fixed', !canModifyWeapons(suit));
   if (!canModifyWeapons(suit)){
@@ -39,7 +39,11 @@ export function renderEquipmentPanel(container, suit, loadout, onChange){
   }
 
   const options = weaponLoadoutOptions(suit);
-  const current = normalizeWeaponLoadout(suit, loadout);
+  const restricted = config.unlockedIds != null;
+  const unlocked = config.unlockedIds instanceof Set ? config.unlockedIds : new Set(config.unlockedIds || []);
+  const current = restricted
+    ? normalizeRestrictedWeaponLoadout(suit, loadout, unlocked)
+    : normalizeWeaponLoadout(suit, loadout);
   const profile = weaponLoadoutProfile(suit, current);
   const head = node('div', 'equipment-head');
   const title = node('div', 'equipment-title');
@@ -75,18 +79,20 @@ export function renderEquipmentPanel(container, suit, loadout, onChange){
   for (const item of inventoryItems){
     const inPrimary = current.primary === item.id;
     const inSupport = current.support === item.id;
-    const card = node('div', `equipment-item${inPrimary || inSupport ? ' selected' : ''}`);
+    const locked = restricted && !unlocked.has(item.id);
+    const card = node('div', `equipment-item${inPrimary || inSupport ? ' selected' : ''}${locked ? ' locked' : ''}`);
     const copy = node('div', 'equipment-item-copy');
     copy.appendChild(node('b', '', item.name));
     const w = item.weapon;
     copy.appendChild(node('span', '', `${item.mass.toFixed(1)} t · ${String(w.type || 'weapon').toUpperCase()} · DMG ${w.dmg} · RNG ${w.pref || w.speed || '—'}${isSniperWeapon(w) ? ' · N SCOPE' : ''}`));
+    if (locked) copy.appendChild(node('span', 'equipment-lock-note', config.lockedLabel?.(item) || 'LOCKED · CLEAR A CAMPAIGN CHALLENGE RUN'));
     card.appendChild(copy);
     const actions = node('div', 'equipment-actions');
-    if (item.slots.includes('primary')) actions.appendChild(action('EQUIP R', inPrimary, false, () => onChange({
+    if (item.slots.includes('primary')) actions.appendChild(action(locked ? 'LOCKED' : 'EQUIP R', inPrimary, locked, () => onChange({
         primary: item.id,
         support: current.support === 'stock' || current.support === item.id ? 'none' : current.support,
       })));
-    if (item.slots.includes('support')) actions.appendChild(action('EQUIP S', inSupport, profile.stock || inPrimary, () => onChange({
+    if (item.slots.includes('support')) actions.appendChild(action(locked ? 'LOCKED' : 'EQUIP S', inSupport, locked || profile.stock || inPrimary, () => onChange({
       primary: current.primary,
       support: item.id,
     })));
