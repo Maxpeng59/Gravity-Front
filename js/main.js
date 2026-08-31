@@ -11,6 +11,10 @@ import { PvpLink } from './pvp.js';
 import { enterBridge, leaveBridge } from './bridge.js';
 import { music } from './music.js';
 import { preloadModels } from './models.js';
+import {
+  applyWeaponLoadout, canModifyWeapons, mobilityPercent,
+  normalizeWeaponLoadout, weaponLoadoutOptions, weaponLoadoutProfile,
+} from './loadouts.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -60,7 +64,7 @@ const bg = (() => {
 
 // ---------- custom battle: spinning MS preview (own tiny renderer) ----------
 const msPreview = (() => {
-  let rr = null, scene = null, cam = null, holder = null, curId = null, spin = 0.6;
+  let rr = null, scene = null, cam = null, holder = null, curKey = null, spin = 0.6;
   function disposeModel(group){
     const geometries = new Set(), materials = new Set(), textures = new Set();
     group.traverse(o => {
@@ -89,11 +93,13 @@ const msPreview = (() => {
     const f = new THREE.DirectionalLight(0xbcd0e8, 0.5); f.position.set(-30, 18, -22); scene.add(f);
     return true;
   }
-  function setSuit(id){
-    if (!ensure() || id === curId) return;
-    curId = id;
+  function setSuit(id, loadout = null){
+    const key = `${id}:${loadout?.primary || 'stock'}:${loadout?.support || 'stock'}`;
+    if (!ensure() || key === curKey) return;
+    curKey = key;
     if (holder){ scene.remove(holder); disposeModel(holder); holder = null; }
-    const suit = suitById(id); if (!suit) return;
+    const baseSuit = suitById(id); if (!baseSuit) return;
+    const suit = applyWeaponLoadout(baseSuit, loadout);
     let root;
     try { root = buildMech(suit).root; } catch (e){ return; }
     const box = new THREE.Box3().setFromObject(root);
@@ -130,6 +136,7 @@ function renderMsStats(suit){
     [suit.air ? 'AIRSPEED' : 'WALK', suit.air ? suit.boost : (suit.walk != null ? suit.walk : '—')],
     ['BOOST', suit.boost],
   ];
+  if (suit.mobilityMultiplier != null) rows.push(['LOADOUT MOVE', `${Math.round(suit.mobilityMultiplier * 100)}%`]);
   if (suit.troopCapacity) rows.push(['TROOPS', suit.troopCapacity]);
   let html = `<div class="nm">${suit.name}</div><div class="cd">${suit.code || ''}</div>`;
   for (const [k, v] of rows) html += `<div class="sl"><span>${k}</span><b>${v}</b></div>`;
@@ -754,7 +761,7 @@ addEventListener('beforeunload', () => pvpSession.link?.close());
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
 const PER_SIDE_CAP = 200, ENTRY_MAX = 200, ROWS_MAX = 12, LANDSHIP_CAP = 12; // 12 Big Trays fought at Odessa; capital props have no mech LOD
-const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0,
+const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
 // relief you see IS the battlefield (mountains/hills/valleys). Only for random biomes (no authored map) + ground.
@@ -812,6 +819,52 @@ function statBar(label, frac){
   const fill = el('i'); fill.style.width = Math.round(Math.min(1, frac) * 100) + '%';
   bar.appendChild(fill); line.appendChild(bar);
   return line;
+}
+
+function renderCustomLoadout(){
+  const box = $('custom-loadout'); if (!box) return;
+  const suit = suitById(custom.suit);
+  box.innerHTML = '';
+  box.classList.toggle('fixed', !canModifyWeapons(suit));
+  if (!canModifyWeapons(suit)){
+    box.textContent = suit.air ? 'Aircraft weapon stations are fixed for this sortie.' : 'Integrated or specialist armament — no field-compatible hand weapon rack.';
+    return;
+  }
+  const options = weaponLoadoutOptions(suit);
+  const current = normalizeWeaponLoadout(suit, custom.loadouts[suit.id]);
+  const profile = weaponLoadoutProfile(suit, current);
+  const summary = el('div', 'loadout-summary');
+  summary.innerHTML = `<b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
+  box.appendChild(summary);
+  const selects = el('div', 'loadout-selects');
+  const primaryField = el('label', 'loadout-field', 'PRIMARY');
+  const primary = document.createElement('select');
+  const stock = document.createElement('option'); stock.value = 'stock'; stock.textContent = 'STOCK COMPLETE RACK'; primary.appendChild(stock);
+  for (const item of options.primary){
+    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; primary.appendChild(option);
+  }
+  primary.value = current.primary;
+  primary.onchange = () => {
+    if (primary.value === 'stock') delete custom.loadouts[suit.id];
+    else custom.loadouts[suit.id] = { primary: primary.value, support: 'none' };
+    sfx('ui', 0.1); renderCustom();
+  };
+  primaryField.appendChild(primary); selects.appendChild(primaryField);
+  const supportField = el('label', 'loadout-field', 'SUPPORT');
+  const support = document.createElement('select');
+  const none = document.createElement('option'); none.value = 'none'; none.textContent = 'NONE · LIGHT RACK'; support.appendChild(none);
+  for (const item of options.support){
+    if (item.id === current.primary) continue;
+    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; support.appendChild(option);
+  }
+  support.disabled = current.primary === 'stock';
+  support.value = current.primary === 'stock' ? 'none' : current.support;
+  support.onchange = () => {
+    custom.loadouts[suit.id] = { primary: primary.value, support: support.value };
+    sfx('ui', 0.1); renderCustom();
+  };
+  supportField.appendChild(support); selects.appendChild(supportField);
+  box.appendChild(selects);
 }
 
 function renderCustom(){
@@ -910,8 +963,10 @@ function renderCustom(){
   mkList('ally-list', custom.allies, 'ally');
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
   // right column: spinning model + stat readout + deployment map
-  msPreview.setSuit(custom.suit);
-  renderMsStats(suitById(custom.suit));
+  renderCustomLoadout();
+  const loadout = custom.loadouts[custom.suit] || null;
+  msPreview.setSuit(custom.suit, loadout);
+  renderMsStats(applyWeaponLoadout(suitById(custom.suit), loadout));
   ensureMapControls();
   spawnMap.show();
 }
@@ -980,7 +1035,7 @@ $('btn-launch-custom').onclick = () => {
     biome: custom.biome === 'random' ? rng.pick(BIOME_LIST) : custom.biome,
     mapId: activeMap ? activeMap.id : null,     // authored battlefield
     terrainSeed: custom.terrainSeed,            // the exact seed previewed on the deployment map → WYSIWYG terrain
-    playerSuitId: custom.suit, playerHp: 1,
+    playerSuitId: custom.suit, playerHp: 1, playerLoadout: custom.loadouts[custom.suit] || null,
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
     mission: { aircraftCore: true, customShips }, // fielded fighters & landships count toward the win

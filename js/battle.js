@@ -12,6 +12,7 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
+import { applyWeaponLoadout } from './loadouts.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
@@ -717,9 +718,11 @@ export function startBattle(renderer, opts, onEnd){
   // reinforcement APCs use this hook to dismount their own passenger squads too.
   let deployCarrierPassengers = null;
   function spawnMech(spec, team, pos, { isPlayer = false, core = true, fromBlip = false, hpFrac = 1 } = {}){
+    const specObject = typeof spec === 'object' ? spec : null;
     let suit = suitById(typeof spec === 'string' ? spec : spec.suitId);
     const isNetworkRemote = PVP && typeof spec === 'object' && !!spec.networkRemote;
     if (SPACE && suit.groundOnly && !isPlayer) suit = suitById(SPACE_SUB[suit.id] || (suit.faction === 'ZEON' ? 'zaku2' : 'gm'));
+    suit = applyWeaponLoadout(suit, specObject?.loadout || null);
     const air = !!suit.air;
     if (air && !mission.aircraftCore) core = false; // aircraft are support and don't gate a mission's win — except custom battles, which opt them in so a fielded air force must actually be destroyed
     const ace = typeof spec === 'object' && spec.ace;
@@ -847,7 +850,7 @@ export function startBattle(renderer, opts, onEnd){
     const key = c.x + ',' + c.z, i = clusterCount.get(key) || 0; clusterCount.set(key, i + 1);
     return new THREE.Vector3(c.x + ((i % 5) - 2) * 70 + rng.range(-22, 22), 0, c.z - Math.floor(i / 5) * 70 + rng.range(-22, 22));
   };
-  const player = spawnMech({ suitId: opts.playerSuitId }, 'FED',
+  const player = spawnMech({ suitId: opts.playerSuitId, loadout: opts.playerLoadout || null }, 'FED',
     spawnCenters ? new THREE.Vector3(spawnCenters.player.x, 0, spawnCenters.player.z) : new THREE.Vector3(0, 0, 0),
     { isPlayer: true, hpFrac: opts.playerHp ?? 1 });
   if (PVP && multiplayer.localName) player.name = multiplayer.localName;
@@ -873,7 +876,7 @@ export function startBattle(renderer, opts, onEnd){
   });
   // hangar wingmen: a capped squadron sorties (a full 20-bay hangar would swamp the field)
   (opts.wingmen || []).slice(0, MAX_WING).forEach((wsp, i) => {
-    const m = spawnMech({ suitId: wsp.suitId, name: wsp.name }, 'FED',
+    const m = spawnMech({ suitId: wsp.suitId, name: wsp.name, loadout: wsp.loadout || null }, 'FED',
       ringPos(195 + i * 38, 34, 16), { core: false, hpFrac: wsp.hpFrac ?? 1 });
     m.wingId = wsp.wingId;
   });
@@ -5120,6 +5123,9 @@ export function startBattle(renderer, opts, onEnd){
       const kick = player.sandKickCd > 0 ? `${player.sandKickCd.toFixed(1)}s` : 'READY';
       const travel = landTypeMobileSuit(player) ? '3× AUTO · 80% ENERGY' : '2× AUTO · 100% ENERGY';
       wHtml += `<br>GROUND EFFECT <span class="ammo" style="color:${player.hovering ? 'var(--ok)' : 'var(--dim)'}">E ${player.hovering ? 'HOVER ACTIVE' : 'HOVER READY'} · ${travel} · Q KICK ${kick}</span>`;
+    }
+    if (player.suit.mobilityMultiplier != null){
+      wHtml += `<br>ARMAMENT LOAD <span class="ammo">${Math.round(player.suit.carriedWeaponMass)} t · MOVE ${Math.round(player.suit.mobilityMultiplier * 100)}%</span>`;
     }
     wEl.innerHTML = wHtml;
     objEl.textContent = objectiveText();

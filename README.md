@@ -2,19 +2,23 @@
 
 A browser-based Universal Century mobile-suit combat game.
 
-**Play the public build:** <https://maxpeng59.github.io/Gravity-Front/>
+**Play the public build:** <https://gravity-front.jimpeng.chatgpt.site/>
 
 > **Unofficial fan project.** Gravity Front is not affiliated with or endorsed by
 > Bandai Namco, Sunrise, or the owners of the Gundam trademarks and designs.
 
-## Play through GitHub Pages
+## Armament modification
 
-1. Push this folder to a GitHub repository.
-2. Open the repository's **Settings → Pages**.
-3. Choose **Deploy from a branch**, select the branch containing the game, and publish from `/ (root)`.
-4. Open the HTTPS GitHub Pages URL after the deployment finishes.
+Compatible mobile suits can exchange their hand-carried primary and support
+weapons for Universal Century alternatives. The editor is available in both:
 
-The game is entirely static, so it does not need a build step.
+- **Custom Battle → Armament Modification**
+- **Campaign → Hangar**, on each owned suit card
+
+Weapon mass changes the suit's walking, boost, hover, sand-kick, and space
+movement speed. Fixed equipment such as head vulcans, built-in cannons, and arm
+weapons stays attached. Campaign configurations are saved per mobile suit and
+are also used when that suit deploys as a wingman.
 
 ## Start a PvP duel
 
@@ -26,7 +30,11 @@ The game is entirely static, so it does not need a build step.
 Both players should refresh the game before connecting so they are running the
 same published combat version.
 
-The duel uses a direct WebRTC data channel. GitHub Pages hosts the game files; it is not the multiplayer server. The included public STUN configuration works for many home networks, but some restrictive or symmetric-NAT networks require a TURN relay. A TURN service can be added later without changing the combat protocol.
+The duel uses a direct WebRTC data channel. The website hosts the game files; it
+is not the multiplayer server. The included public STUN configuration works for
+many home networks, but some restrictive or symmetric-NAT networks require a
+TURN relay. A TURN service can be added later without changing the combat
+protocol.
 
 PvP is intended for friendly matches. It is peer-to-peer and has no authoritative
 server or ranked anti-cheat; a modified client cannot be made fully trustworthy
@@ -35,7 +43,15 @@ without moving combat authority to a dedicated server.
 ## Local development
 
 ```sh
+npm install
 python3 serve.py
 ```
 
 Then open <http://localhost:8124>.
+
+Run the automated checks and production build with:
+
+```sh
+npm test
+npm run build
+```

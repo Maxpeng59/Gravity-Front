@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { el, ucDate, fmtCr, RNG } from './util.js';
 import { suitById, AIRCRAFT, isAircraft, SHIP_MODULES, CREW_ROLES, TIMELINE } from './data.js';
 import {
+  canModifyWeapons, mobilityPercent, normalizeWeaponLoadout,
+  weaponLoadoutOptions, weaponLoadoutProfile,
+} from './loadouts.js';
+import {
   worldById, dist, controlOf, materialize, dematerialize, intelRadius,
   shipSpeed, maxHull, hangarBays, airCap, crewCap, simDay, news, applyOutcome,
   rollSalvage, activeWorldCount, zeonPoolFor, WORLD_COUNT,
@@ -551,8 +555,8 @@ function launchSortie(opts, after){
   const fedShipHp = prod > 1.0 ? 700 + 1000 * Math.floor((prod - 1.0) / 0.25 + 1e-6) : 0;
   leaveBridge();
   ctx.launchBattle(Object.assign({
-    playerSuitId: activeId, playerHp: suit ? suit.hp : 1, fedShipHp,
-    wingmen: wingmen.map((s, i) => ({ suitId: s.id, name: suitById(s.id).name.toUpperCase(), hpFrac: s.hp, wingId: i })),
+    playerSuitId: activeId, playerHp: suit ? suit.hp : 1, playerLoadout: suit?.loadout || null, fedShipHp,
+    wingmen: wingmen.map((s, i) => ({ suitId: s.id, name: suitById(s.id).name.toUpperCase(), hpFrac: s.hp, loadout: s.loadout || null, wingId: i })),
     aircraft: airwing.map((a, i) => ({ suitId: a.id, name: suitById(a.id).name.toUpperCase(), hpFrac: a.hp, airId: i })),
   }, opts), res => {
     if (suit) suit.hp = res.victory || res.retreat ? Math.max(0.05, res.hpFrac) : 0.25;
@@ -571,6 +575,52 @@ function launchSortie(opts, after){
 // ================= HANGAR =================
 const suitValue = s => s.cost || 32000;
 
+function appendLoadoutEditor(card, def, su){
+  const editor = el('div', 'loadout-editor');
+  if (!canModifyWeapons(def)){
+    editor.classList.add('fixed');
+    editor.textContent = 'FIXED ARMAMENT · specialist or integrated weapon system';
+    card.appendChild(editor);
+    return;
+  }
+  const options = weaponLoadoutOptions(def);
+  const current = normalizeWeaponLoadout(def, su.loadout);
+  const profile = weaponLoadoutProfile(def, current);
+  const summary = el('div', 'loadout-summary');
+  summary.innerHTML = `ARMAMENT MOD · <b>${profile.label}</b><br>CARRIED MASS ${profile.mass.toFixed(1)} t · MOVEMENT ${mobilityPercent(profile)}%`;
+  editor.appendChild(summary);
+  const selects = el('div', 'loadout-selects');
+  const primaryField = el('label', 'loadout-field', 'PRIMARY');
+  const primary = document.createElement('select');
+  const stock = document.createElement('option'); stock.value = 'stock'; stock.textContent = 'STOCK COMPLETE RACK'; primary.appendChild(stock);
+  for (const item of options.primary){
+    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; primary.appendChild(option);
+  }
+  primary.value = current.primary;
+  primary.onchange = () => {
+    if (primary.value === 'stock') delete su.loadout;
+    else su.loadout = { primary: primary.value, support: 'none' };
+    ctx.save(); renderPane();
+  };
+  primaryField.appendChild(primary); selects.appendChild(primaryField);
+  const supportField = el('label', 'loadout-field', 'SUPPORT');
+  const support = document.createElement('select');
+  const none = document.createElement('option'); none.value = 'none'; none.textContent = 'NONE · LIGHT RACK'; support.appendChild(none);
+  for (const item of options.support){
+    if (item.id === current.primary) continue;
+    const option = document.createElement('option'); option.value = item.id; option.textContent = `${item.name} · ${item.mass.toFixed(1)} t`; support.appendChild(option);
+  }
+  support.disabled = current.primary === 'stock';
+  support.value = current.primary === 'stock' ? 'none' : current.support;
+  support.onchange = () => {
+    su.loadout = { primary: primary.value, support: support.value };
+    ctx.save(); renderPane();
+  };
+  supportField.appendChild(support); selects.appendChild(supportField);
+  editor.appendChild(selects);
+  card.appendChild(editor);
+}
+
 function paneHangar(pane){
   const S = ctx.S;
   const w = worldById(S, S.locId);
@@ -584,7 +634,7 @@ function paneHangar(pane){
   pane.appendChild(el('h3', '', `MS BAYS — ${S.suits.length}/${hangarBays(S)} OCCUPIED`));
   for (const su of S.suits){
     const def = suitById(su.id);
-    const card = el('div', 'row-card');
+    const card = el('div', 'row-card ms-card');
     const grow = el('div', 'grow');
     grow.appendChild(el('div', 'ttl', `${def.name} ${su.id === S.active ? ' — ACTIVE' : ''}`));
     grow.appendChild(el('div', 'sub', `${def.code} · INTEGRITY ${Math.round(su.hp * 100)}%`));
@@ -616,6 +666,7 @@ function paneHangar(pane){
         } }, { label: 'CANCEL' }]);
       card.appendChild(sell);
     }
+    appendLoadoutEditor(card, def, su);
     pane.appendChild(card);
   }
 
