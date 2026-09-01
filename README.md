@@ -36,11 +36,15 @@ RMB returns immediately to the previous camera unless the sight was latched.
 
 Humanoid mobile suits can press **K** to kneel wherever they are, including
 while airborne or operating in space. Lowering into the firing stance takes two
-seconds, as does standing again; movement is locked through both transitions
-and while kneeling. The braced posture reduces weapon spread and improves
-sniper stability. Allied and hostile pilots use the same posture automatically
-when they have a ranged target in their effective firing band, then stand to
-reposition or meet a close threat.
+seconds, as does standing again; horizontal movement is locked through both
+transitions and while kneeling, but gravity always remains active. The braced
+posture reduces weapon spread and improves sniper stability. Allied and hostile
+pilots use the same posture automatically when they have a ranged target in
+their effective firing band, then stand to reposition or meet a close threat.
+
+Destructible buildings—including city blocks, hangars, barracks, bunkers,
+command posts, bases, and depots—have **20×** their former integrity. This does
+not change the durability of walls, utility structures, vehicles, or ships.
 
 ## Campaign Challenge Runs and PvP equipment
 

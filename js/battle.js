@@ -20,6 +20,7 @@ import {
   kneelState,
   shouldAiKneel,
 } from './combat-posture.js';
+import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
@@ -864,6 +865,9 @@ export function startBattle(renderer, opts, onEnd){
     { isPlayer: true, hpFrac: opts.playerHp ?? 1 });
   if (PVP && multiplayer.localName) player.name = multiplayer.localName;
   if (PVP && Number.isFinite(Number(opts.playerYaw))) player.yaw = Number(opts.playerYaw);
+  if (!SPACE && ['localhost', '127.0.0.1', '::1'].includes(location.hostname)
+      && new URLSearchParams(location.search).has('airborne-qa'))
+    player.root.position.y += 30;
   const SABER_SLOT = player.suit.weapons.length; // the saber rides as the final weapon slot
   const hasSaber = !player.air && !!(player.suit.saber && player.suit.saber.dmg > 0); // no melee weapon → no saber slot (aircraft, Zaku Tank)
   // perf budget: only a capped vanguard is fully simulated at once; the rest feed
@@ -926,6 +930,7 @@ export function startBattle(renderer, opts, onEnd){
     const isSpaceShip = kind === 'musai' || kind === 'chivvay' || kind === 'salamis' || kind === 'magellan' || kind === 'columbus' || kind === 'solfortress';
     const isLandShip = kind === 'bigtray' || kind === 'dabude' || kind === 'gallop';
     const isShip = isSpaceShip || isLandShip;
+    hp = buildingHitPoints(kind, hp);
     // war-production HP buff — applies to every Federation capital ship (opts.fedShipHp is 0 in custom sorties)
     if (team === 'FED' && isShip) hp += (opts.fedShipHp || 0);
     const root = new THREE.Group();
@@ -1691,12 +1696,13 @@ export function startBattle(renderer, opts, onEnd){
       scene.add(r.g);
       if (r.mode === 'decor') continue;
       const destructible = r.mode === 'destruct';
+      const structureHp = buildingHitPoints(st.kind, r.hp);
       const p = { kind: 'struct', structKind: st.kind, team: 'NEUTRAL', root: r.g, alive: true,
         // Authored scenery is identical solid cover for both PvP pilots. Keeping it
         // indestructible in a duel prevents one client removing a building that the
         // other client still renders and collides with.
         isProp: true, isShip: false, scenery: true, indestructible: PVP || !destructible,
-        radius: r.radius, hitY: r.hitY, hp: r.hp, maxHp: r.hp, big: r.big, label: r.label,
+        radius: r.radius, hitY: r.hitY, hp: structureHp, maxHp: structureHp, big: r.big, label: r.label,
         vel: new THREE.Vector3(), goal: null };
       if (r.hitSpheres) p.hitSpheres = r.hitSpheres;
       if (r.hitBoxes) p.hitBoxes = r.hitBoxes;
@@ -3963,7 +3969,7 @@ export function startBattle(renderer, opts, onEnd){
       else if (wantsHover) { /* the cushion already drained fuel above */ }
       else if (grounded) m.fuel = Math.min(m.maxFuel, m.fuel + 18 * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 8 * dt);
-      if (postureLocked){ m.vel.set(0, 0, 0); m.thrusting = false; }
+      if (postureLocked){ m.vel.x = 0; m.vel.z = 0; m.thrusting = false; }
     }
 
     const fallSpeed = -m.vel.y;
@@ -5306,6 +5312,15 @@ export function startBattle(renderer, opts, onEnd){
   let radarT = 0;
   function hudUpdate(dt){
     const w = player.suit.weapons[player.wi];
+    if (['localhost', '127.0.0.1', '::1'].includes(location.hostname)){
+      hud.dataset.debugPlayerY = player.root.position.y.toFixed(4);
+      hud.dataset.debugPlayerVy = player.vel.y.toFixed(4);
+      const building = props.find(p => BUILDING_KINDS.has(p.structKind || p.kind));
+      if (building){
+        hud.dataset.debugBuildingKind = building.structKind || building.kind;
+        hud.dataset.debugBuildingMaxHp = String(building.maxHp);
+      }
+    }
     const frac = clamp(player.hp / player.maxHp, 0, 1);
     hpBar.style.width = frac * 100 + '%';
     hpBar.classList.toggle('low', frac < 0.3);
