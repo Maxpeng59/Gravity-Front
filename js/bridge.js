@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { el, ucDate, fmtCr, RNG } from './util.js';
 import { suitById, AIRCRAFT, isAircraft, SHIP_MODULES, CREW_ROLES, TIMELINE } from './data.js';
 import { renderEquipmentPanel } from './equipment-ui.js';
+import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import {
   CHALLENGE_RUNS, buildChallengeEnemies, completeChallenge, equipmentNames, readPvpProgress,
 } from './challenge-runs.js';
@@ -312,8 +313,9 @@ export function stepTravel(){
       // a space interception can't be answered by a land-only active suit — fly a
       // space-capable frame from the hangar, or let the carrier's batteries handle it
       let flyId = S.active;
-      if (suitById(flyId).groundOnly){
-        const alt = S.suits.find(s => !suitById(s.id).groundOnly && s.hp >= 0.15);
+      const flySuit = S.suits.find(s => s.id === flyId);
+      if (!hoverCraftSpaceCapable(suitById(flyId), flySuit?.hoverCraft)){
+        const alt = S.suits.find(s => hoverCraftSpaceCapable(suitById(s.id), s.hoverCraft) && s.hp >= 0.15);
         if (alt) flyId = alt.id;
         else {
           S.hull = Math.max(1, S.hull - (isChar ? 40 : 18));
@@ -390,7 +392,7 @@ function confirmLaunch(w, d, c){
   const suit = S.suits.find(s => s.id === S.active);
   if (!suit){ ctx.modal('NO ACTIVE UNIT', 'Assign an active mobile suit in the HANGAR first.', [{ label: 'OK' }]); return; }
   if (suit.hp < 0.15){ ctx.modal('UNIT NOT COMBAT-READY', 'Your active suit is below 15% integrity. Repair it in the HANGAR.', [{ label: 'OK' }]); return; }
-  if (c.env === 'space' && suitById(S.active).groundOnly){
+  if (c.env === 'space' && !hoverCraftSpaceCapable(suitById(S.active), suit.hoverCraft)){
     ctx.modal('GROUND-ONLY UNIT', `${suitById(S.active).name} cannot operate in space. This is a space operation — switch to a space-capable suit in the HANGAR.`, [{ label: 'OK' }]); return;
   }
   const solo = !!(c.mission && c.mission.solo);          // lone-wolf contracts: no hangar support launches
@@ -631,7 +633,8 @@ function launchSortie(opts, after){
   const fedShipHp = prod > 1.0 ? 700 + 1000 * Math.floor((prod - 1.0) / 0.25 + 1e-6) : 0;
   leaveBridge();
   ctx.launchBattle(Object.assign({
-    playerSuitId: activeId, playerHp: suit ? suit.hp : 1, playerLoadout: suit?.loadout || null, fedShipHp,
+    playerSuitId: activeId, playerHp: suit ? suit.hp : 1, playerLoadout: suit?.loadout || null,
+    hoverCraft: hoverCraftEquipped(suitById(activeId), suit?.hoverCraft), fedShipHp,
     wingmen: wingmen.map((s, i) => ({ suitId: s.id, name: suitById(s.id).name.toUpperCase(), hpFrac: s.hp, loadout: s.loadout || null, wingId: i })),
     aircraft: airwing.map((a, i) => ({ suitId: a.id, name: suitById(a.id).name.toUpperCase(), hpFrac: a.hp, airId: i })),
   }, opts), res => {
@@ -660,6 +663,24 @@ function appendLoadoutEditor(card, def, su){
     renderPane();
   });
   card.appendChild(editor);
+}
+
+function appendHoverCraftEditor(card, def, su){
+  const editor = el('div', 'hovercraft-editor');
+  const eligible = canUseHoverCraft(def), equipped = hoverCraftEquipped(def, su.hoverCraft);
+  editor.classList.toggle('unavailable', !eligible);
+  const row = el('div', 'hovercraft-card');
+  const copy = el('div', 'hovercraft-copy');
+  copy.appendChild(el('b', '', 'MS HOVER CRAFT · 5,000 HP'));
+  copy.appendChild(el('span', '', eligible
+    ? 'Optional support deck · enables ground-type space sorties · Space rise · C descend · destruction blast'
+    : 'Incompatible with aircraft, tanks, APCs and non-standing chassis.'));
+  const toggle = el('button', `small equipment-action${equipped ? ' equipped' : ''}`, equipped ? 'EQUIPPED' : 'EQUIP');
+  toggle.disabled = !eligible;
+  toggle.onclick = event => {
+    event.stopPropagation(); su.hoverCraft = !equipped; ctx.save(); renderPane();
+  };
+  row.append(copy, toggle); editor.appendChild(row); card.appendChild(editor);
 }
 
 function paneHangar(pane){
@@ -708,6 +729,7 @@ function paneHangar(pane){
       card.appendChild(sell);
     }
     appendLoadoutEditor(card, def, su);
+    appendHoverCraftEditor(card, def, su);
     pane.appendChild(card);
   }
 

@@ -17,6 +17,7 @@ import {
 } from './loadouts.js';
 import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
+import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -809,7 +810,7 @@ addEventListener('beforeunload', () => pvpSession.link?.close());
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
 const PER_SIDE_CAP = 200, ENTRY_MAX = 200, ROWS_MAX = 12, LANDSHIP_CAP = 12; // 12 Big Trays fought at Odessa; capital props have no mech LOD
-const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {},
+const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
 // relief you see IS the battlefield (mountains/hills/valleys). Only for random biomes (no authored map) + ground.
@@ -878,6 +879,24 @@ function renderCustomLoadout(){
     sfx('ui', 0.1);
     renderCustom();
   });
+}
+
+function renderCustomHoverCraft(){
+  const box = $('custom-hovercraft'); if (!box) return;
+  const suit = suitById(custom.suit), eligible = canUseHoverCraft(suit);
+  const equipped = hoverCraftEquipped(suit, custom.hoverCrafts[suit.id]);
+  box.replaceChildren();
+  box.classList.toggle('unavailable', !eligible);
+  const card = el('div', 'hovercraft-card');
+  const copy = el('div', 'hovercraft-copy');
+  copy.appendChild(el('b', '', 'MS HOVER CRAFT · 5,000 HP'));
+  copy.appendChild(el('span', '', eligible
+    ? 'Independent support deck · Space ascends · C descends · normal movement · destructive blast if lost'
+    : 'Unavailable: this platform requires a standing mobile-suit frame.'));
+  const toggle = el('button', `small equipment-action${equipped ? ' equipped' : ''}`, equipped ? 'EQUIPPED' : 'EQUIP');
+  toggle.disabled = !eligible;
+  toggle.onclick = () => { custom.hoverCrafts[suit.id] = !equipped; sfx('ui', 0.1); renderCustom(); };
+  card.append(copy, toggle); box.appendChild(card);
 }
 
 function renderCustom(){
@@ -982,6 +1001,7 @@ function renderCustom(){
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
   // right column: spinning model + stat readout + deployment map
   renderCustomLoadout();
+  renderCustomHoverCraft();
   const loadout = custom.loadouts[custom.suit] || null;
   msPreview.setSuit(custom.suit, loadout);
   renderMsStats(applyWeaponLoadout(suitById(custom.suit), loadout));
@@ -1025,7 +1045,7 @@ $('btn-launch-custom').onclick = () => {
   const rng = new RNG('custom' + Date.now());
   // a land-only suit can't deploy in space — drop the sortie to the surface
   let env = custom.env;
-  if (env === 'space' && suitById(custom.suit).groundOnly){
+  if (env === 'space' && !hoverCraftSpaceCapable(suitById(custom.suit), custom.hoverCrafts[custom.suit])){
     env = 'ground';
     modal('GROUND-ONLY UNIT', `${suitById(custom.suit).name} cannot operate in space. Sortie redirected to a planetary surface.`, [{ label: 'UNDERSTOOD' }]);
   }
@@ -1054,6 +1074,7 @@ $('btn-launch-custom').onclick = () => {
     mapId: activeMap ? activeMap.id : null,     // authored battlefield
     terrainSeed: custom.terrainSeed,            // the exact seed previewed on the deployment map → WYSIWYG terrain
     playerSuitId: custom.suit, playerHp: 1, playerLoadout: custom.loadouts[custom.suit] || null,
+    hoverCraft: hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
     mission: { aircraftCore: true, customShips }, // fielded fighters & landships count toward the win

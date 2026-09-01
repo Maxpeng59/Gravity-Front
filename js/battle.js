@@ -22,6 +22,12 @@ import {
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import {
+  HOVER_CRAFT_MAX_HP,
+  HOVER_CRAFT_EXPLOSION_DAMAGE,
+  HOVER_CRAFT_EXPLOSION_RADIUS,
+  hoverCraftEquipped,
+} from './hovercraft.js';
+import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
 } from './collision-math.js';
@@ -397,7 +403,9 @@ export function startBattle(renderer, opts, onEnd){
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
-  hintEl.textContent = baseHint + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
+  hintEl.textContent = baseHint
+    + (opts.hoverCraft ? ' · HOVER CRAFT: SPACE RISE · C DESCEND · 5,000 HP' : '')
+    + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -863,6 +871,7 @@ export function startBattle(renderer, opts, onEnd){
   const player = spawnMech({ suitId: opts.playerSuitId, loadout: opts.playerLoadout || null }, 'FED',
     spawnCenters ? new THREE.Vector3(spawnCenters.player.x, 0, spawnCenters.player.z) : new THREE.Vector3(0, 0, 0),
     { isPlayer: true, hpFrac: opts.playerHp ?? 1 });
+  let playerHoverCraft = null;
   if (PVP && multiplayer.localName) player.name = multiplayer.localName;
   if (PVP && Number.isFinite(Number(opts.playerYaw))) player.yaw = Number(opts.playerYaw);
   if (!SPACE && ['localhost', '127.0.0.1', '::1'].includes(location.hostname)
@@ -1258,6 +1267,75 @@ export function startBattle(renderer, opts, onEnd){
     props.push(p);
     return p;
   }
+
+  function spawnPlayerHoverCraft(){
+    if (!hoverCraftEquipped(player.suit, opts.hoverCraft) || PVP) return null;
+    const root = new THREE.Group();
+    const armor = new THREE.MeshStandardMaterial({ color: 0x536878, roughness: 0.7, metalness: 0.42 });
+    const armorDark = new THREE.MeshStandardMaterial({ color: 0x26343e, roughness: 0.78, metalness: 0.5 });
+    const trim = new THREE.MeshStandardMaterial({ color: 0xb9a34c, roughness: 0.66, metalness: 0.3 });
+    const deck = new THREE.MeshStandardMaterial({ color: 0x182229, roughness: 0.94, metalness: 0.24 });
+    const lens = new THREE.MeshStandardMaterial({ color: 0x10263a, emissive: 0x4aa3ff, emissiveIntensity: 1.8, roughness: 0.28 });
+    const flameMat = new THREE.MeshBasicMaterial({ color: 0x8ddcff, transparent: true, opacity: 0.86, depthWrite: false });
+    const thrusters = [];
+    const add = (geo, mat, x, y, z, rx = 0, ry = 0, rz = 0) => {
+      const mesh = new THREE.Mesh(geo, mat); mesh.position.set(x, y, z); mesh.rotation.set(rx, ry, rz); root.add(mesh); return mesh;
+    };
+    // Low, armored mobile-suit support sled: split deck, tapered prow, side engine
+    // nacelles, foot locks and four visible vernier bells. It reads as a vehicle,
+    // not a status effect floating under the pilot.
+    add(new THREE.BoxGeometry(10.8, 1.05, 15.5), armor, 0, 0, -0.6);
+    add(new THREE.BoxGeometry(8.6, 0.34, 12.8), deck, 0, 0.68, -0.45);
+    add(new THREE.BoxGeometry(7.5, 0.8, 5.2), armor, 0, -0.05, 8.5, -0.16);
+    add(new THREE.BoxGeometry(5.5, 0.55, 3.8), trim, 0, 0.25, 10.4, -0.28);
+    for (const sx of [-1, 1]){
+      add(new THREE.BoxGeometry(2.8, 1.35, 13.5), armorDark, sx * 6.35, -0.15, -0.9, 0, 0, sx * -0.035);
+      add(new THREE.BoxGeometry(1.1, 0.6, 9.5), armor, sx * 7.65, 0.05, -0.9);
+      add(new THREE.BoxGeometry(1.0, 0.52, 6.8), trim, sx * 5.1, 0.46, 0.2);
+      add(new THREE.BoxGeometry(1.9, 0.8, 2.2), deck, sx * 2.35, 0.78, 1.7); // magnetic foot lock
+      add(new THREE.BoxGeometry(0.45, 1.15, 3.3), armorDark, sx * 3.45, 1.18, 1.7);
+      add(new THREE.CylinderGeometry(0.72, 0.9, 1.2, 12), armorDark, sx * 6.35, -0.1, -7.9, Math.PI / 2);
+      add(new THREE.CylinderGeometry(0.38, 0.72, 1.1, 10), lens, sx * 6.35, -0.1, 7.0, Math.PI / 2);
+      for (const z of [-6.7, -3.8]){
+        add(new THREE.CylinderGeometry(0.48, 0.82, 1.4, 12), armorDark, sx * 6.35, -0.18, z, Math.PI / 2);
+        const flame = add(new THREE.ConeGeometry(0.68, 2.8, 10, 1, true), flameMat.clone(), sx * 6.35, -0.18, z - 1.75, -Math.PI / 2);
+        flame.scale.y = 0.12; thrusters.push(flame);
+      }
+    }
+    for (const x of [-3.2, 0, 3.2]) add(new THREE.BoxGeometry(2.1, 0.18, 0.5), trim, x, 0.86, 8.0);
+    root.position.copy(player.root.position).add(new THREE.Vector3(0, -1.8, 0));
+    root.rotation.y = player.yaw;
+    scene.add(root);
+    const craft = {
+      kind: 'hovercraft', label: 'MS HOVER CRAFT', team: player.team, root,
+      hp: HOVER_CRAFT_MAX_HP, maxHp: HOVER_CRAFT_MAX_HP, alive: true,
+      isProp: true, hoverCraft: true, attachedTo: player, radius: 11, hitY: 0,
+      hitBoxes: [
+        { x: 0, y: 0, z: -0.6, hx: 5.5, hy: 0.75, hz: 7.8 },
+        { x: -6.35, y: -0.1, z: -0.9, hx: 1.5, hy: 0.9, hz: 6.9 },
+        { x: 6.35, y: -0.1, z: -0.9, hx: 1.5, hy: 0.9, hz: 6.9 },
+        { x: 0, y: -0.05, z: 8.5, hx: 3.9, hy: 0.7, hz: 2.8 },
+      ],
+      vel: player.vel, thrusters,
+    };
+    player.hoverCraft = craft;
+    props.push(craft);
+    if (!SPACE) player.root.position.y = Math.max(player.root.position.y, groundY(player.root.position.x, player.root.position.z) + 2.6);
+    return craft;
+  }
+
+  function updatePlayerHoverCraft(){
+    const craft = playerHoverCraft;
+    if (!craft?.alive || player.hoverCraft !== craft) return;
+    craft.root.position.copy(player.root.position).add(tmpV.set(0, -1.8, 0));
+    craft.root.rotation.y = player.yaw;
+    const active = player.thrusting || player.boosting || player.vel.lengthSq() > 20;
+    const pulse = active ? 0.8 + Math.sin(performance.now() * 0.018) * 0.12 : 0.18;
+    for (const flame of craft.thrusters) flame.scale.y = lerp(flame.scale.y, pulse, 0.18);
+  }
+
+  playerHoverCraft = spawnPlayerHoverCraft();
+
   function damageProp(p, dmg, hitPoint, attacker, weaponName = null){
     if (!p.alive) return;
     if (p.indestructible) return;   // map landmarks (church tower, town houses) are solid cover — absorb fire, never fall
@@ -1269,6 +1347,16 @@ export function startBattle(renderer, opts, onEnd){
     if (p.hp <= 0){
       p.alive = false;
       if (!p.scenery && attacker) addKillNotice(attacker, weaponNoticeName(attacker, false, weaponName), p);
+      if (p.hoverCraft){
+        const blast = p.root.position.clone();
+        scene.remove(p.root);
+        if (p.attachedTo?.hoverCraft === p) p.attachedTo.hoverCraft = null;
+        explosion(blast, HOVER_CRAFT_EXPLOSION_RADIUS, 0.48);
+        splashDamage(blast, HOVER_CRAFT_EXPLOSION_RADIUS, HOVER_CRAFT_EXPLOSION_DAMAGE,
+          attacker || player, 'HOVER CRAFT DETONATION');
+        setMsg('HOVER CRAFT DESTROYED — MS RELEASED', 3);
+        return;
+      }
       if (p.scenery){ // authored map structure: rubble it, and cook off fuel/ammo dumps
         const big = p.big;
         explosion(p.root.position.clone().add(tmpV.set(0, 6, 0)), big ? 30 : 20,
@@ -3847,8 +3935,9 @@ export function startBattle(renderer, opts, onEnd){
     if (!m.alive) return;
     if (m.air) return playerFlightUpdate(dt);
     const w = m.suit;
+    const mountedCraft = !!m.hoverCraft?.alive;
     // in space, thrust follows the full look direction; on the ground it stays planar
-    const fwd = SPACE
+    const fwd = SPACE && !mountedCraft
       ? tmpV.set(Math.sin(camYaw) * Math.cos(camPitch), Math.sin(camPitch), Math.cos(camYaw) * Math.cos(camPitch))
       : tmpV.set(Math.sin(camYaw), 0, Math.cos(camYaw));
     const right = tmpV2.set(Math.sin(camYaw - Math.PI / 2), 0, Math.cos(camYaw - Math.PI / 2));
@@ -3865,7 +3954,7 @@ export function startBattle(renderer, opts, onEnd){
     const grounded = !SPACE && m.root.position.y <= restY + 0.5;
     const legFactor = 1 - Math.min(0.45, m.legDmg * 0.6);
     const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
-    const wantsHover = groundManeuverEligible(m) && !postureLocked && keys.has('e') && m.fuel > 0 && !m.stomping;
+    const wantsHover = !mountedCraft && groundManeuverEligible(m) && !postureLocked && keys.has('e') && m.fuel > 0 && !m.stomping;
     const landHover = landTypeMobileSuit(m);
     const hoverTravelMultiplier = landHover ? 3 : 2;
     const hoverEnergyMultiplier = landHover ? 0.8 : 1;
@@ -3883,7 +3972,22 @@ export function startBattle(renderer, opts, onEnd){
     const shiftBoosting = !sniperMode && !wantsHover && !postureLocked && keys.has('shift') && m.fuel > 0;
     m.boosting = shiftBoosting || sandKicking || wantsHover;
 
-    if (SPACE){
+    if (mountedCraft){
+      // The support deck supplies its own translation and lift. WASD remains the
+      // ordinary sight-relative movement scheme; Space/C operate vertical lift.
+      const acc = shiftBoosting ? 92 : 50;
+      m.thrusting = hasInput || keys.has(' ') || keys.has('c');
+      if (hasInput && !postureLocked) m.vel.addScaledVector(input, acc * dt);
+      if (!postureLocked && keys.has(' ')) m.vel.y += acc * 0.82 * dt;
+      if (!postureLocked && keys.has('c')) m.vel.y -= acc * 0.82 * dt;
+      m.vel.multiplyScalar(1 - (SPACE ? 0.48 : 0.8) * dt);
+      const cap = (shiftBoosting ? w.boost * 1.35 : w.walk * 2) * legFactor
+        * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
+      if (m.vel.length() > cap) m.vel.setLength(cap);
+      if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 16 * dt);
+      else m.fuel = Math.min(m.maxFuel, m.fuel + 15 * dt);
+      if (postureLocked){ m.vel.set(0, 0, 0); m.thrusting = false; }
+    } else if (SPACE){
       // full-vector drift with verniers (suits tuned for ground are sluggish here)
       const acc = (shiftBoosting ? 95 : 42) * (w.spaceThrustMul || 1);
       m.thrusting = hasInput || keys.has(' ') || keys.has('c');
@@ -3976,11 +4080,12 @@ export function startBattle(renderer, opts, onEnd){
     m.root.position.addScaledVector(m.vel, dt);
     if (!SPACE){
       const g = groundY(m.root.position.x, m.root.position.z);
+      const landingY = mountedCraft ? g + 2.6 : g;
       if (w.vehicle){
         // Wheeled hulls follow the terrain contact plane; ridge transitions must not become lethal MS-style falls.
         m.root.position.y = g; m.vel.y = 0;
-      } else if (m.root.position.y < g){
-        m.root.position.y = g;
+      } else if (m.root.position.y < landingY){
+        m.root.position.y = landingY;
         if (m.vel.y < 0) m.vel.y = 0;
         if (fallSpeed > 14){ // hard landing: dust + thud + shake
           dust(m.root.position, clamp(fallSpeed / 6, 2, 7));
@@ -4942,7 +5047,7 @@ export function startBattle(renderer, opts, onEnd){
         }
       }
       for (const pr of props){
-        if (!pr.alive || pr === p.owner) continue;
+        if (!pr.alive || pr === p.owner || pr.attachedTo === p.owner) continue;
         if (rayColliderHit(pr, p.pos, dirN, bestT, COLLIDER_HIT)){
           bestT = COLLIDER_HIT.t; hitKind = 'prop'; hitTarget = pr;
         }
@@ -5349,6 +5454,13 @@ export function startBattle(renderer, opts, onEnd){
       const kick = player.sandKickCd > 0 ? `${player.sandKickCd.toFixed(1)}s` : 'READY';
       const travel = landTypeMobileSuit(player) ? '3× AUTO · 80% ENERGY' : '2× AUTO · 100% ENERGY';
       wHtml += `<br>GROUND EFFECT <span class="ammo" style="color:${player.hovering ? 'var(--ok)' : 'var(--dim)'}">E ${player.hovering ? 'HOVER ACTIVE' : 'HOVER READY'} · ${travel} · Q KICK ${kick}</span>`;
+    }
+    if (playerHoverCraft){
+      const alive = playerHoverCraft.alive && player.hoverCraft === playerHoverCraft;
+      const hf = Math.round(clamp(playerHoverCraft.hp / playerHoverCraft.maxHp, 0, 1) * 100);
+      wHtml += `<br>HOVER CRAFT <span class="ammo" style="color:${alive ? (hf < 30 ? 'var(--zeon)' : 'var(--ok)') : 'var(--zeon)'}">${alive
+        ? `${Math.max(0, Math.round(playerHoverCraft.hp))} / ${playerHoverCraft.maxHp} · SPACE RISE · C DESCEND`
+        : 'DESTROYED · MS RELEASED'}</span>`;
     }
     if (kneelEligible(player)){
       const posture = player.kneelState || kneelState(player.kneelBlend, player.kneelTarget);
@@ -6041,18 +6153,18 @@ export function startBattle(renderer, opts, onEnd){
       if (p.hitBoxes?.length){
         for (const box of p.hitBoxes){
           const wb = fillWorldBox(p, box);
-          for (const m of live) collideBodyWithBox(m, wb);
+          for (const m of live) if (p.attachedTo !== m) collideBodyWithBox(m, wb);
         }
       }
       if (p.hitSpheres?.length){
         const n = fillWorldSpheres(p, p.root.rotation.y);
         for (let i = 0; i < n; i++){
           const s = HS_SCRATCH[i], r = hitSphereRadius(p, p.hitSpheres[i]);
-          for (const m of live) collideBodyWithSphere(m, s.x, s.y, s.z, r);
+          for (const m of live) if (p.attachedTo !== m) collideBodyWithSphere(m, s.x, s.y, s.z, r);
         }
       } else if (!p.hitBoxes?.length && p.radius){
         const pp = p.root.position;
-        for (const m of live) collideBodyWithSphere(m, pp.x, pp.y + (p.hitY || 0), pp.z, p.radius);
+        for (const m of live) if (p.attachedTo !== m) collideBodyWithSphere(m, pp.x, pp.y + (p.hitY || 0), pp.z, p.radius);
       }
     }
     // A horizontal separation can move a body onto a neighbouring terrain
@@ -6060,7 +6172,8 @@ export function startBattle(renderer, opts, onEnd){
     // underground; airborne suits retain their jump height.
     if (!SPACE && hfn) for (const m of live){
       if (m.air) continue;
-      const floor = groundY(m.root.position.x, m.root.position.z) + (m.suit.hover ? 3 : 0);
+      const floor = groundY(m.root.position.x, m.root.position.z)
+        + (m.hoverCraft?.alive ? 2.6 : m.suit.hover ? 3 : 0);
       if (groundVehicle(m)){ m.root.position.y = floor; m.vel.y = 0; }
       else if (m.root.position.y < floor){ m.root.position.y = floor; if (m.vel.y < 0) m.vel.y = 0; }
     }
@@ -6262,6 +6375,16 @@ export function startBattle(renderer, opts, onEnd){
         eyeWorld: player.parts && player.parts.eye ? player.parts.eye.getWorldPosition(new THREE.Vector3()).toArray().map(v => +v.toFixed(1)) : null,
         pFuel: player.fuel, pMaxFuel: player.maxFuel, pY: player.root.position.y,
         pPosition: player.root.position.toArray(), pVel: player.vel.toArray(),
+        hoverCraft: playerHoverCraft ? {
+          equipped: true,
+          alive: playerHoverCraft.alive && player.hoverCraft === playerHoverCraft,
+          hp: playerHoverCraft.hp,
+          maxHp: playerHoverCraft.maxHp,
+          position: playerHoverCraft.root.position.toArray(),
+          attached: player.hoverCraft === playerHoverCraft,
+          explosionDamage: HOVER_CRAFT_EXPLOSION_DAMAGE,
+          explosionRadius: HOVER_CRAFT_EXPLOSION_RADIUS,
+        } : { equipped: false, alive: false, hp: 0, maxHp: HOVER_CRAFT_MAX_HP, attached: false },
         pShieldHp: player.shieldHp, pShieldMax: player.shieldMax, pShieldBroken: player.shieldBroken, pBlocking: player.blocking,
         pBlockPose: player.blockPose || 0,
         pKneelEligible: kneelEligible(player),
@@ -6373,10 +6496,12 @@ export function startBattle(renderer, opts, onEnd){
         }
         updatePrediction(dt); // P aim-assist: maintain the 0.5s lock before the player fires
         playerUpdate(dt);
+        updatePlayerHoverCraft();
         lodTimer -= dt;
         if (lodTimer <= 0){ lodRepartition(); lodTimer = 0.2; } // re-pick the near set ~5x/sec
         for (let i = 0, n = mechs.length; i < n; i++) mechUpdate(mechs[i], dt); // cached length: carrier-dropped mechs join next frame, not mid-loop
         resolveCollisions(dt); // solid bodies: nothing walks through anything
+        updatePlayerHoverCraft(); // collision response may have shifted the rider
         projectilesUpdate(dt);
         particlesUpdate(dt);
         blipsUpdate(dt);
