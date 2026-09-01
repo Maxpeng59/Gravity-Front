@@ -1000,6 +1000,9 @@ function renderCustom(){
   };
   mkList('enemy-list', custom.enemies, 'enemy');
   mkList('ally-list', custom.allies, 'ally');
+  const landshipCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
+  $('btn-add-enemy-landships').disabled = landshipCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
+  $('btn-add-ally-landships').disabled = landshipCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
   // right column: spinning model + stat readout + deployment map
   renderCustomLoadout();
@@ -1029,8 +1032,22 @@ function ensureMapControls(){
 $('btn-custom').onclick = () => { music.play('requiem'); show('menu-custom'); renderCustom(); }; // show first so canvases have dimensions
 $('btn-custom-back').onclick = () => show('menu-main');
 $('btn-add-enemy').onclick = () => { if (custom.enemies.length < ROWS_MAX){ custom.enemies.push({ id: 'zaku2', n: 1, pos: defaultPos('enemy', custom.enemies.length) }); renderCustom(); } };
+$('btn-add-enemy-landships').onclick = () => {
+  const used = custom.enemies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
+  if (custom.enemies.length < ROWS_MAX && used < LANDSHIP_CAP){
+    custom.enemies.push({ id: 'dabude', n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('enemy', custom.enemies.length) });
+    renderCustom();
+  }
+};
 $('btn-clear-enemy').onclick = () => { custom.enemies = []; renderCustom(); };
 $('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom.allies.push({ id: 'gm', n: 1, pos: defaultPos('ally', custom.allies.length) }); renderCustom(); } };
+$('btn-add-ally-landships').onclick = () => {
+  const used = custom.allies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
+  if (custom.allies.length < ROWS_MAX && used < LANDSHIP_CAP){
+    custom.allies.push({ id: 'bigtray', n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('ally', custom.allies.length) });
+    renderCustom();
+  }
+};
 $('btn-clear-ally').onclick = () => { custom.allies = []; renderCustom(); };
 // foldable readout / map accordion — at most ONE panel open, so the preview column never scrolls.
 // Toggling: click an open header/button to fold it away; opening one folds the other.
