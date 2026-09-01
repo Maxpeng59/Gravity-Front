@@ -21,7 +21,11 @@ import {
   shouldAiKneel,
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
-import { landshipProfile, landshipTravelState } from './landship-balance.js';
+import {
+  landshipCombatYaw,
+  landshipProfile,
+  landshipTravelState,
+} from './landship-balance.js';
 import {
   HOVER_CRAFT_MAX_HP,
   HOVER_CRAFT_EXPLOSION_DAMAGE,
@@ -5309,12 +5313,15 @@ export function startBattle(renderer, opts, onEnd){
     const dx = target.root.position.x - p.root.position.x, dz = target.root.position.z - p.root.position.z;
     const distance = Math.hypot(dx, dz), standoff = p.standoff;
     const travelState = landshipTravelState(distance, standoff);
-    const wantYaw = Math.atan2(dx, dz);
+    const targetYaw = Math.atan2(dx, dz);
+    const wantYaw = landshipCombatYaw(p.kind, targetYaw);
     const dyaw = wrapAngle(wantYaw - p.root.rotation.y);
     p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
     if (travelState === 'hold'){ p.vel.multiplyScalar(1 - Math.min(1, 4 * dt)); return; }
     const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.28, 1);
-    const vx = Math.sin(p.root.rotation.y) * moveSpeed, vz = Math.cos(p.root.rotation.y) * moveSpeed;
+    // Travel toward the target independently of hull facing. This lets the
+    // Gallop present its cannon end without making its AI retreat again.
+    const vx = dx / distance * moveSpeed, vz = dz / distance * moveSpeed;
     const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
     const ny = groundY(nx, nz);
     const bodyRadius = Math.min(34, p.radius * 0.7);

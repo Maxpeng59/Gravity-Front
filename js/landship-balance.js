@@ -39,3 +39,10 @@ export function isLandshipKind(kind){
 export function landshipTravelState(distance, standoff){
   return distance > standoff * 1.08 ? 'advance' : 'hold';
 }
+
+// The Gallop model's main cannon is mounted toward its local rear. Turn that
+// end toward the target without changing the direction in which it travels.
+export function landshipCombatYaw(kind, targetYaw){
+  const yaw = kind === 'gallop' ? targetYaw + Math.PI : targetYaw;
+  return Math.atan2(Math.sin(yaw), Math.cos(yaw));
+}

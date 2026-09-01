@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   LANDSHIP_PROFILES,
+  landshipCombatYaw,
   landshipProfile,
   landshipTravelState,
 } from '../js/landship-balance.js';
@@ -38,4 +39,11 @@ test('landships advance into battery range and hold instead of retreating', () =
   assert.equal(landshipTravelState(1080, 1000), 'hold');
   assert.equal(landshipTravelState(500, 1000), 'hold');
   assert.equal(landshipTravelState(0, 1000), 'hold');
+});
+
+test('Gallop presents its cannon end while other landships face forward', () => {
+  assert.equal(landshipCombatYaw('bigtray', 0), 0);
+  assert.equal(landshipCombatYaw('dabude', 0.75), 0.75);
+  assert.ok(Math.abs(Math.abs(landshipCombatYaw('gallop', 0)) - Math.PI) < 1e-12);
+  assert.ok(Math.abs(landshipCombatYaw('gallop', Math.PI / 2) + Math.PI / 2) < 1e-12);
 });
