@@ -979,7 +979,7 @@ function renderCustom(){
       for (const s of [...SUITS, ...AIRCRAFT, ...SHIPS.filter(ship => ship.faction === canonicalShipFaction)]){
         const o = document.createElement('option');
         const shipStats = landshipProfile(s.id);
-        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed}` : ''}`; o.selected = s.id === entry.id;
+        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
       const maxForEntry = () => SHIP_IDS.has(entry.id) ? LANDSHIP_CAP : ENTRY_MAX;

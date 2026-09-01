@@ -5223,14 +5223,16 @@ export function startBattle(renderer, opts, onEnd){
         t.cd = rng.range(p.gunRof[0], p.gunRof[1]);
         t.yaw.updateMatrixWorld(true);                                          // refresh so the muzzle reflects this frame's aim
         const muzzleNodes = t.muzzles?.length ? t.muzzles : [t.muzzle];
+        const shellSpeed = p.landProfile?.shellSpeed || 420;
+        const shellLife = p.landProfile?.shellLife || 5.5;
         for (let shot = 0; shot < (t.shots || 1); shot++){
           const mw = muzzleNodes[shot % muzzleNodes.length].getWorldPosition(new THREE.Vector3());
-          const baseDir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / 420).sub(mw).normalize(); // lead
+          const baseDir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / shellSpeed).sub(mw).normalize(); // lead
           const dir = baseDir.clone();
           dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
           const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(420), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p, weaponName: 'LANDSHIP MAIN BATTERY', life: 5.5, mesh });
+          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p, weaponName: 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
         }
         const soundPos = t.muzzle.getWorldPosition(stv1);
         sfx('bazooka', clamp(380 / soundPos.distanceTo(player.root.position), 0.03, 0.18));
@@ -5253,14 +5255,14 @@ export function startBattle(renderer, opts, onEnd){
     return best;
   }
 
-  function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 420, spread = 0.015){
+  function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 620, spread = 0.015, life = 7){
     const aim = target.root.position.clone(); aim.y += aimHeight(target);
     const lead = aim.addScaledVector(target.vel || stv3.set(0, 0, 0), muzzle.distanceTo(aim) / speed);
     const dir = lead.sub(muzzle).normalize();
     dir.x += rng.range(-spread, spread); dir.y += rng.range(-spread, spread); dir.z += rng.range(-spread, spread); dir.normalize();
     const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
     mesh.position.copy(muzzle); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-    projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life: 5.5, mesh });
+    projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life, mesh });
   }
 
   function updateLandshipAuxBatteries(p, dt){
@@ -5275,7 +5277,7 @@ export function startBattle(renderer, opts, onEnd){
           p.fixedT = rng.range(profile.fixedRof[0], profile.fixedRof[1]);
           for (const node of p.fixedMuzzles.slice(0, profile.fixedShots))
             launchLandshipRound(p, node.getWorldPosition(new THREE.Vector3()), target,
-              profile.fixedDamage, profile.fixedSplash, 'BIG TRAY BOW CANNON', 460, 0.008);
+              profile.fixedDamage, profile.fixedSplash, 'BIG TRAY BOW CANNON', 700, 0.008, 6.5);
         }
       }
     }

@@ -6,7 +6,8 @@ test('landships are capital-strength combatants rather than structure-grade prop
   for (const profile of Object.values(LANDSHIP_PROFILES)){
     assert.ok(profile.hp >= 30000);
     assert.ok(profile.mainDamage >= 600);
-    assert.ok(profile.mainRange >= 1200);
+    assert.ok(profile.mainRange >= 2400);
+    assert.ok(profile.shellSpeed * profile.shellLife > profile.mainRange);
     assert.ok(profile.speed > 0);
   }
 });
@@ -22,4 +23,5 @@ test('lore roles keep Gallop agile, Big Tray fast and heavily armed, and Dobday 
   assert.equal(big.secondaryStations, 8);
   assert.equal(dob.secondaryStations, 6);
   assert.equal(gal.secondaryStations, 3);
+  assert.ok(dob.mainRange > big.mainRange && big.mainRange > gal.mainRange);
 });
