@@ -21,7 +21,7 @@ import {
   shouldAiKneel,
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
-import { landshipProfile } from './landship-balance.js';
+import { landshipProfile, landshipTravelState } from './landship-balance.js';
 import {
   HOVER_CRAFT_MAX_HP,
   HOVER_CRAFT_EXPLOSION_DAMAGE,
@@ -5255,13 +5255,17 @@ export function startBattle(renderer, opts, onEnd){
     return best;
   }
 
-  function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 620, spread = 0.015, life = 7){
+  function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 620, spread = 0.015, life = 7, style = 'shell'){
     const aim = target.root.position.clone(); aim.y += aimHeight(target);
     const lead = aim.addScaledVector(target.vel || stv3.set(0, 0, 0), muzzle.distanceTo(aim) / speed);
     const dir = lead.sub(muzzle).normalize();
     dir.x += rng.range(-spread, spread); dir.y += rng.range(-spread, spread); dir.z += rng.range(-spread, spread); dir.normalize();
-    const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
-    mesh.position.copy(muzzle); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
+    const machineGun = style === 'machinegun';
+    const mesh = new THREE.Mesh(machineGun ? mgGeo : bzGeo,
+      machineGun ? mgMat : (p.team === 'FED' ? beamMatF : bzMat));
+    mesh.position.copy(muzzle);
+    mesh.quaternion.setFromUnitVectors(machineGun ? FWD : UP, dir);
+    scene.add(mesh);
     projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life, mesh });
   }
 
@@ -5291,7 +5295,7 @@ export function startBattle(renderer, opts, onEnd){
         for (let i = 0; i < banks; i++){
           const node = p.secondaryMuzzles[(start + i) % p.secondaryMuzzles.length];
           launchLandshipRound(p, node.getWorldPosition(new THREE.Vector3()), target,
-            profile.secondaryDamage, 1.5, 'LANDSHIP TWIN MACHINE GUN', 980, 0.028);
+            profile.secondaryDamage, profile.secondarySplash, 'LANDSHIP TWIN MACHINE GUN', 980, 0.028, 2.2, 'machinegun');
         }
         p.secondaryCursor = (start + banks) % p.secondaryMuzzles.length;
       }
@@ -5304,12 +5308,11 @@ export function startBattle(renderer, opts, onEnd){
     if (!target){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
     const dx = target.root.position.x - p.root.position.x, dz = target.root.position.z - p.root.position.z;
     const distance = Math.hypot(dx, dz), standoff = p.standoff;
-    const closing = distance > standoff * 1.08, withdrawing = distance < standoff * 0.68;
-    let wantYaw = Math.atan2(dx, dz);
-    if (withdrawing || (!closing && p.kind === 'gallop')) wantYaw = wrapAngle(wantYaw + Math.PI);
+    const travelState = landshipTravelState(distance, standoff);
+    const wantYaw = Math.atan2(dx, dz);
     const dyaw = wrapAngle(wantYaw - p.root.rotation.y);
     p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
-    if (!closing && !withdrawing){ p.vel.multiplyScalar(1 - Math.min(1, 4 * dt)); return; }
+    if (travelState === 'hold'){ p.vel.multiplyScalar(1 - Math.min(1, 4 * dt)); return; }
     const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.28, 1);
     const vx = Math.sin(p.root.rotation.y) * moveSpeed, vz = Math.cos(p.root.rotation.y) * moveSpeed;
     const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
