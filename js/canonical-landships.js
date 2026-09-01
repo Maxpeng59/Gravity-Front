@@ -15,19 +15,20 @@ function barrel(parent, material, x, y, z, length, radius, rear = false){
 }
 
 function turret(root, turrets, material, dark, spec, cooldown){
-  const { x, y, z, width, height, depth, offsets, length, radius, rear = false } = spec;
+  const { x, y, z, width, height, depth, offsets, length, radius, rear = false, arc = Math.PI } = spec;
   const yaw = new THREE.Group(); yaw.position.set(x, y, z); if (rear) yaw.rotation.y = Math.PI; root.add(yaw);
   yaw.add(cyl(width * 0.54, width * 0.66, height * 0.42, dark, 0, 0, 0, 16));
   const gun = new THREE.Group(); gun.position.y = height * 0.28; yaw.add(gun);
   const hood = chamferBox(width, height, depth, material, 0, height * 0.3, 0, 0.28); gun.add(hood);
   gun.add(box(width * 0.82, height * 0.22, depth * 0.92, dark, 0, height * 0.16, 0));
+  const muzzles = [];
   for (const bx of offsets){
     const sleeve = cyl(radius * 1.5, radius * 1.65, depth * 0.52, dark, bx, height * 0.35, depth * 0.56, 12);
     sleeve.rotation.x = Math.PI / 2; gun.add(sleeve);
     barrel(gun, dark, bx, height * 0.35, depth * 0.48, length, radius);
+    const muzzle = new THREE.Object3D(); muzzle.position.set(bx, height * 0.35, depth * 0.48 + length); gun.add(muzzle); muzzles.push(muzzle);
   }
-  const muzzle = new THREE.Object3D(); muzzle.position.set(0, height * 0.35, depth * 0.48 + length); gun.add(muzzle);
-  turrets.push({ yaw, gun, muzzle, cd: cooldown(), restYaw: rear ? Math.PI : 0 });
+  turrets.push({ yaw, gun, muzzle: muzzles[0], muzzles, cd: cooldown(), restYaw: rear ? Math.PI : 0, arc, shots: offsets.length });
   return yaw;
 }
 
@@ -36,7 +37,7 @@ function addWindows(parent, glow, xs, y, z, width = 2.2, height = 0.65){
 }
 
 function buildBigTray(glow, cooldown){
-  const root = new THREE.Group(), turrets = [];
+  const root = new THREE.Group(), turrets = [], fixedMuzzles = [], secondaryMuzzles = [];
   glow ||= std(0x15212c, { emissive: 0x5aa7d8, emissiveIntensity: 1.2 });
   const sand = std(0x8e835e), green = std(0x59664a), dark = std(0x292b32, { metalness: 0.5 });
   const armor = std(0x777451), vent = std(0x181b20, { roughness: 0.82 });
@@ -60,15 +61,16 @@ function buildBigTray(glow, cooldown){
   for (const x of [-8, 8]){
     hull.add(cyl(2.05, 2.35, 3.8, dark, x, 11.5, 42.5, 16).rotateX(Math.PI / 2));
     barrel(hull, dark, x, 11.5, 43.5, 18, 0.72);
+    const muzzle = new THREE.Object3D(); muzzle.position.set(x, 11.5, 61.5); hull.add(muzzle); fixedMuzzles.push(muzzle);
   }
 
   // Three triple-gun batteries: port/starboard amidships plus the aft center mount.
   turret(root, turrets, sand, dark,
-    { x: -18, y: 19.5, z: 8, width: 9.5, height: 4, depth: 8, offsets: [-2.1, 0, 2.1], length: 16, radius: 0.52 }, cooldown);
+    { x: -18, y: 19.5, z: 8, width: 9.5, height: 4, depth: 8, offsets: [-2.1, 0, 2.1], length: 16, radius: 0.52, arc: Math.PI / 2 }, cooldown);
   turret(root, turrets, sand, dark,
-    { x: 18, y: 19.5, z: 8, width: 9.5, height: 4, depth: 8, offsets: [-2.1, 0, 2.1], length: 16, radius: 0.52 }, cooldown);
+    { x: 18, y: 19.5, z: 8, width: 9.5, height: 4, depth: 8, offsets: [-2.1, 0, 2.1], length: 16, radius: 0.52, arc: Math.PI / 2 }, cooldown);
   turret(root, turrets, green, dark,
-    { x: 0, y: 22, z: -31, width: 10.5, height: 4.4, depth: 9, offsets: [-2.25, 0, 2.25], length: 17, radius: 0.55, rear: true }, cooldown);
+    { x: 0, y: 22, z: -31, width: 10.5, height: 4.4, depth: 9, offsets: [-2.25, 0, 2.25], length: 17, radius: 0.55, rear: true, arc: Math.PI / 2 }, cooldown);
 
   // High armored command block, panoramic bridge bands and the signature twin fins.
   hull.add(chamferBox(22, 10, 18, green, 0, 26, -10, 1.0));
@@ -86,9 +88,10 @@ function buildBigTray(glow, cooldown){
   for (const [x, z] of [[-20,-22],[20,-22],[-21,-7],[21,-7],[-20,25],[20,25],[-8,32],[8,32]]){
     hull.add(cyl(1.25, 1.5, 0.7, armor, x, 18.2, z, 12));
     for (const dx of [-0.38, 0.38]) barrel(hull, dark, x + dx, 19, z + 0.2, 4.8, 0.14);
+    const muzzle = new THREE.Object3D(); muzzle.position.set(x, 19, z + 5); hull.add(muzzle); secondaryMuzzles.push(muzzle);
   }
   compactGroup(hull);
-  return { root, turrets };
+  return { root, turrets, fixedMuzzles, secondaryMuzzles };
 }
 
 function trackPod(material, dark, z, side){
@@ -103,7 +106,7 @@ function trackPod(material, dark, z, side){
 }
 
 function buildDobday(glow, cooldown){
-  const root = new THREE.Group(), turrets = [];
+  const root = new THREE.Group(), turrets = [], secondaryMuzzles = [];
   glow ||= std(0x241719, { emissive: 0xe74c54, emissiveIntensity: 1.15 });
   const green = std(0x68745a), light = std(0x849078), dark = std(0x292d2b, { metalness: 0.55 });
   const deck = std(0x4e594a), red = std(0x8d3738), silver = std(0x858b8c, { metalness: 0.78 });
@@ -117,9 +120,9 @@ function buildDobday(glow, cooldown){
 
   // Twin large cannon turrets on high armored side barbettes.
   turret(root, turrets, green, dark,
-    { x: -17, y: 18, z: 18, width: 12, height: 6.2, depth: 15, offsets: [-2.3, 2.3], length: 25, radius: 0.8 }, cooldown);
+    { x: -17, y: 18, z: 18, width: 12, height: 6.2, depth: 15, offsets: [-2.3, 2.3], length: 25, radius: 0.8, arc: Math.PI / 2 }, cooldown);
   turret(root, turrets, green, dark,
-    { x: 17, y: 18, z: 18, width: 12, height: 6.2, depth: 15, offsets: [-2.3, 2.3], length: 25, radius: 0.8 }, cooldown);
+    { x: 17, y: 18, z: 18, width: 12, height: 6.2, depth: 15, offsets: [-2.3, 2.3], length: 25, radius: 0.8, arc: Math.PI / 2 }, cooldown);
 
   // Tall, forward-projecting observation bridge with continuous red glazing.
   hull.add(profile([[-17,18],[-13,31],[-8,38],[4,40],[12,34],[13,20]], [], 19, green, -5, 0, -5));
@@ -146,13 +149,14 @@ function buildDobday(glow, cooldown){
   for (const [x,y,z,sgn] of [[-13,29,-3,-1],[3,29,-3,1],[-15,25,5,-1],[5,25,5,1],[-13,23,-20,-1],[7,23,-20,1]]){
     hull.add(cyl(1.3, 1.55, 0.8, light, x, y, z, 12));
     for (const dx of [-0.32, 0.32]) barrel(hull, dark, x + dx, y + 0.7, z, 5, 0.16, sgn < 0);
+    const muzzle = new THREE.Object3D(); muzzle.position.set(x, y + 0.7, z + sgn * 5); hull.add(muzzle); secondaryMuzzles.push(muzzle);
   }
   compactGroup(hull);
-  return { root, turrets };
+  return { root, turrets, fixedMuzzles: [], secondaryMuzzles };
 }
 
 function buildGallop(glow, cooldown){
-  const root = new THREE.Group(), turrets = [];
+  const root = new THREE.Group(), turrets = [], secondaryMuzzles = [];
   const gold = std(0xc89932), orange = std(0xa86125), violet = std(0x29213e, { metalness: 0.44 });
   const dark = std(0x17151f, { metalness: 0.55 }), glass = glow || std(0x32283d, { emissive: 0xff6c52, emissiveIntensity: 1 });
   const hull = new THREE.Group(); root.add(hull);
@@ -184,11 +188,13 @@ function buildGallop(glow, cooldown){
 
   // Rear-facing twin artillery mount and paired forward AA blisters.
   turret(root, turrets, violet, dark,
-    { x: 0, y: 16, z: -8, width: 8.5, height: 4.2, depth: 7, offsets: [-1.45,1.45], length: 15, radius: 0.44, rear: true }, cooldown);
+    { x: 0, y: 16, z: -8, width: 8.5, height: 4.2, depth: 7, offsets: [-1.45,1.45], length: 15, radius: 0.44, rear: true, arc: Math.PI / 6 }, cooldown);
   for (const sx of [-1,1]){
     hull.add(sph(2.4, violet, sx * 10.5, 18.5, 6.5, 14, 9));
     for (const dx of [-0.34,0.34]) barrel(hull, dark, sx * 10.5 + dx, 19, 7, 5.2, 0.15);
+    const muzzle = new THREE.Object3D(); muzzle.position.set(sx * 10.5, 19, 12.2); hull.add(muzzle); secondaryMuzzles.push(muzzle);
   }
+  const centerAA = new THREE.Object3D(); centerAA.position.set(0, 20.5, 8); hull.add(centerAA); secondaryMuzzles.push(centerAA);
 
   // Panoramic observation cupola, two very tall aerials, and the stern tow coupling.
   hull.add(cyl(2.3, 3.3, 4.8, orange, 0, 20.5, 2, 14));
@@ -200,7 +206,7 @@ function buildGallop(glow, cooldown){
   hull.add(cyl(1.1, 1.1, 4, violet, 0, 9, -25, 12).rotateX(Math.PI / 2));
   hull.add(sph(1.35, dark, 0, 9, -27));
   compactGroup(hull);
-  return { root, turrets };
+  return { root, turrets, fixedMuzzles: [], secondaryMuzzles };
 }
 
 // `cooldown` keeps the battle engine's seeded timing while leaving construction independent.

@@ -18,6 +18,7 @@ import {
 import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
+import { landshipProfile } from './landship-balance.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -891,7 +892,7 @@ function renderCustomHoverCraft(){
   const copy = el('div', 'hovercraft-copy');
   copy.appendChild(el('b', '', 'MS HOVER CRAFT · 5,000 HP'));
   copy.appendChild(el('span', '', eligible
-    ? 'Independent support deck · Space ascends · C descends · normal movement · destructive blast if lost'
+    ? 'Independent support deck · space-capable · 1.5× movement speed · Space ascends · C descends · destructive blast if lost'
     : 'Unavailable: this platform requires a standing mobile-suit frame.'));
   const toggle = el('button', `small equipment-action${equipped ? ' equipped' : ''}`, equipped ? 'EQUIPPED' : 'EQUIP');
   toggle.disabled = !eligible;
@@ -977,7 +978,8 @@ function renderCustom(){
       const canonicalShipFaction = team === 'enemy' ? 'ZEON' : 'FED';
       for (const s of [...SUITS, ...AIRCRAFT, ...SHIPS.filter(ship => ship.faction === canonicalShipFaction)]){
         const o = document.createElement('option');
-        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})`; o.selected = s.id === entry.id;
+        const shipStats = landshipProfile(s.id);
+        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
       const maxForEntry = () => SHIP_IDS.has(entry.id) ? LANDSHIP_CAP : ENTRY_MAX;

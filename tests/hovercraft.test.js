@@ -4,6 +4,8 @@ import {
   HOVER_CRAFT_MAX_HP,
   HOVER_CRAFT_EXPLOSION_DAMAGE,
   HOVER_CRAFT_EXPLOSION_RADIUS,
+  HOVER_CRAFT_SPEED_MULTIPLIER,
+  HOVER_CRAFT_ACCEL_MULTIPLIER,
   canUseHoverCraft,
   hoverCraftEquipped,
   hoverCraftSpaceCapable,
@@ -13,6 +15,8 @@ test('hover craft has the requested independent health and a damaging blast', ()
   assert.equal(HOVER_CRAFT_MAX_HP, 5000);
   assert.ok(HOVER_CRAFT_EXPLOSION_DAMAGE > 0);
   assert.ok(HOVER_CRAFT_EXPLOSION_RADIUS > 0);
+  assert.ok(HOVER_CRAFT_SPEED_MULTIPLIER > 1);
+  assert.ok(HOVER_CRAFT_ACCEL_MULTIPLIER > 1);
 });
 
 test('standing mobile suits can equip the craft while vehicles and aircraft cannot', () => {

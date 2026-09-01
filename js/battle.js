@@ -21,10 +21,13 @@ import {
   shouldAiKneel,
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
+import { landshipProfile } from './landship-balance.js';
 import {
   HOVER_CRAFT_MAX_HP,
   HOVER_CRAFT_EXPLOSION_DAMAGE,
   HOVER_CRAFT_EXPLOSION_RADIUS,
+  HOVER_CRAFT_SPEED_MULTIPLIER,
+  HOVER_CRAFT_ACCEL_MULTIPLIER,
   hoverCraftEquipped,
 } from './hovercraft.js';
 import {
@@ -404,7 +407,7 @@ export function startBattle(renderer, opts, onEnd){
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
   hintEl.textContent = baseHint
-    + (opts.hoverCraft ? ' · HOVER CRAFT: SPACE RISE · C DESCEND · 5,000 HP' : '')
+    + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
 
   let msgT = 0;
@@ -937,9 +940,10 @@ export function startBattle(renderer, opts, onEnd){
   props.push(...pendingStaticProps);
   function spawnProp(kind, team, pos, hp){
     const isSpaceShip = kind === 'musai' || kind === 'chivvay' || kind === 'salamis' || kind === 'magellan' || kind === 'columbus' || kind === 'solfortress';
-    const isLandShip = kind === 'bigtray' || kind === 'dabude' || kind === 'gallop';
+    const landProfile = landshipProfile(kind);
+    const isLandShip = !!landProfile;
     const isShip = isSpaceShip || isLandShip;
-    hp = buildingHitPoints(kind, hp);
+    hp = landProfile?.hp || buildingHitPoints(kind, hp);
     // war-production HP buff — applies to every Federation capital ship (opts.fedShipHp is 0 in custom sorties)
     if (team === 'FED' && isShip) hp += (opts.fedShipHp || 0);
     const root = new THREE.Group();
@@ -1191,12 +1195,17 @@ export function startBattle(renderer, opts, onEnd){
       gunT: rng.range(2, 4),
       // The Gallop is a fast transport with one rear artillery mount, not a super-heavy landship.
       // The Magellan is the Federation's gun-line flagship; the Columbus barely defends itself.
-      gunRange: kind === 'gallop' ? 1150 : kind === 'solfortress' ? 1600 : kind === 'magellan' ? 1600 : kind === 'columbus' ? 1000 : isLandShip ? 950 : 1400,
-      gunDmg: kind === 'gallop' ? 280 : isLandShip ? 480 : kind === 'magellan' ? 440 : kind === 'columbus' ? 220 : 360,
-      gunSplash: isLandShip ? 16 : 12,
-      gunRof: kind === 'gallop' ? [2.8, 4.2] : kind === 'solfortress' ? [1.4, 2.6] : kind === 'columbus' ? [4.2, 6.0] : isLandShip ? [3.6, 5.6] : [2.6, 4.2],
+      gunRange: landProfile?.mainRange || (kind === 'solfortress' ? 1600 : kind === 'magellan' ? 1600 : kind === 'columbus' ? 1000 : 1400),
+      gunDmg: landProfile?.mainDamage || (kind === 'magellan' ? 440 : kind === 'columbus' ? 220 : 360),
+      gunSplash: landProfile?.mainSplash || 12,
+      gunRof: landProfile?.mainRof || (kind === 'solfortress' ? [1.4, 2.6] : kind === 'columbus' ? [4.2, 6.0] : [2.6, 4.2]),
       gunShots: kind === 'solfortress' ? 4 : kind === 'magellan' ? 2 : 1,
-      speed: 0, goal: null, arrived: false, escaped: false };
+      speed: landProfile?.speed || 0, turnRate: landProfile?.turnRate || 0.12,
+      standoff: landProfile?.standoff || 0, landProfile,
+      fixedMuzzles: canonicalLandship?.fixedMuzzles || [],
+      secondaryMuzzles: canonicalLandship?.secondaryMuzzles || [],
+      fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
+      goal: null, arrived: false, escaped: false };
     // landships are long hulls — swap the single fat ball for a chain of spheres along the keel
     // (local: x=beam, z=prow) so both the damage hitbox and the physical block match the silhouette.
     const LAND_HS = {
@@ -3975,13 +3984,14 @@ export function startBattle(renderer, opts, onEnd){
     if (mountedCraft){
       // The support deck supplies its own translation and lift. WASD remains the
       // ordinary sight-relative movement scheme; Space/C operate vertical lift.
-      const acc = shiftBoosting ? 92 : 50;
+      const acc = (shiftBoosting ? 92 : 50) * HOVER_CRAFT_ACCEL_MULTIPLIER;
       m.thrusting = hasInput || keys.has(' ') || keys.has('c');
       if (hasInput && !postureLocked) m.vel.addScaledVector(input, acc * dt);
       if (!postureLocked && keys.has(' ')) m.vel.y += acc * 0.82 * dt;
       if (!postureLocked && keys.has('c')) m.vel.y -= acc * 0.82 * dt;
       m.vel.multiplyScalar(1 - (SPACE ? 0.48 : 0.8) * dt);
-      const cap = (shiftBoosting ? w.boost * 1.35 : w.walk * 2) * legFactor
+      const nativeCap = SPACE ? (shiftBoosting ? w.boost * 1.6 : w.walk * 2.2) : (shiftBoosting ? w.boost : w.walk);
+      const cap = nativeCap * HOVER_CRAFT_SPEED_MULTIPLIER * legFactor
         * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
       if (m.vel.length() > cap) m.vel.setLength(cap);
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 16 * dt);
@@ -5202,21 +5212,113 @@ export function startBattle(renderer, opts, onEnd){
       const local = p.root.worldToLocal(stv3.copy(aim)); // props carry no scale → clean hull-local coords
       const dx = local.x - t.yaw.position.x, dz = local.z - t.yaw.position.z, dy = local.y - (t.yaw.position.y + t.gun.position.y);
       const wantYaw = Math.atan2(dx, dz);
-      let dyaw = wantYaw - t.yaw.rotation.y; while (dyaw > Math.PI) dyaw -= 2 * Math.PI; while (dyaw < -Math.PI) dyaw += 2 * Math.PI;
+      const arcOffset = wrapAngle(wantYaw - (t.restYaw || 0));
+      const inArc = Math.abs(arcOffset) <= (t.arc ?? Math.PI);
+      const limitedYaw = (t.restYaw || 0) + clamp(arcOffset, -(t.arc ?? Math.PI), t.arc ?? Math.PI);
+      let dyaw = wrapAngle(limitedYaw - t.yaw.rotation.y);
       t.yaw.rotation.y += clamp(dyaw, -1.4 * dt, 1.4 * dt);                     // traverse at a limited slew
       t.gun.rotation.x = lerp(t.gun.rotation.x, clamp(-Math.atan2(dy, Math.hypot(dx, dz)), -0.5, 0.55), 3 * dt); // elevate
       t.cd -= dt;
-      if (t.cd <= 0 && Math.abs(dyaw) < 0.16){                                  // fire only once roughly lined up
+      if (t.cd <= 0 && inArc && Math.abs(dyaw) < 0.16){                          // fire only once roughly lined up
         t.cd = rng.range(p.gunRof[0], p.gunRof[1]);
         t.yaw.updateMatrixWorld(true);                                          // refresh so the muzzle reflects this frame's aim
-        const mw = t.muzzle.getWorldPosition(stv1);
-        const dir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / 420).sub(mw).normalize(); // lead
-        const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
-        mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-        projectiles.push({ pos: mw.clone(), vel: dir.clone().multiplyScalar(420), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p, weaponName: 'TURRET BATTERY', life: 5.5, mesh });
-        sfx('bazooka', clamp(380 / mw.distanceTo(player.root.position), 0.03, 0.18));
+        const muzzleNodes = t.muzzles?.length ? t.muzzles : [t.muzzle];
+        for (let shot = 0; shot < (t.shots || 1); shot++){
+          const mw = muzzleNodes[shot % muzzleNodes.length].getWorldPosition(new THREE.Vector3());
+          const baseDir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / 420).sub(mw).normalize(); // lead
+          const dir = baseDir.clone();
+          dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
+          const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
+          mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
+          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(420), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p, weaponName: 'LANDSHIP MAIN BATTERY', life: 5.5, mesh });
+        }
+        const soundPos = t.muzzle.getWorldPosition(stv1);
+        sfx('bazooka', clamp(380 / soundPos.distanceTo(player.root.position), 0.03, 0.18));
       }
     }
+  }
+
+  function nearestLandshipTarget(p, range = Infinity, ships = true){
+    let best = null, bestSq = range * range;
+    for (const m of mechs){
+      if (!m.alive || m.team === p.team) continue;
+      const d2 = m.root.position.distanceToSquared(p.root.position);
+      if (d2 < bestSq){ bestSq = d2; best = m; }
+    }
+    if (ships) for (const q of props){
+      if (!q.alive || q === p || q.team === p.team || !q.isShip) continue;
+      const d2 = q.root.position.distanceToSquared(p.root.position);
+      if (d2 < bestSq){ bestSq = d2; best = q; }
+    }
+    return best;
+  }
+
+  function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 420, spread = 0.015){
+    const aim = target.root.position.clone(); aim.y += aimHeight(target);
+    const lead = aim.addScaledVector(target.vel || stv3.set(0, 0, 0), muzzle.distanceTo(aim) / speed);
+    const dir = lead.sub(muzzle).normalize();
+    dir.x += rng.range(-spread, spread); dir.y += rng.range(-spread, spread); dir.z += rng.range(-spread, spread); dir.normalize();
+    const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
+    mesh.position.copy(muzzle); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
+    projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life: 5.5, mesh });
+  }
+
+  function updateLandshipAuxBatteries(p, dt){
+    const profile = p.landProfile; if (!profile) return;
+    p.fixedT -= dt;
+    if (profile.fixedShots && p.fixedMuzzles.length && p.fixedT <= 0){
+      const target = nearestLandshipTarget(p, profile.mainRange * 1.15, true);
+      if (target){
+        // Big Tray's two bow weapons are fixed: the hull must point within roughly 18°.
+        const local = p.root.worldToLocal(stv1.copy(target.root.position));
+        if (local.z > 0 && Math.abs(Math.atan2(local.x, local.z)) < 0.31){
+          p.fixedT = rng.range(profile.fixedRof[0], profile.fixedRof[1]);
+          for (const node of p.fixedMuzzles.slice(0, profile.fixedShots))
+            launchLandshipRound(p, node.getWorldPosition(new THREE.Vector3()), target,
+              profile.fixedDamage, profile.fixedSplash, 'BIG TRAY BOW CANNON', 460, 0.008);
+        }
+      }
+    }
+    p.secondaryT -= dt;
+    if (p.secondaryMuzzles.length && p.secondaryT <= 0){
+      const target = nearestLandshipTarget(p, profile.secondaryRange, false);
+      if (target){
+        p.secondaryT = rng.range(profile.secondaryRof[0], profile.secondaryRof[1]);
+        const start = p.secondaryCursor || 0;
+        const banks = Math.min(4, p.secondaryMuzzles.length);
+        for (let i = 0; i < banks; i++){
+          const node = p.secondaryMuzzles[(start + i) % p.secondaryMuzzles.length];
+          launchLandshipRound(p, node.getWorldPosition(new THREE.Vector3()), target,
+            profile.secondaryDamage, 1.5, 'LANDSHIP TWIN MACHINE GUN', 980, 0.028);
+        }
+        p.secondaryCursor = (start + banks) % p.secondaryMuzzles.length;
+      }
+    }
+  }
+
+  function updateLandshipMovement(p, dt){
+    if (SPACE || !p.landProfile || p.speed <= 0) return;
+    const target = nearestLandshipTarget(p, Infinity, true);
+    if (!target){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
+    const dx = target.root.position.x - p.root.position.x, dz = target.root.position.z - p.root.position.z;
+    const distance = Math.hypot(dx, dz), standoff = p.standoff;
+    const closing = distance > standoff * 1.08, withdrawing = distance < standoff * 0.68;
+    let wantYaw = Math.atan2(dx, dz);
+    if (withdrawing || (!closing && p.kind === 'gallop')) wantYaw = wrapAngle(wantYaw + Math.PI);
+    const dyaw = wrapAngle(wantYaw - p.root.rotation.y);
+    p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
+    if (!closing && !withdrawing){ p.vel.multiplyScalar(1 - Math.min(1, 4 * dt)); return; }
+    const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.28, 1);
+    const vx = Math.sin(p.root.rotation.y) * moveSpeed, vz = Math.cos(p.root.rotation.y) * moveSpeed;
+    const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
+    const ny = groundY(nx, nz);
+    const bodyRadius = Math.min(34, p.radius * 0.7);
+    const propBlocked = props.some(q => q.alive && q !== p && !q.attachedTo
+      && Math.hypot(nx - q.root.position.x, nz - q.root.position.z)
+        < bodyRadius + Math.min(34, (q.radius || 8) * 0.7));
+    if (!propBlocked && !staticCircleBlocked(nx, nz, bodyRadius, ny, ny + p.hitY * 2)){
+      p.root.position.set(nx, ny, nz); p.vel.set(vx, 0, vz);
+    } else p.vel.set(0, 0, 0);
   }
 
   function missionUpdate(dt){
@@ -5267,6 +5369,13 @@ export function startBattle(renderer, opts, onEnd){
           p.root.rotation.y += clamp(dy, -0.12 * dt, 0.12 * dt); // ponderous prow-first turn
         }
       }
+    }
+    // Landships maneuver as capital combatants in every ground battle, then fire
+    // their main, fixed and defensive batteries independently.
+    for (const p of props){
+      if (!p.alive || !p.landProfile) continue;
+      updateLandshipMovement(p, dt);
+      updateLandshipAuxBatteries(p, dt);
     }
     // capital-ship & landship batteries — turreted hulls aim+fire per-turret; the rest volley from the hull
     for (const p of props){
@@ -5459,7 +5568,7 @@ export function startBattle(renderer, opts, onEnd){
       const alive = playerHoverCraft.alive && player.hoverCraft === playerHoverCraft;
       const hf = Math.round(clamp(playerHoverCraft.hp / playerHoverCraft.maxHp, 0, 1) * 100);
       wHtml += `<br>HOVER CRAFT <span class="ammo" style="color:${alive ? (hf < 30 ? 'var(--zeon)' : 'var(--ok)') : 'var(--zeon)'}">${alive
-        ? `${Math.max(0, Math.round(playerHoverCraft.hp))} / ${playerHoverCraft.maxHp} · SPACE RISE · C DESCEND`
+        ? `${Math.max(0, Math.round(playerHoverCraft.hp))} / ${playerHoverCraft.maxHp} · ${HOVER_CRAFT_SPEED_MULTIPLIER.toFixed(1)}× SPEED · SPACE RISE · C DESCEND`
         : 'DESTROYED · MS RELEASED'}</span>`;
     }
     if (kneelEligible(player)){
@@ -6384,6 +6493,8 @@ export function startBattle(renderer, opts, onEnd){
           attached: player.hoverCraft === playerHoverCraft,
           explosionDamage: HOVER_CRAFT_EXPLOSION_DAMAGE,
           explosionRadius: HOVER_CRAFT_EXPLOSION_RADIUS,
+          speedMultiplier: HOVER_CRAFT_SPEED_MULTIPLIER,
+          accelerationMultiplier: HOVER_CRAFT_ACCEL_MULTIPLIER,
         } : { equipped: false, alive: false, hp: 0, maxHp: HOVER_CRAFT_MAX_HP, attached: false },
         pShieldHp: player.shieldHp, pShieldMax: player.shieldMax, pShieldBroken: player.shieldBroken, pBlocking: player.blocking,
         pBlockPose: player.blockPose || 0,
@@ -6466,7 +6577,10 @@ export function startBattle(renderer, opts, onEnd){
         props: props.map(p => ({ kind: p.kind, team: p.team, p: p.root.position.toArray(),
           rotY: +p.root.rotation.y.toFixed(3), isShip: p.isShip,
           label: p.label || null, hitBoxes: p.hitBoxes?.length || 0, hitSpheres: p.hitSpheres?.length || 0,
-          hp: p.hp, alive: p.alive, arrived: p.arrived, escaped: p.escaped })),
+          hp: p.hp, maxHp: p.maxHp, alive: p.alive, arrived: p.arrived, escaped: p.escaped,
+          speed: p.speed || 0, velocity: p.vel?.toArray?.() || null,
+          mainTurrets: p.turrets?.length || 0, fixedGuns: p.fixedMuzzles?.length || 0,
+          secondaryStations: p.secondaryMuzzles?.length || 0 })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,
         nFed: mechs.filter(m => m.alive && m.team === 'FED' && !m.isPlayer).length,
         nFedTanks: mechs.filter(m => m.alive && m.team === 'FED' && (m.suit.style === 'tank' || m.suit.style === 'apc')).length,

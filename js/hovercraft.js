@@ -1,6 +1,8 @@
 export const HOVER_CRAFT_MAX_HP = 5000;
 export const HOVER_CRAFT_EXPLOSION_DAMAGE = 900;
 export const HOVER_CRAFT_EXPLOSION_RADIUS = 24;
+export const HOVER_CRAFT_SPEED_MULTIPLIER = 1.5;
+export const HOVER_CRAFT_ACCEL_MULTIPLIER = 1.4;
 
 const UNSUPPORTED_STYLES = new Set(['tank', 'guntank', 'zakutank', 'crane', 'apc', 'fighter']);
 

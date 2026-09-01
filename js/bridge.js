@@ -673,7 +673,7 @@ function appendHoverCraftEditor(card, def, su){
   const copy = el('div', 'hovercraft-copy');
   copy.appendChild(el('b', '', 'MS HOVER CRAFT · 5,000 HP'));
   copy.appendChild(el('span', '', eligible
-    ? 'Optional support deck · enables ground-type space sorties · Space rise · C descend · destruction blast'
+    ? 'Optional support deck · usable in space · 1.5× movement speed · Space rise · C descend · destruction blast'
     : 'Incompatible with aircraft, tanks, APCs and non-standing chassis.'));
   const toggle = el('button', `small equipment-action${equipped ? ' equipped' : ''}`, equipped ? 'EQUIPPED' : 'EQUIP');
   toggle.disabled = !eligible;
