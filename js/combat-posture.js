@@ -23,6 +23,22 @@ export function kneelState(blend, target){
   return value >= 1 ? 'kneeling' : 'standing';
 }
 
+export function firingKneelPose(blend){
+  const t = clamp01(blend);
+  const eased = t * t * (3 - 2 * t);
+  return {
+    eased,
+    bodyDrop: 5.2 * eased,
+    bodyPitch: -0.1 * eased,
+    frontHip: -0.95 * eased,
+    frontKnee: 2.3 * eased,
+    frontSpread: -0.22 * eased,
+    rearHip: 0.18 * eased,
+    rearKnee: -1.55 * eased,
+    rearSpread: 0.28 * eased,
+  };
+}
+
 export function shouldAiKneel({
   range,
   preferredRange,

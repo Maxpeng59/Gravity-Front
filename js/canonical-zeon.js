@@ -125,33 +125,39 @@ function zeonArm(M, sx, options = {}){
 }
 
 function zeonLeg(M, sx, options = {}){
-  const leg = new THREE.Group(), stat = new THREE.Group();
+  const leg = new THREE.Group(), upper = new THREE.Group(), lower = new THREE.Group();
+  const kneeY = -3.68, kneePivot = new THREE.Group();
+  kneePivot.position.y = kneeY;
+  const addLower = object => { object.position.y -= kneeY; lower.add(object); };
   const thigh = options.thigh || M.main, shin = options.shin || M.main;
   const wide = options.wide || 1;
-  stat.add(sph(0.92 * wide, M.joint, 0, 0, 0, 14, 10));
-  stat.add(cyl(1.0 * wide, 1.2 * wide, 3.15, thigh, 0, -1.82, 0, 12));
-  stat.add(sideCyl(0.67, 0.67, 1.95 * wide, M.joint, 0, -3.68, 0, 12));
-  stat.add(chamferBox(1.55 * wide, 1.0, 0.45, options.knee || M.accent, 0, -3.62, 1.18, 0.1));
-  stat.add(cyl(1.16 * wide, 1.52 * wide, 3.45, shin, 0, -5.62, -0.02, 13));
-  stat.add(chamferBox(1.58 * wide, 2.35, 0.38, options.calf || M.main, 0, -5.75, 1.43 * wide, 0.09));
-  stat.add(chamferBox(1.45 * wide, 1.05, 1.75, M.joint, 0, -7.58, 0.08, 0.12));
-  stat.add(profile([
+  upper.add(sph(0.92 * wide, M.joint, 0, 0, 0, 14, 10));
+  upper.add(cyl(1.0 * wide, 1.2 * wide, 3.15, thigh, 0, -1.82, 0, 12));
+  upper.add(sideCyl(0.67, 0.67, 1.95 * wide, M.joint, 0, -3.68, 0, 12));
+  upper.add(chamferBox(1.55 * wide, 1.0, 0.45, options.knee || M.accent, 0, -3.62, 1.18, 0.1));
+  addLower(cyl(1.16 * wide, 1.52 * wide, 3.45, shin, 0, -5.62, -0.02, 13));
+  addLower(chamferBox(1.58 * wide, 2.35, 0.38, options.calf || M.main, 0, -5.75, 1.43 * wide, 0.09));
+  addLower(chamferBox(1.45 * wide, 1.05, 1.75, M.joint, 0, -7.58, 0.08, 0.12));
+  addLower(profile([
     [-1.6, -9.25], [2.55, -9.25], [2.82, -8.48], [2.2, -7.78],
     [-1.45, -7.68], [-1.82, -8.32],
   ], [], 2.55 * wide, M.dark));
-  stat.add(profile([
+  addLower(profile([
     [0.0, -8.95], [2.72, -8.95], [2.55, -8.22], [1.86, -7.83], [0.05, -7.86],
   ], [], 2.3 * wide, options.toe || M.main, 0, 0.12, 0));
 
   // The Zaku/Gouf family carries a conspicuous external hydraulic line down each outer calf.
   if (options.cable !== false){
     const ox = sx * 1.12 * wide;
-    stat.add(ribbedCable([
+    const cable = ribbedCable([
       [sx * 0.78, -3.65, -0.15], [ox, -4.55, -0.62],
       [ox, -6.15, -0.35], [sx * 0.75, -7.25, 0.25],
-    ], 0.19, M.frame, M.dark, 12));
+    ], 0.19, M.frame, M.dark, 12);
+    addLower(cable);
   }
-  leg.add(compactGroup(stat));
+  leg.add(compactGroup(upper), kneePivot);
+  kneePivot.add(compactGroup(lower));
+  leg.kneePivot = kneePivot;
   return leg;
 }
 

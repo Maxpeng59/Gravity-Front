@@ -96,46 +96,50 @@ function makeBiped(P, style, options = {}){
   for (const [key, sx] of [['legL', -1], ['legR', 1]]){
     const leg = new THREE.Group();
     leg.position.set(sx * C.hipX, C.hipY, 0);
-    const armour = new THREE.Group();
-    armour.add(sph(0.8 * C.leg, P.joint, 0, 0, 0, 14, 9));
-    armour.add(chamferBox(1.85 * C.leg, 2.8, 2.05, legArmour, 0, -1.72, 0, 0.2));
-    armour.add(chamferBox(1.7 * C.leg, 0.9, 1.9, P.joint, 0, -3.42, 0.05, 0.12));
-    armour.add(chamferBox(1.75 * C.leg, 1.45, 0.75, kneeMat, 0, -3.45, 1.18, 0.14));
-    armour.add(chamferBox(2.05 * C.leg, 3.25, 2.25, legArmour, 0, -5.4, 0.05, 0.22));
-    armour.add(chamferBox(1.7 * C.leg, 1.8, 0.75, legArmour, 0, -5.25, -1.38, 0.14));
-    armour.add(cyl(0.55, 0.55, 0.75, P.joint, 0, -C.hipY + 1.35, 0, 12));
+    const upper = new THREE.Group(), lower = new THREE.Group();
+    const kneeY = -3.48, kneePivot = new THREE.Group();
+    kneePivot.position.y = kneeY;
+    const addLower = object => { object.position.y -= kneeY; lower.add(object); };
+    upper.add(sph(0.8 * C.leg, P.joint, 0, 0, 0, 14, 9));
+    upper.add(chamferBox(1.85 * C.leg, 2.8, 2.05, legArmour, 0, -1.72, 0, 0.2));
+    upper.add(chamferBox(1.7 * C.leg, 0.9, 1.9, P.joint, 0, -3.42, 0.05, 0.12));
+    upper.add(chamferBox(1.75 * C.leg, 1.45, 0.75, kneeMat, 0, -3.45, 1.18, 0.14));
+    addLower(chamferBox(2.05 * C.leg, 3.25, 2.25, legArmour, 0, -5.4, 0.05, 0.22));
+    addLower(chamferBox(1.7 * C.leg, 1.8, 0.75, legArmour, 0, -5.25, -1.38, 0.14));
+    addLower(cyl(0.55, 0.55, 0.75, P.joint, 0, -C.hipY + 1.35, 0, 12));
     // ExtrudeGeometry's bevel extends beyond the nominal rectangle.  The
     // centres account for that expansion so the rendered sole—not merely the
     // primitive's un-bevelled bounds—rests exactly on y=0.
-    armour.add(chamferBox(2.25 * C.leg, 1.05, 3.2, footMat, 0, -C.hipY + 0.685, 0.55, 0.16));
-    armour.add(chamferBox(2.05 * C.leg, 0.72, 1.5, footMat, 0, -C.hipY + 0.71, 2.2, 0.13));
+    addLower(chamferBox(2.25 * C.leg, 1.05, 3.2, footMat, 0, -C.hipY + 0.685, 0.55, 0.16));
+    addLower(chamferBox(2.05 * C.leg, 0.72, 1.5, footMat, 0, -C.hipY + 0.71, 2.2, 0.13));
 
     if (style === 'ground'){
-      armour.add(chamferBox(2.0 * C.leg, 1.85, 0.55, legArmour, 0, -3.55, 1.45, 0.12));
-      armour.add(box(0.42, 2.25, 0.65, P.dark, sx * 1.12, -5.35, -0.9));
+      upper.add(chamferBox(2.0 * C.leg, 1.85, 0.55, legArmour, 0, -3.55, 1.45, 0.12));
+      addLower(box(0.42, 2.25, 0.65, P.dark, sx * 1.12, -5.35, -0.9));
     } else if (style === 'alex'){
-      armour.add(chamferBox(0.72, 2.15, 1.0, P.chest, sx * 1.08, -5.55, -0.75, 0.12));
-      armour.add(cyl(0.35, 0.45, 0.55, P.dark, sx * 1.2, -5.5, -1.35, 12).rotateX(PI / 2));
+      addLower(chamferBox(0.72, 2.15, 1.0, P.chest, sx * 1.08, -5.55, -0.75, 0.12));
+      addLower(cyl(0.35, 0.45, 0.55, P.dark, sx * 1.2, -5.5, -1.35, 12).rotateX(PI / 2));
     } else if (style === 'gp01'){
-      armour.add(chamferBox(0.8, 2.7, 1.2, P.main, sx * 1.18, -5.4, -0.65, 0.14));
-      armour.add(chamferBox(1.7, 1.45, 0.7, P.accent, 0, -3.6, 1.35, 0.12));
-      armour.add(cyl(0.38, 0.5, 0.58, P.dark, sx * 1.2, -6.1, -1.35, 12).rotateX(PI / 2));
+      addLower(chamferBox(0.8, 2.7, 1.2, P.main, sx * 1.18, -5.4, -0.65, 0.14));
+      upper.add(chamferBox(1.7, 1.45, 0.7, P.accent, 0, -3.6, 1.35, 0.12));
+      addLower(cyl(0.38, 0.5, 0.58, P.dark, sx * 1.2, -6.1, -1.35, 12).rotateX(PI / 2));
     } else if (style === 'mk2'){
-      armour.add(chamferBox(0.55, 3.1, 0.8, P.chest, sx * 1.05, -5.35, -0.65, 0.11));
-      armour.add(box(1.3, 0.22, 0.18, P.dark, 0, -4.55, 1.25));
-      armour.add(box(1.3, 0.22, 0.18, P.dark, 0, -4.9, 1.28));
+      addLower(chamferBox(0.55, 3.1, 0.8, P.chest, sx * 1.05, -5.35, -0.65, 0.11));
+      addLower(box(1.3, 0.22, 0.18, P.dark, 0, -4.55, 1.25));
+      addLower(box(1.3, 0.22, 0.18, P.dark, 0, -4.9, 1.28));
     } else if (style === 'x'){
-      armour.add(chamferBox(0.35, 2.6, 0.52, P.chest, sx * 0.98, -5.4, 1.05, 0.09));
-      armour.add(chamferBox(1.5, 0.65, 0.55, P.accent, 0, -6.7, 1.12, 0.1));
+      addLower(chamferBox(0.35, 2.6, 0.52, P.chest, sx * 0.98, -5.4, 1.05, 0.09));
+      addLower(chamferBox(1.5, 0.65, 0.55, P.accent, 0, -6.7, 1.12, 0.1));
     } else if (style === 'lategm'){
-      armour.add(chamferBox(0.62, 2.4, 1.05, P.main, sx * 1.08, -5.45, -0.55, 0.12));
-      armour.add(cyl(0.34, 0.46, 0.5, P.dark, sx * 1.2, -5.8, -1.4, 12).rotateX(PI / 2));
+      addLower(chamferBox(0.62, 2.4, 1.05, P.main, sx * 1.08, -5.45, -0.55, 0.12));
+      addLower(cyl(0.34, 0.46, 0.5, P.dark, sx * 1.2, -5.8, -1.4, 12).rotateX(PI / 2));
     } else if (style === 'cannon'){
-      armour.add(chamferBox(0.8, 2.4, 1.15, P.main, sx * 1.22, -5.3, -0.6, 0.12));
-      armour.add(chamferBox(2.05, 1.55, 0.8, P.main, 0, -3.5, 1.3, 0.12));
+      addLower(chamferBox(0.8, 2.4, 1.15, P.main, sx * 1.22, -5.3, -0.6, 0.12));
+      upper.add(chamferBox(2.05, 1.55, 0.8, P.main, 0, -3.5, 1.3, 0.12));
     }
-    compactGroup(armour);
-    leg.add(armour); root.add(leg); parts[key] = leg;
+    compactGroup(upper); compactGroup(lower);
+    kneePivot.add(lower); leg.add(upper, kneePivot); leg.kneePivot = kneePivot;
+    root.add(leg); parts[key] = leg;
   }
 
   // All authored meshes face +Z.  In that basis the pilot's anatomical right is -X

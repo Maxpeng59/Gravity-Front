@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   KNEEL_TRANSITION_SECONDS,
   advanceKneelBlend,
+  firingKneelPose,
   kneelAimErrorMultiplier,
   kneelSpreadMultiplier,
   kneelState,
@@ -36,6 +37,17 @@ test('posture labels distinguish the two transition directions', () => {
   assert.equal(kneelState(0.4, true), 'kneeling');
   assert.equal(kneelState(1, true), 'kneeling');
   assert.equal(kneelState(0.4, false), 'rising');
+});
+
+test('firing kneel is an asymmetric planted-foot and knee-down pose', () => {
+  const standing = firingKneelPose(0);
+  const kneeling = firingKneelPose(1);
+  assert.equal(standing.bodyDrop, 0);
+  assert.equal(standing.frontKnee, 0);
+  assert.ok(kneeling.bodyDrop >= 5 && kneeling.bodyDrop < 5.5);
+  assert.ok(kneeling.frontHip < -0.9 && kneeling.frontKnee > 2.2);
+  assert.ok(kneeling.rearHip > 0 && kneeling.rearHip < 0.25 && kneeling.rearKnee < -1.5);
+  assert.ok(kneeling.frontSpread < 0 && kneeling.rearSpread > 0);
 });
 
 test('AI kneels only in a ranged firing band and uses hysteresis', () => {

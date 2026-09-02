@@ -16,6 +16,7 @@ import { applyWeaponLoadout, isSniperWeapon } from './loadouts.js';
 import {
   advanceKneelBlend,
   kneelAimErrorMultiplier,
+  firingKneelPose,
   kneelSpreadMultiplier,
   kneelState,
   shouldAiKneel,
@@ -4779,18 +4780,21 @@ export function startBattle(renderer, opts, onEnd){
 
   function applyKneelPose(m){
     const amount = clamp(m.kneelBlend || 0, 0, 1);
+    const pose = firingKneelPose(amount);
     if (m.detail){
-      m.detail.position.y = -3.6 * (m.suit.scale || 1) * amount;
-      m.detail.rotation.x = -0.055 * amount;
+      m.detail.position.y = -pose.bodyDrop * (m.suit.scale || 1);
+      m.detail.rotation.x = pose.bodyPitch;
     }
-    if (amount <= 0 || !m.parts?.legL || !m.parts?.legR) return;
-    // One knee folds under the chassis while the opposite foot plants forward.
-    // This remains readable on every humanoid rig even though the legacy models
-    // use a single articulated group for each complete leg.
-    m.parts.legL.rotation.x = lerp(m.parts.legL.rotation.x, -0.72, amount);
-    m.parts.legR.rotation.x = lerp(m.parts.legR.rotation.x, 1.08, amount);
-    m.parts.legL.rotation.z = lerp(m.parts.legL.rotation.z || 0, -0.16, amount);
-    m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, 0.23, amount);
+    if (!m.parts?.legL || !m.parts?.legR) return;
+    // Asymmetric supported firing kneel: left/front foot planted, right/rear
+    // knee folded down. Canonical humanoids expose real knee pivots; unusual
+    // legacy frames retain the whole-leg fallback without losing the posture.
+    m.parts.legL.rotation.x = lerp(m.parts.legL.rotation.x, pose.frontHip, pose.eased);
+    m.parts.legR.rotation.x = lerp(m.parts.legR.rotation.x, pose.rearHip, pose.eased);
+    m.parts.legL.rotation.z = lerp(m.parts.legL.rotation.z || 0, pose.frontSpread, pose.eased);
+    m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, pose.rearSpread, pose.eased);
+    if (m.parts.legL.kneePivot) m.parts.legL.kneePivot.rotation.x = pose.frontKnee;
+    if (m.parts.legR.kneePivot) m.parts.legR.kneePivot.rotation.x = pose.rearKnee;
   }
 
   function mechUpdate(m, dt){
@@ -5746,10 +5750,12 @@ export function startBattle(renderer, opts, onEnd){
     } else {
       player.root.visible = player.alive || player.deadT > 0;
       // pursuit cam: centred directly behind the mech so it lines up with the
-      // cockpit sightline, lifted above the head so the body never blocks the crosshair
+      // cockpit sightline. Pull back during a firing kneel so the low asymmetric
+      // silhouette remains visible instead of dropping beneath the screen edge.
+      const kneelView = clamp(player.kneelBlend || 0, 0, 1);
       const desired = tmpV3.copy(p)
-        .addScaledVector(fwd, -23);
-      desired.y += 21 - sp * 5;
+        .addScaledVector(fwd, -(23 + kneelView * 8));
+      desired.y += 21 - sp * 5 - kneelView * 1.5;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 2.5);
       camera.position.lerp(desired, started ? Math.min(1, 11 * dt) : 1);
     }
