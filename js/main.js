@@ -810,7 +810,7 @@ addEventListener('beforeunload', () => pvpSession.link?.close());
 // enemies/allies: each entry is a { id, n, dist } — a unit TYPE, how many, and its spawn
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
-const PER_SIDE_CAP = 200, ENTRY_MAX = 200, ROWS_MAX = 12, LANDSHIP_CAP = 12; // 12 Big Trays fought at Odessa; capital props have no mech LOD
+const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12; // 12 Big Trays fought at Odessa; capital props have no mech LOD
 const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
@@ -861,6 +861,10 @@ const SHIPS = [
   { id: 'dabude',  name: 'DOBDAY-class',   code: 'tracked land cruiser', faction: 'ZEON' },
 ];
 const SHIP_IDS = new Set(SHIPS.map(s => s.id));
+// One row for every selectable combat type. The roster panels scroll, so the
+// full catalogue remains usable without pushing the launch controls off-screen.
+const ROWS_MAX = SUITS.length + AIRCRAFT.length
+  + Math.max(...['FED', 'ZEON'].map(faction => SHIPS.filter(ship => ship.faction === faction).length));
 
 function statBar(label, frac){
   const line = el('div', 'statline');
@@ -997,12 +1001,16 @@ function renderCustom(){
       row.appendChild(x);
       box.appendChild(row);
     });
+    const count = $(`${team}-roster-count`);
+    if (count) count.textContent = `${arr.length} / ${ROWS_MAX} TYPES`;
   };
   mkList('enemy-list', custom.enemies, 'enemy');
   mkList('ally-list', custom.allies, 'ally');
   const landshipCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
   $('btn-add-enemy-landships').disabled = landshipCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
   $('btn-add-ally-landships').disabled = landshipCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
+  $('btn-add-enemy').disabled = custom.enemies.length >= ROWS_MAX;
+  $('btn-add-ally').disabled = custom.allies.length >= ROWS_MAX;
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
   // right column: spinning model + stat readout + deployment map
   renderCustomLoadout();

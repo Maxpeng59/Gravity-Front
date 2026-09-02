@@ -39,7 +39,7 @@ button.sel{border-color:var(--acc);color:var(--acc);background:rgba(60,50,14,.35
 /* ---------- custom battle ---------- */
 .custom-cols{display:flex;gap:20px;width:min(1500px,94vw);height:min(680px,80vh);transform:translateX(-1%)}
 .custom-col{flex:1.5;overflow-y:auto;padding-right:6px}
-.custom-col.narrow{flex:1.05;display:flex;flex-direction:column}
+.custom-col.narrow{flex:1.05;display:flex;flex-direction:column;min-width:0;min-height:0;scrollbar-gutter:stable}
 .custom-col.preview{flex:0 0 320px;display:flex;flex-direction:column;gap:8px;overflow:hidden}
 /* foldable accordion panels — only one open at a time, so the column never scrolls */
 .fold{border:1px solid var(--line);background:rgba(9,14,23,.55)}
@@ -86,12 +86,18 @@ button.sel{border-color:var(--acc);color:var(--acc);background:rgba(60,50,14,.35
 .statline{display:flex;align-items:center;gap:6px;font-size:9px;color:var(--dim)}
 .statline span{width:34px}
 .pill-row{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0}
-.enemy-list{display:flex;flex-direction:column;gap:4px;min-height:28px}
+.roster-heading{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.roster-heading span{color:var(--acc);font-size:8px;letter-spacing:.08em;white-space:nowrap}
+.enemy-list{display:flex;flex:0 0 clamp(126px,22vh,190px);height:clamp(126px,22vh,190px);flex-direction:column;gap:4px;
+  overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;padding:3px 5px 3px 0;
+  border-top:1px solid rgba(44,90,134,.38);border-bottom:1px solid rgba(44,90,134,.38)}
+.custom-actions{position:sticky;bottom:0;z-index:3;display:grid;gap:5px;margin-top:12px;padding:8px 0 1px;
+  background:linear-gradient(180deg,rgba(5,7,12,0),rgba(5,7,12,.96) 20%)}
 .map-sub{font-size:10px;color:var(--dim,#8b93a0);font-style:italic;margin:4px 0 2px;line-height:1.35}
 .pill-row .small.dim{opacity:.4}
-.enemy-row{display:flex;gap:6px;align-items:center;font-size:11px}
+.enemy-row{display:flex;flex:0 0 auto;gap:6px;align-items:center;min-width:0;font-size:11px}
 .enemy-row select{background:#0d1828;color:var(--txt);border:1px solid var(--line2);
-  font-family:var(--mono);font-size:11px;padding:3px;flex:1}
+  font-family:var(--mono);font-size:11px;padding:3px;flex:1;min-width:0}
 .enemy-row select.dist{flex:0 0 auto;width:76px}
 .enemy-row input{background:#0d1828;color:var(--txt);border:1px solid var(--line2);
   font-family:var(--mono);font-size:11px;padding:3px;width:46px;text-align:center}

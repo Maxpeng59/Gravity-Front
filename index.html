@@ -45,14 +45,14 @@
       <div id="map-sub" class="map-sub"></div>
       <h3>MASS BATTLE</h3>
       <div id="horde-picker" class="pill-row"></div>
-      <h3>ENEMY FORCE</h3>
+      <h3 class="roster-heading">ENEMY FORCE <span id="enemy-roster-count"></span></h3>
       <div id="enemy-list" class="enemy-list"></div>
       <div class="pill-row">
         <button id="btn-add-enemy" class="small">+ ADD ENEMY</button>
         <button id="btn-add-enemy-landships" class="small">+ ZEON LANDSHIP GROUP ×3</button>
         <button id="btn-clear-enemy" class="small">CLEAR</button>
       </div>
-      <h3>ALLIED FORCE</h3>
+      <h3 class="roster-heading">ALLIED FORCE <span id="ally-roster-count"></span></h3>
       <div id="ally-list" class="enemy-list"></div>
       <div class="pill-row">
         <button id="btn-add-ally" class="small">+ ADD ALLY</button>
@@ -64,9 +64,10 @@
         <button id="btn-fold-readout" class="small">◱ UNIT READOUT</button>
         <button id="btn-fold-map" class="small">◈ DEPLOYMENT MAP</button>
       </div>
-      <div class="spacer"></div>
-      <button id="btn-launch-custom" class="big accent">LAUNCH SORTIE</button>
-      <button id="btn-custom-back" class="small">◂ BACK</button>
+      <div class="custom-actions">
+        <button id="btn-launch-custom" class="big accent">LAUNCH SORTIE</button>
+        <button id="btn-custom-back" class="small">◂ BACK</button>
+      </div>
     </div>
     <div class="custom-col preview">
       <div class="fold open" id="fold-readout">
