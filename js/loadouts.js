@@ -154,14 +154,14 @@ export function mobilityPercent(profile){
 }
 
 const AIM_PROFILES = Object.freeze({
-  precision: Object.freeze({ id: 'precision', label: 'PRECISION SCOPE', coefficient: 0.06, entryCoefficient: 0.38, fov: 18, moveScale: 0.32, sensitivity: 0.00082, settledSensitivity: 0.00046, sway: 0.0065, settledSway: 0.0011, steadyRate: 1.15, breath: true, recoilPitch: 0.008, stabilityKick: 0.10, viewKick: 0.08 }),
-  rifle: Object.freeze({ id: 'rifle', label: 'OPTICAL GUNSIGHT', coefficient: 0.28, entryCoefficient: 0.68, fov: 34, moveScale: 0.46, sensitivity: 0.00135, settledSensitivity: 0.00092, sway: 0.0042, settledSway: 0.0015, steadyRate: 1.55, breath: false, recoilPitch: 0.0045, stabilityKick: 0.055, viewKick: 0.045 }),
-  reflex: Object.freeze({ id: 'reflex', label: 'REFLEX LEAD SIGHT', coefficient: 0.48, entryCoefficient: 0.78, fov: 43, moveScale: 0.68, sensitivity: 0.00182, settledSensitivity: 0.00135, sway: 0.0032, settledSway: 0.0017, steadyRate: 2.15, breath: false, recoilPitch: 0.00065, stabilityKick: 0.012, viewKick: 0.016 }),
-  scatter: Object.freeze({ id: 'scatter', label: 'CLOSE-COMBAT RING', coefficient: 0.62, entryCoefficient: 0.86, fov: 48, moveScale: 0.76, sensitivity: 0.00205, settledSensitivity: 0.00158, sway: 0.0028, settledSway: 0.0018, steadyRate: 2.5, breath: false, recoilPitch: 0.0055, stabilityKick: 0.065, viewKick: 0.06 }),
-  rocket: Object.freeze({ id: 'rocket', label: 'ROCKET RANGEFINDER', coefficient: 0.42, entryCoefficient: 0.74, fov: 39, moveScale: 0.52, sensitivity: 0.00155, settledSensitivity: 0.00108, sway: 0.004, settledSway: 0.00155, steadyRate: 1.65, breath: false, recoilPitch: 0.010, stabilityKick: 0.09, viewKick: 0.11 }),
-  seeker: Object.freeze({ id: 'seeker', label: 'SEEKER TRACKER', coefficient: 0.36, entryCoefficient: 0.66, fov: 38, moveScale: 0.56, sensitivity: 0.0015, settledSensitivity: 0.00102, sway: 0.0036, settledSway: 0.0014, steadyRate: 1.8, breath: false, recoilPitch: 0.004, stabilityKick: 0.045, viewKick: 0.05 }),
-  artillery: Object.freeze({ id: 'artillery', label: 'BALLISTIC FIRE CONTROL', coefficient: 0.34, entryCoefficient: 0.70, fov: 41, moveScale: 0.40, sensitivity: 0.00142, settledSensitivity: 0.00096, sway: 0.0044, settledSway: 0.00145, steadyRate: 1.45, breath: false, recoilPitch: 0.012, stabilityKick: 0.11, viewKick: 0.14 }),
-  bombing: Object.freeze({ id: 'bombing', label: 'BOMBING COMPUTER', coefficient: 0.54, entryCoefficient: 0.82, fov: 50, moveScale: 0.72, sensitivity: 0.0019, settledSensitivity: 0.00142, sway: 0.0026, settledSway: 0.0017, steadyRate: 2.0, breath: false, recoilPitch: 0, stabilityKick: 0.02, viewKick: 0.015 }),
+  precision: Object.freeze({ id: 'precision', label: 'PRECISION SCOPE', coefficient: 0.06, entryCoefficient: 0.38, fov: 18, moveScale: 0.32, sensitivity: 0.00082, settledSensitivity: 0.00046, sway: 0.0065, settledSway: 0.0011, steadyRate: 1.15, breath: true, recoilPitch: 0.014, stabilityKick: 0.12, viewKick: 0.10 }),
+  rifle: Object.freeze({ id: 'rifle', label: 'OPTICAL GUNSIGHT', coefficient: 0.28, entryCoefficient: 0.68, fov: 34, moveScale: 0.46, sensitivity: 0.00135, settledSensitivity: 0.00092, sway: 0.0042, settledSway: 0.0015, steadyRate: 1.55, breath: false, recoilPitch: 0.009, stabilityKick: 0.075, viewKick: 0.065 }),
+  reflex: Object.freeze({ id: 'reflex', label: 'REFLEX LEAD SIGHT', coefficient: 0.48, entryCoefficient: 0.78, fov: 43, moveScale: 0.68, sensitivity: 0.00182, settledSensitivity: 0.00135, sway: 0.0032, settledSway: 0.0017, steadyRate: 2.15, breath: false, recoilPitch: 0.0022, stabilityKick: 0.025, viewKick: 0.03 }),
+  scatter: Object.freeze({ id: 'scatter', label: 'CLOSE-COMBAT RING', coefficient: 0.62, entryCoefficient: 0.86, fov: 48, moveScale: 0.76, sensitivity: 0.00205, settledSensitivity: 0.00158, sway: 0.0028, settledSway: 0.0018, steadyRate: 2.5, breath: false, recoilPitch: 0.012, stabilityKick: 0.09, viewKick: 0.09 }),
+  rocket: Object.freeze({ id: 'rocket', label: 'ROCKET RANGEFINDER', coefficient: 0.42, entryCoefficient: 0.74, fov: 39, moveScale: 0.52, sensitivity: 0.00155, settledSensitivity: 0.00108, sway: 0.004, settledSway: 0.00155, steadyRate: 1.65, breath: false, recoilPitch: 0.020, stabilityKick: 0.13, viewKick: 0.14 }),
+  seeker: Object.freeze({ id: 'seeker', label: 'SEEKER TRACKER', coefficient: 0.36, entryCoefficient: 0.66, fov: 38, moveScale: 0.56, sensitivity: 0.0015, settledSensitivity: 0.00102, sway: 0.0036, settledSway: 0.0014, steadyRate: 1.8, breath: false, recoilPitch: 0.008, stabilityKick: 0.065, viewKick: 0.075 }),
+  artillery: Object.freeze({ id: 'artillery', label: 'BALLISTIC FIRE CONTROL', coefficient: 0.34, entryCoefficient: 0.70, fov: 41, moveScale: 0.40, sensitivity: 0.00142, settledSensitivity: 0.00096, sway: 0.0044, settledSway: 0.00145, steadyRate: 1.45, breath: false, recoilPitch: 0.024, stabilityKick: 0.16, viewKick: 0.17 }),
+  bombing: Object.freeze({ id: 'bombing', label: 'BOMBING COMPUTER', coefficient: 0.54, entryCoefficient: 0.82, fov: 50, moveScale: 0.72, sensitivity: 0.0019, settledSensitivity: 0.00142, sway: 0.0026, settledSway: 0.0017, steadyRate: 2.0, breath: false, recoilPitch: 0.004, stabilityKick: 0.025, viewKick: 0.025 }),
 });
 
 const precisionWeapon = weapon =>
@@ -192,6 +192,20 @@ export function weaponAimCoefficient(weapon, steady = 1){
   if (!profile) return 1;
   const t = Math.max(0, Math.min(1, Number.isFinite(steady) ? steady : 0));
   return profile.entryCoefficient + (profile.coefficient - profile.entryCoefficient) * t;
+}
+
+export function weaponRecoilImpulse(weapon, aimed = false){
+  const profile = weaponAimProfile(weapon);
+  if (!profile) return { pitch: 0, yaw: 0, shake: 0, stabilityKick: 0, viewKick: 0 };
+  const heavyScale = 1 + Math.min(0.55, Math.max(0, weapon.recoil || 0) * 0.35);
+  const stanceScale = aimed ? 0.82 : 1.40;
+  return {
+    pitch: profile.recoilPitch * heavyScale * stanceScale,
+    yaw: profile.recoilPitch * heavyScale * stanceScale * 0.38,
+    shake: profile.viewKick * heavyScale * (aimed ? 0.45 : 0.85),
+    stabilityKick: profile.stabilityKick * heavyScale,
+    viewKick: profile.viewKick * (aimed ? 0.86 : 1.15),
+  };
 }
 
 export function isSniperWeapon(weapon){

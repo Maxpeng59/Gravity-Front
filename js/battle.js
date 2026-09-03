@@ -13,7 +13,7 @@ import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import {
-  applyWeaponLoadout, canAimWeapon, isSniperWeapon, weaponAimCoefficient, weaponAimProfile,
+  applyWeaponLoadout, canAimWeapon, isSniperWeapon, weaponAimCoefficient, weaponAimProfile, weaponRecoilImpulse,
 } from './loadouts.js';
 import {
   advanceKneelBlend,
@@ -2517,6 +2517,19 @@ export function startBattle(renderer, opts, onEnd){
     return m.parts.muzzle;
   }
 
+  function applyPlayerWeaponRecoil(w){
+    const profile = weaponAimProfile(w);
+    const recoil = weaponRecoilImpulse(w, sniperMode);
+    vgKick = Math.min(0.22, vgKick + recoil.viewKick);
+    camPitch = clamp(camPitch + recoil.pitch, -1.15, 1.15);
+    camYaw += (rng.next() - 0.5) * 2 * recoil.yaw;
+    camShake = Math.min(1.45, camShake + recoil.shake);
+    if (sniperMode && profile){
+      sniperSteady = Math.max(0, sniperSteady - recoil.stabilityKick);
+      if (profile.breath) sniperBreath = Math.max(0, sniperBreath - 0.05);
+    }
+  }
+
   function fire(m, dir, aimPoint){
     const w = m.suit.weapons[m.wi];
     if (w.type === 'lockmissile'){
@@ -2568,16 +2581,7 @@ export function startBattle(renderer, opts, onEnd){
       ? muzzleNode.getWorldPosition(new THREE.Vector3())
       : approximateMuzzle(m, w);
     m.lastMuzzleWorld = muzzle.clone();
-    if (m.isPlayer){
-      const recoil = weaponAimProfile(w);
-      vgKick = Math.min(0.16, vgKick + (recoil?.viewKick || 0.035));
-      if (sniperMode && recoil){
-        const heavyScale = 1 + Math.min(0.55, (w.recoil || 0) * 0.35);
-        camPitch = clamp(camPitch + recoil.recoilPitch * heavyScale, -1.15, 1.15);
-        sniperSteady = Math.max(0, sniperSteady - recoil.stabilityKick * heavyScale);
-        if (recoil.breath) sniperBreath = Math.max(0, sniperBreath - 0.035);
-      }
-    }
+    if (m.isPlayer) applyPlayerWeaponRecoil(w);
     // converge on the crosshair point when one is provided (player fire)
     const base = aimPoint ? aimPoint.clone().sub(muzzle).normalize() : dir.clone();
     const geo = w.type === 'beam' ? beamGeo : w.type === 'mg' ? mgGeo : bzGeo;
@@ -2633,7 +2637,7 @@ export function startBattle(renderer, opts, onEnd){
     const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: target || null, turn: w.turn || 2.4 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'missile');
-    if (m.isPlayer) vgKick = Math.min(0.16, vgKick + (weaponAimProfile(w)?.viewKick || 0.05));
+    if (m.isPlayer) applyPlayerWeaponRecoil(w);
     sfx('bazooka', m.isPlayer ? 0.26 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14));
   }
 
@@ -2660,7 +2664,7 @@ export function startBattle(renderer, opts, onEnd){
         projectiles.push(projectile);
         sendPvpShot(m, projectile, 'bomb');
       }
-    if (m.isPlayer) vgKick = Math.min(0.12, vgKick + (weaponAimProfile(w)?.viewKick || 0.02));
+    if (m.isPlayer) applyPlayerWeaponRecoil(w);
     sfx('bazooka', m.isPlayer ? 0.24 : clamp(280 / base.distanceTo(player.root.position), 0.02, 0.14));
   }
 
@@ -4217,10 +4221,7 @@ export function startBattle(renderer, opts, onEnd){
     const projectile = { pos: muzzle.clone(), vel, dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 9, mesh, arc: true };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'artillery');
-    if (m.isPlayer){
-      camShake = Math.min(1.25, camShake + (sniperMode ? 0.18 : 0.32));
-      vgKick = Math.min(0.18, vgKick + (sniperMode ? 0.08 : 0.13));
-    }
+    if (m.isPlayer) applyPlayerWeaponRecoil(w);
     m.cannonRecoil = w.recoil || 1.3;
     sfx('bazooka', m.isPlayer ? 0.3 : clamp(300 / muzzle.distanceTo(player.root.position), 0.03, 0.16));
   }

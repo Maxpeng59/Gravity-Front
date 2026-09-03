@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { AIRCRAFT, SUITS, suitById } from '../js/data.js';
 import {
   applyWeaponLoadout, canAimWeapon, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
-  weaponAimCoefficient, weaponAimProfile, weaponLoadoutOptions, weaponLoadoutProfile,
+  weaponAimCoefficient, weaponAimProfile, weaponLoadoutOptions, weaponLoadoutProfile, weaponRecoilImpulse,
 } from '../js/loadouts.js';
 
 test('only compatible humanoid mobile suits expose weapon modification', () => {
@@ -73,7 +73,29 @@ test('every ranged weapon family receives a distinct aim system and coefficient'
   const rocket = weaponAimProfile(examples[4][0]);
   assert.ok(automatic.recoilPitch < rifle.recoilPitch);
   assert.ok(rifle.recoilPitch < rocket.recoilPitch);
-  assert.ok(automatic.stabilityKick < 0.02);
+  assert.ok(automatic.stabilityKick < 0.03);
+});
+
+test('every firearm recoils and hip fire kicks harder than aimed fire', () => {
+  const weapons = [
+    { name: '90MM MACHINE GUN', type: 'mg' },
+    { name: 'BEAM RIFLE', type: 'beam' },
+    { name: 'HYPER BAZOOKA', type: 'bazooka' },
+    { name: '180MM CANNON', type: 'beam', pref: 820, recoil: 0.8 },
+  ];
+  for (const weapon of weapons){
+    const hip = weaponRecoilImpulse(weapon, false);
+    const aimed = weaponRecoilImpulse(weapon, true);
+    assert.ok(hip.pitch > 0);
+    assert.ok(aimed.pitch > 0);
+    assert.ok(hip.pitch > aimed.pitch);
+    assert.ok(hip.shake > aimed.shake);
+  }
+  assert.ok(weaponRecoilImpulse(weapons[2], false).pitch > weaponRecoilImpulse(weapons[1], false).pitch);
+  const missingHipRecoil = [...SUITS, ...AIRCRAFT]
+    .flatMap(unit => unit.weapons.map(weapon => ({ unit: unit.id, weapon })))
+    .filter(({ weapon }) => weaponRecoilImpulse(weapon, false).pitch <= 0);
+  assert.deepEqual(missingHipRecoil, []);
 });
 
 test('every weapon mounted by every playable unit is aim-capable', () => {
