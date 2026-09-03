@@ -2569,11 +2569,13 @@ export function startBattle(renderer, opts, onEnd){
       : approximateMuzzle(m, w);
     m.lastMuzzleWorld = muzzle.clone();
     if (m.isPlayer){
-      vgKick = Math.min(0.22, vgKick + (w.type === 'bazooka' ? 0.2 : 0.07));
-      if (sniperMode && canAimWeapon(w)){
-        camPitch = clamp(camPitch + (w.recoil ? 0.032 : 0.018), -1.15, 1.15);
-        sniperSteady = Math.max(0, sniperSteady - (w.recoil ? 0.34 : 0.22));
-        if (weaponAimProfile(w)?.breath) sniperBreath = Math.max(0, sniperBreath - 0.08);
+      const recoil = weaponAimProfile(w);
+      vgKick = Math.min(0.16, vgKick + (recoil?.viewKick || 0.035));
+      if (sniperMode && recoil){
+        const heavyScale = 1 + Math.min(0.55, (w.recoil || 0) * 0.35);
+        camPitch = clamp(camPitch + recoil.recoilPitch * heavyScale, -1.15, 1.15);
+        sniperSteady = Math.max(0, sniperSteady - recoil.stabilityKick * heavyScale);
+        if (recoil.breath) sniperBreath = Math.max(0, sniperBreath - 0.035);
       }
     }
     // converge on the crosshair point when one is provided (player fire)
@@ -2600,7 +2602,10 @@ export function startBattle(renderer, opts, onEnd){
     }
     if (w.recoil){ // heavy cannon kick — barrel slides, whole mech shudders
       m.cannonRecoil = w.recoil;
-      if (m.isPlayer){ camShake = Math.min(2.2, camShake + w.recoil * 0.6); vgKick = Math.min(0.3, vgKick + 0.28); }
+      if (m.isPlayer){
+        camShake = Math.min(1.25, camShake + w.recoil * (sniperMode ? 0.14 : 0.28));
+        vgKick = Math.min(0.18, vgKick + (sniperMode ? 0.06 : 0.11));
+      }
     }
     const vol = m.isPlayer ? 0.22 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14);
     sfx(w.type, vol);
@@ -2628,7 +2633,7 @@ export function startBattle(renderer, opts, onEnd){
     const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: target || null, turn: w.turn || 2.4 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'missile');
-    if (m.isPlayer) vgKick = Math.min(0.22, vgKick + 0.12);
+    if (m.isPlayer) vgKick = Math.min(0.16, vgKick + (weaponAimProfile(w)?.viewKick || 0.05));
     sfx('bazooka', m.isPlayer ? 0.26 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14));
   }
 
@@ -2655,7 +2660,7 @@ export function startBattle(renderer, opts, onEnd){
         projectiles.push(projectile);
         sendPvpShot(m, projectile, 'bomb');
       }
-    if (m.isPlayer) vgKick = Math.min(0.22, vgKick + 0.12);
+    if (m.isPlayer) vgKick = Math.min(0.12, vgKick + (weaponAimProfile(w)?.viewKick || 0.02));
     sfx('bazooka', m.isPlayer ? 0.24 : clamp(280 / base.distanceTo(player.root.position), 0.02, 0.14));
   }
 
@@ -4212,7 +4217,10 @@ export function startBattle(renderer, opts, onEnd){
     const projectile = { pos: muzzle.clone(), vel, dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 9, mesh, arc: true };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'artillery');
-    if (m.isPlayer){ camShake = Math.min(2.4, camShake + 0.55); vgKick = Math.min(0.3, vgKick + 0.28); }
+    if (m.isPlayer){
+      camShake = Math.min(1.25, camShake + (sniperMode ? 0.18 : 0.32));
+      vgKick = Math.min(0.18, vgKick + (sniperMode ? 0.08 : 0.13));
+    }
     m.cannonRecoil = w.recoil || 1.3;
     sfx('bazooka', m.isPlayer ? 0.3 : clamp(300 / muzzle.distanceTo(player.root.position), 0.03, 0.16));
   }

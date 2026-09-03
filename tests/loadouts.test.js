@@ -68,6 +68,12 @@ test('every ranged weapon family receives a distinct aim system and coefficient'
     assert.ok(weaponAimCoefficient(weapon, 0) > weaponAimCoefficient(weapon, 1));
   }
   assert.ok(weaponAimCoefficient(examples[0][0], 1) < weaponAimCoefficient(examples[2][0], 1));
+  const rifle = weaponAimProfile(examples[1][0]);
+  const automatic = weaponAimProfile(examples[2][0]);
+  const rocket = weaponAimProfile(examples[4][0]);
+  assert.ok(automatic.recoilPitch < rifle.recoilPitch);
+  assert.ok(rifle.recoilPitch < rocket.recoilPitch);
+  assert.ok(automatic.stabilityKick < 0.02);
 });
 
 test('every weapon mounted by every playable unit is aim-capable', () => {
