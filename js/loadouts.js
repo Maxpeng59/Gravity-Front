@@ -153,8 +153,47 @@ export function mobilityPercent(profile){
   return Math.round((profile?.mobility ?? 1) * 100);
 }
 
-export function isSniperWeapon(weapon){
-  return !!weapon && !weapon.arc && weapon.type !== 'bomb' && weapon.type !== 'lockmissile'
+const AIM_PROFILES = Object.freeze({
+  precision: Object.freeze({ id: 'precision', label: 'PRECISION SCOPE', coefficient: 0.06, entryCoefficient: 0.38, fov: 18, moveScale: 0.32, sensitivity: 0.00082, settledSensitivity: 0.00046, sway: 0.0065, settledSway: 0.0011, steadyRate: 1.15, breath: true }),
+  rifle: Object.freeze({ id: 'rifle', label: 'OPTICAL GUNSIGHT', coefficient: 0.28, entryCoefficient: 0.68, fov: 34, moveScale: 0.46, sensitivity: 0.00135, settledSensitivity: 0.00092, sway: 0.0042, settledSway: 0.0015, steadyRate: 1.55, breath: false }),
+  reflex: Object.freeze({ id: 'reflex', label: 'REFLEX LEAD SIGHT', coefficient: 0.48, entryCoefficient: 0.78, fov: 43, moveScale: 0.68, sensitivity: 0.00182, settledSensitivity: 0.00135, sway: 0.0032, settledSway: 0.0017, steadyRate: 2.15, breath: false }),
+  scatter: Object.freeze({ id: 'scatter', label: 'CLOSE-COMBAT RING', coefficient: 0.62, entryCoefficient: 0.86, fov: 48, moveScale: 0.76, sensitivity: 0.00205, settledSensitivity: 0.00158, sway: 0.0028, settledSway: 0.0018, steadyRate: 2.5, breath: false }),
+  rocket: Object.freeze({ id: 'rocket', label: 'ROCKET RANGEFINDER', coefficient: 0.42, entryCoefficient: 0.74, fov: 39, moveScale: 0.52, sensitivity: 0.00155, settledSensitivity: 0.00108, sway: 0.004, settledSway: 0.00155, steadyRate: 1.65, breath: false }),
+  seeker: Object.freeze({ id: 'seeker', label: 'SEEKER TRACKER', coefficient: 0.36, entryCoefficient: 0.66, fov: 38, moveScale: 0.56, sensitivity: 0.0015, settledSensitivity: 0.00102, sway: 0.0036, settledSway: 0.0014, steadyRate: 1.8, breath: false }),
+  artillery: Object.freeze({ id: 'artillery', label: 'BALLISTIC FIRE CONTROL', coefficient: 0.34, entryCoefficient: 0.70, fov: 41, moveScale: 0.40, sensitivity: 0.00142, settledSensitivity: 0.00096, sway: 0.0044, settledSway: 0.00145, steadyRate: 1.45, breath: false }),
+  bombing: Object.freeze({ id: 'bombing', label: 'BOMBING COMPUTER', coefficient: 0.54, entryCoefficient: 0.82, fov: 50, moveScale: 0.72, sensitivity: 0.0019, settledSensitivity: 0.00142, sway: 0.0026, settledSway: 0.0017, steadyRate: 2.0, breath: false }),
+});
+
+const precisionWeapon = weapon =>
+  !!weapon && !weapon.arc && weapon.type !== 'bomb' && weapon.type !== 'lockmissile'
     && (!!weapon.scope || (weapon.pref || 0) >= 750
       || /SNIPER|ANTI-SHIP|ANTI-MATERIEL|180MM|MAGELLA TOP|SATELLITE CANNON/.test(String(weapon.name || '').toUpperCase()));
+
+export function weaponAimProfile(weapon){
+  if (!weapon) return null;
+  const name = String(weapon.name || '').toUpperCase();
+  if (weapon.arc) return AIM_PROFILES.artillery;
+  if (weapon.type === 'bomb') return AIM_PROFILES.bombing;
+  if (weapon.type === 'lockmissile') return AIM_PROFILES.seeker;
+  if (precisionWeapon(weapon)) return AIM_PROFILES.precision;
+  if (weapon.type === 'bazooka') return /MISSILE/.test(name) ? AIM_PROFILES.seeker : AIM_PROFILES.rocket;
+  if (weapon.pellets || /SPRAY|SHOTGUN/.test(name)) return AIM_PROFILES.scatter;
+  if (weapon.type === 'mg' || weapon.head || weapon.integrated) return AIM_PROFILES.reflex;
+  if (weapon.type === 'beam') return AIM_PROFILES.rifle;
+  return null;
+}
+
+export function canAimWeapon(weapon){
+  return weaponAimProfile(weapon) !== null;
+}
+
+export function weaponAimCoefficient(weapon, steady = 1){
+  const profile = weaponAimProfile(weapon);
+  if (!profile) return 1;
+  const t = Math.max(0, Math.min(1, Number.isFinite(steady) ? steady : 0));
+  return profile.entryCoefficient + (profile.coefficient - profile.entryCoefficient) * t;
+}
+
+export function isSniperWeapon(weapon){
+  return weaponAimProfile(weapon)?.id === 'precision';
 }

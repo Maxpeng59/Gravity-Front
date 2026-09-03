@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { suitById } from '../js/data.js';
+import { AIRCRAFT, SUITS, suitById } from '../js/data.js';
 import {
-  applyWeaponLoadout, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
-  weaponLoadoutOptions, weaponLoadoutProfile,
+  applyWeaponLoadout, canAimWeapon, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
+  weaponAimCoefficient, weaponAimProfile, weaponLoadoutOptions, weaponLoadoutProfile,
 } from '../js/loadouts.js';
 
 test('only compatible humanoid mobile suits expose weapon modification', () => {
@@ -47,6 +47,34 @@ test('precision weapons expose sniper optics while ordinary and artillery weapon
   assert.equal(isSniperWeapon(gmSniper), true);
   assert.equal(isSniperWeapon(beamSpray), false);
   assert.equal(isSniperWeapon({ name: 'ARTILLERY BOMBARDMENT', type: 'bazooka', arc: true, pref: 1200 }), false);
+});
+
+test('every ranged weapon family receives a distinct aim system and coefficient', () => {
+  const examples = [
+    [{ name: '75MM SNIPER RIFLE', type: 'beam', pref: 900 }, 'precision'],
+    [{ name: 'BEAM RIFLE', type: 'beam', pref: 520 }, 'rifle'],
+    [{ name: '90MM MACHINE GUN', type: 'mg', pref: 330 }, 'reflex'],
+    [{ name: 'BEAM SPRAY GUN', type: 'beam', pellets: 6 }, 'scatter'],
+    [{ name: 'HYPER BAZOOKA', type: 'bazooka' }, 'rocket'],
+    [{ name: 'MISSILE LAUNCHER', type: 'bazooka' }, 'seeker'],
+    [{ name: 'LOCK-ON MISSILE', type: 'lockmissile' }, 'seeker'],
+    [{ name: 'ARTILLERY BOMBARDMENT', type: 'bazooka', arc: true }, 'artillery'],
+    [{ name: 'CARPET BOMB', type: 'bomb' }, 'bombing'],
+  ];
+  for (const [weapon, id] of examples){
+    assert.equal(canAimWeapon(weapon), true);
+    assert.equal(weaponAimProfile(weapon).id, id);
+    assert.ok(weaponAimCoefficient(weapon, 1) > 0 && weaponAimCoefficient(weapon, 1) < 1);
+    assert.ok(weaponAimCoefficient(weapon, 0) > weaponAimCoefficient(weapon, 1));
+  }
+  assert.ok(weaponAimCoefficient(examples[0][0], 1) < weaponAimCoefficient(examples[2][0], 1));
+});
+
+test('every weapon mounted by every playable unit is aim-capable', () => {
+  const missing = [...SUITS, ...AIRCRAFT]
+    .flatMap(unit => unit.weapons.map(weapon => ({ unit: unit.id, weapon })))
+    .filter(({ weapon }) => !canAimWeapon(weapon));
+  assert.deepEqual(missing, []);
 });
 
 test('PvP restriction falls back to stock and removes a locked support weapon', () => {

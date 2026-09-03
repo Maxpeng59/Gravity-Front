@@ -242,10 +242,10 @@ select{background:#0d1828;color:var(--txt);border:1px solid var(--line2);font-fa
 #lockon{position:absolute;inset:0;width:100%;height:100%;z-index:1}
 #crosshair{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);color:#fff;
   z-index:3;font-size:26px;font-weight:700;text-shadow:0 0 4px #000,0 0 10px rgba(74,163,255,.8)}
-#hud.sniper-mode #crosshair{display:none}
-#hud.sniper-mode .hud-br{opacity:.32}
-#hud.sniper-mode .hud-hint{color:#8fb9b4;opacity:.72}
-#hud.sniper-mode .hud-tc{opacity:.55}
+#hud.aim-mode #crosshair{display:none}
+#hud.aim-mode .hud-br{opacity:.32}
+#hud.aim-mode .hud-hint{color:#8fb9b4;opacity:.72}
+#hud.aim-mode .hud-tc{opacity:.55}
 .cockpit-frame{--pit-glow:#53e2ff;--pit-soft:#6cf0d1;--pit-warn:#ff4852;position:absolute;inset:0;z-index:2;
   overflow:hidden;filter:drop-shadow(0 6px 16px rgba(0,0,0,.82));isolation:isolate}
 .cockpit-frame[data-faction="ZEON"]{--pit-glow:#a2ed78;--pit-soft:#75df9b;--pit-warn:#ff7b43}

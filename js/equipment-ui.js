@@ -1,6 +1,6 @@
 import {
-  canModifyWeapons, isSniperWeapon, mobilityPercent, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
-  weaponLoadoutOptions, weaponLoadoutProfile,
+  canModifyWeapons, mobilityPercent, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
+  weaponAimProfile, weaponLoadoutOptions, weaponLoadoutProfile,
 } from './loadouts.js';
 
 const node = (tag, cls, text = '') => {
@@ -84,7 +84,8 @@ export function renderEquipmentPanel(container, suit, loadout, onChange, config 
     const copy = node('div', 'equipment-item-copy');
     copy.appendChild(node('b', '', item.name));
     const w = item.weapon;
-    copy.appendChild(node('span', '', `${item.mass.toFixed(1)} t · ${String(w.type || 'weapon').toUpperCase()} · DMG ${w.dmg} · RNG ${w.pref || w.speed || '—'}${isSniperWeapon(w) ? ' · N SCOPE' : ''}`));
+    const aim = weaponAimProfile(w);
+    copy.appendChild(node('span', '', `${item.mass.toFixed(1)} t · ${String(w.type || 'weapon').toUpperCase()} · DMG ${w.dmg} · RNG ${w.pref || w.speed || '—'}${aim ? ` · ${aim.label} ×${aim.coefficient.toFixed(2)}` : ''}`));
     if (locked) copy.appendChild(node('span', 'equipment-lock-note', config.lockedLabel?.(item) || 'LOCKED · CLEAR A CAMPAIGN CHALLENGE RUN'));
     card.appendChild(copy);
     const actions = node('div', 'equipment-actions');

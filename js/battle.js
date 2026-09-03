@@ -12,7 +12,9 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { applyWeaponLoadout, isSniperWeapon } from './loadouts.js';
+import {
+  applyWeaponLoadout, canAimWeapon, isSniperWeapon, weaponAimCoefficient, weaponAimProfile,
+} from './loadouts.js';
 import {
   advanceKneelBlend,
   kneelAimErrorMultiplier,
@@ -405,15 +407,14 @@ export function startBattle(renderer, opts, onEnd){
     && !['tank','guntank','zakutank','crane','apc','fighter'].includes(hintSuit.style);
   const hintHoverProfile = hintSuit?.landType ? 'E AUTO-HOVER 3× · 80% ENERGY' : 'E AUTO-HOVER 2×';
   const baseHint = hintSuit && hintSuit.air
-    ? `MOUSE STEER · LMB FIRE · SHIFT BOOST · S BRAKE · V VIEW · R RELOAD · Q/TAB/1-${hintSuit.weapons.length} WEAPON · P AIM SYSTEM · M MUTE ALL · ESC PAUSE`
+    ? `MOUSE STEER · LMB FIRE · RMB HOLD AIM · N LATCH AIM · SHIFT BOOST · S BRAKE · V VIEW · R RELOAD · Q/TAB/1-${hintSuit.weapons.length} WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE`
     : hintSuit && hintSuit.vehicle
-    ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM · M MUTE ALL · ESC PAUSE'
+    ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · RMB HOLD AIM · N LATCH AIM · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM ASSIST · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
-    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB SABER · J STOMP · M MUTE ALL · ESC PAUSE`
-    : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB SABER COMBO · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM · M MUTE ALL · ESC PAUSE';
+    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
+    : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE';
   hintEl.textContent = baseHint
-    + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
-    + (hintSuit?.weapons.some(isSniperWeapon) ? ' · ACTIVE SNIPER: RMB HOLD ADS · N LATCH ADS' : '');
+    + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '');
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -2569,10 +2570,10 @@ export function startBattle(renderer, opts, onEnd){
     m.lastMuzzleWorld = muzzle.clone();
     if (m.isPlayer){
       vgKick = Math.min(0.22, vgKick + (w.type === 'bazooka' ? 0.2 : 0.07));
-      if (sniperMode && isSniperWeapon(w)){
+      if (sniperMode && canAimWeapon(w)){
         camPitch = clamp(camPitch + (w.recoil ? 0.032 : 0.018), -1.15, 1.15);
         sniperSteady = Math.max(0, sniperSteady - (w.recoil ? 0.34 : 0.22));
-        sniperBreath = Math.max(0, sniperBreath - 0.08);
+        if (weaponAimProfile(w)?.breath) sniperBreath = Math.max(0, sniperBreath - 0.08);
       }
     }
     // converge on the crosshair point when one is provided (player fire)
@@ -2583,7 +2584,7 @@ export function startBattle(renderer, opts, onEnd){
     for (let s = 0; s < (w.pellets || 1); s++){
       const d = base.clone();
       const spread = w.spread * kneelSpreadMultiplier(m.kneelBlend)
-        * (m.isPlayer && sniperMode && isSniperWeapon(w) ? lerp(0.38, 0.06, sniperSteady) : 1);
+        * (m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1);
       d.x += (rng.next() - 0.5) * 2 * spread;
       d.y += (rng.next() - 0.5) * 2 * spread;
       d.z += (rng.next() - 0.5) * 2 * spread;
@@ -2635,7 +2636,9 @@ export function startBattle(renderer, opts, onEnd){
   function dropBombs(m, w){
     const sc = m.suit.scale || 1;
     const perSide = Math.max(1, Math.round((w.bombs || 6) / 2));  // half the pack down each side of the bay
-    const spread = 1.7 * sc;                                      // fore-aft stick spacing scales with the airframe
+    const aimCoefficient = m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1;
+    const patternScale = lerp(1, 0.55, 1 - aimCoefficient);       // bombing computer concentrates the impact pattern
+    const spread = 1.7 * sc * patternScale;                       // fore-aft stick spacing scales with the airframe
     const bombScale = clamp(sc * 0.4, 1, 3);                      // bigger carriers drop bigger ordnance
     const base = m.root.position.clone(); base.y -= 1.5 * sc;     // belly bomb-bay window
     const fx = Math.sin(m.yaw), fz = Math.cos(m.yaw);            // forward (heading)
@@ -2644,8 +2647,8 @@ export function startBattle(renderer, opts, onEnd){
       for (let i = 0; i < perSide; i++){
         const fwdOff = (i - (perSide - 1) / 2) * spread;
         const pos = base.clone();
-        pos.x += rx * side * 1.5 * sc + fx * fwdOff;
-        pos.z += rz * side * 1.5 * sc + fz * fwdOff;
+        pos.x += rx * side * 1.5 * sc * patternScale + fx * fwdOff;
+        pos.z += rz * side * 1.5 * sc * patternScale + fz * fwdOff;
         const mesh = makeBomb(); if (bombScale !== 1) mesh.scale.setScalar(bombScale); mesh.position.copy(pos); scene.add(mesh);
         const vel = new THREE.Vector3(fx * w.speed, -8, fz * w.speed); // released forward + a down kick; gravity does the rest
         const projectile = { pos: pos.clone(), vel, dmg: w.dmg, splash: w.splash || 16, team: m.team, owner: m, weaponName: w.name, life: 7, mesh, bomb: true };
@@ -3102,22 +3105,26 @@ export function startBattle(renderer, opts, onEnd){
   let sniperHoldingBreath = false, sniperBreathBlocked = false;
   let sniperSwayYaw = 0, sniperSwayPitch = 0, sniperLatched = false, sniperRmbHeld = false;
 
+  const selectedWeapon = () => player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
+  const activeAimProfile = () => sniperMode ? weaponAimProfile(selectedWeapon()) : null;
+  const aimMoveScale = () => activeAimProfile()?.moveScale ?? 1;
+
   function setSniperMode(enabled, quiet = false){
     if (enabled){
-      const weapon = player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
-      if (!isSniperWeapon(weapon)){
-        if (!quiet) setMsg('SNIPER OPTICS UNAVAILABLE — EQUIP AND SELECT A PRECISION WEAPON', 2.2);
+      const profile = weaponAimProfile(selectedWeapon());
+      if (!profile){
+        if (!quiet) setMsg(player.wi === SABER_SLOT ? 'MELEE WEAPON SELECTED — RMB TO STRIKE' : 'NO AIM SYSTEM FOR THIS WEAPON', 2.0);
         return false;
       }
       if (!sniperMode) sniperPreviousView = firstPerson;
       sniperMode = true; firstPerson = true; player.blocking = false;
-      if (!quiet) setMsg('SNIPER ADS — LMB FIRE · SHIFT HOLD BREATH · RELEASE RMB OR N TO EXIT', 2.4);
+      if (!quiet) setMsg(`${profile.label} — AIM ×${profile.coefficient.toFixed(2)} · LMB FIRE${profile.breath ? ' · SHIFT HOLD BREATH' : ''} · RELEASE RMB OR N TO EXIT`, 2.7);
       return true;
     }
     if (!sniperMode) return false;
     sniperMode = false; firstPerson = sniperPreviousView; sniperSteady = 0;
     sniperHoldingBreath = false; sniperRmbHeld = false; sniperLatched = false;
-    if (!quiet) setMsg('SNIPER OPTICS DISENGAGED', 1.2);
+    if (!quiet) setMsg('WEAPON AIM DISENGAGED', 1.2);
     return true;
   }
 
@@ -3157,7 +3164,8 @@ export function startBattle(renderer, opts, onEnd){
 
   const onMouseMove = e => {
     if (!locked) return;
-    const sensitivity = sniperMode ? lerp(0.00082, 0.00046, sniperSteady) : 0.0026;
+    const aim = activeAimProfile();
+    const sensitivity = aim ? lerp(aim.sensitivity, aim.settledSensitivity, sniperSteady) : 0.0026;
     camYaw -= e.movementX * sensitivity;
     camPitch = clamp(camPitch - e.movementY * sensitivity * 0.92, -1.15, 1.15); // mouse up = look up
   };
@@ -3165,11 +3173,11 @@ export function startBattle(renderer, opts, onEnd){
     if (!locked){ canvas.requestPointerLock(); return; }
     if (e.button === 0) mouseDown = true;
     if (e.button === 2){
-      const weapon = player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
-      if (isSniperWeapon(weapon)){
+      const weapon = selectedWeapon();
+      if (canAimWeapon(weapon)){
         sniperRmbHeld = true;
         if (!sniperMode) setSniperMode(true);
-      } else if (hasSaber) trySaber();
+      } else if (player.wi === SABER_SLOT && hasSaber) trySaber();
     }
   };
   const onMouseUp = e => {
@@ -3256,7 +3264,7 @@ export function startBattle(renderer, opts, onEnd){
     vgMeleeOverride = i !== SABER_SLOT && player.swingT > 0;
     buildViewGun(vgMeleeOverride);
     const nw = player.suit.weapons[i];
-    if (sniperMode && !isSniperWeapon(nw)) setSniperMode(false, true);
+    if (sniperMode && !canAimWeapon(nw)) setSniperMode(false, true);
     if (nw && nw.arc) setMsg('ARTILLERY MODE — LOB ONTO FAR TARGETS', 1.8);
     else if (nw && player.parts.turretDock) setMsg('DIRECT FIRE — ANTI-MATERIEL CANNON', 1.4);
     sfx('ui', 0.12);
@@ -3919,7 +3927,7 @@ export function startBattle(renderer, opts, onEnd){
     const boosting = !sniperMode && keys.has('shift') && m.fuel > 0, braking = keys.has('s');
     m.boosting = boosting;
     if (boosting) m.fuel = Math.max(0, m.fuel - 18 * dt); else m.fuel = Math.min(m.maxFuel, m.fuel + 12 * dt);
-    const targetSpd = boosting ? w.boost : braking ? w.boost * 0.5 : w.boost * 0.78;
+    const targetSpd = (boosting ? w.boost : braking ? w.boost * 0.5 : w.boost * 0.78) * aimMoveScale();
     const hcp = Math.cos(m.pitch), k = clamp(2.5 * dt, 0, 1);
     m.vel.x = lerp(m.vel.x, Math.sin(m.yaw) * hcp * targetSpd, k);
     m.vel.y = lerp(m.vel.y, Math.sin(m.pitch) * targetSpd, k);
@@ -3997,7 +4005,7 @@ export function startBattle(renderer, opts, onEnd){
       m.vel.multiplyScalar(1 - (SPACE ? 0.48 : 0.8) * dt);
       const nativeCap = SPACE ? (shiftBoosting ? w.boost * 1.6 : w.walk * 2.2) : (shiftBoosting ? w.boost : w.walk);
       const cap = nativeCap * HOVER_CRAFT_SPEED_MULTIPLIER * legFactor
-        * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
+        * (m.blocking ? 0.5 : 1) * aimMoveScale();
       if (m.vel.length() > cap) m.vel.setLength(cap);
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 16 * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 15 * dt);
@@ -4011,7 +4019,7 @@ export function startBattle(renderer, opts, onEnd){
       if (keys.has('c')) m.vel.y -= acc * 0.8 * dt;
       m.vel.multiplyScalar(1 - 0.5 * dt);
       const cap = (shiftBoosting ? w.boost * 1.6 : w.walk * 2.2) * (w.spaceSpeedMul || 1) * (m.blocking ? 0.5 : 1)
-        * (sniperMode ? 0.32 : 1);
+        * aimMoveScale();
       if (m.vel.length() > cap) m.vel.setLength(cap);
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 20 * (w.spaceBoostDrainMul || 1) * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 14 * dt);
@@ -4081,7 +4089,7 @@ export function startBattle(renderer, opts, onEnd){
       if (postureLocked){ m.vel.x = 0; m.vel.z = 0; }
       else if (grounded && !hasInput && !sandKicking && !wantsHover){ m.vel.x *= 1 - Math.min(1, 8 * dt); m.vel.z *= 1 - Math.min(1, 8 * dt); }
       const hcap = (postureLocked ? 0 : sandKicking ? w.boost * 1.28 : wantsHover ? w.walk * hoverTravelMultiplier : (shiftBoosting ? w.boost : w.walk))
-        * legFactor * (w.hover && !wantsHover ? 1.15 : 1) * (m.blocking ? 0.5 : 1) * (sniperMode ? 0.32 : 1);
+        * legFactor * (w.hover && !wantsHover ? 1.15 : 1) * (m.blocking ? 0.5 : 1) * aimMoveScale();
       const hv = Math.hypot(m.vel.x, m.vel.z);
       if (hv > hcap){ m.vel.x *= hcap / hv; m.vel.z *= hcap / hv; }
       if (shiftBoosting && hasInput && !wantsHover) m.fuel = Math.max(0, m.fuel - 24 * dt);
@@ -4194,8 +4202,9 @@ export function startBattle(renderer, opts, onEnd){
       vel.y = 1500 * Math.sin(ART_ANGLE);
     }
     const spd = vel.length();
-    vel.x += (rng.next() - 0.5) * 2 * w.spread * spd;
-    vel.z += (rng.next() - 0.5) * 2 * w.spread * spd;
+    const aimCoefficient = m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1;
+    vel.x += (rng.next() - 0.5) * 2 * w.spread * aimCoefficient * spd;
+    vel.z += (rng.next() - 0.5) * 2 * w.spread * aimCoefficient * spd;
     const mesh = makeShell(1.6, false);
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, vel.clone().normalize());
@@ -4251,7 +4260,9 @@ export function startBattle(renderer, opts, onEnd){
     }
     m.lockTarget = tgt;
     if (tgt && m.clip > 0 && m.reloadT <= 0 && m.lockCd <= 0){ // automatic: locks whenever a target sits in the cone
-      m.lockT = Math.min(w.lockTime, (m.lockT || 0) + dt);
+      const aimCoefficient = m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1;
+      const lockRate = 1 + (1 - aimCoefficient) * 0.65;
+      m.lockT = Math.min(w.lockTime, (m.lockT || 0) + dt * lockRate);
       if (m.lockT >= w.lockTime){ // full lock → loose the missile
         launchMissile(m, tgt);
         m.clip--; m.fireT = 1 / w.rof;
@@ -4313,7 +4324,7 @@ export function startBattle(renderer, opts, onEnd){
   // P aim-assist: once the prediction has LOCKED a target, snap the player's shots to its lead so they hit
   function playerAimPoint(w){
     if (w && w.arc) return artilleryTarget();   // artillery lobs to the designated ground/target impact point
-    if (sniperMode && isSniperWeapon(w)) return crosshairPoint(); // optics stay fully manual; no aim-assist snap
+    if (sniperMode && canAimWeapon(w)) return crosshairPoint(); // ADS is fully manual; P prediction remains informational
     if (assistOn && predLocked && predLocked.alive && w && w.type !== 'lockmissile') return leadPoint(predLocked, w.speed || 1200);
     return crosshairPoint();
   }
@@ -4324,9 +4335,11 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.clearRect(0, 0, innerWidth, innerHeight);
     if (!player.alive) return;
     const aw = player.suit.weapons[player.wi];
-    if (sniperMode && isSniperWeapon(aw)) drawSniperScope();
+    const aim = sniperMode ? weaponAimProfile(aw) : null;
+    if (aim?.id === 'precision') drawSniperScope();
     else if (aw && aw.arc && !player.air) drawArtillery(); // artillery mode owns the aiming overlay (trajectory + impact)
     else if (assistOn) drawPredict();                 // whole aim system (prediction overlay) toggles with P
+    if (aim && aim.id !== 'precision') drawWeaponAimSight(aim, aw);
     drawReticle();
     drawCritFlash();
   }
@@ -4377,6 +4390,69 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.fillText(sniperHoldingBreath ? 'BREATH HELD · SIGHT LOCKED' : sniperBreathBlocked ? 'CATCHING BREATH' : 'SHIFT · HOLD BREATH', left, top + 104);
     loCtx.textAlign = 'right'; loCtx.fillStyle = '#b9ddd8';
     loCtx.fillText(sniperLatched ? 'N · EXIT ADS' : 'RELEASE RMB · EXIT ADS', cx + radius - 24, cy + radius - 24);
+    loCtx.restore();
+  }
+  function drawWeaponAimSight(profile, weapon){
+    const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
+    const settle = clamp(sniperSteady, 0, 1);
+    const radius = lerp(72, 42, settle) * lerp(1.08, 1, sniperZoom);
+    const color = settle > 0.78 ? '#66ffd0' : '#ffd24a';
+    const coefficient = weaponAimCoefficient(weapon, settle);
+    const sight = crosshairPoint();
+    const range = Math.round(camera.position.distanceTo(sight));
+    loCtx.save();
+    loCtx.globalAlpha = clamp(sniperZoom * 1.2, 0, 1);
+    loCtx.strokeStyle = color;
+    loCtx.fillStyle = color;
+    loCtx.lineWidth = 1.5;
+    loCtx.font = 'bold 11px monospace';
+    loCtx.textAlign = 'left';
+
+    if (profile.id === 'reflex' || profile.id === 'scatter'){
+      loCtx.beginPath(); loCtx.arc(cx, cy, radius, 0, Math.PI * 2); loCtx.stroke();
+      if (profile.id === 'scatter'){
+        loCtx.beginPath(); loCtx.arc(cx, cy, radius * 0.58, 0, Math.PI * 2); loCtx.stroke();
+      }
+      for (let i = 0; i < 4; i++){
+        const a = i * Math.PI * 0.5;
+        loCtx.beginPath();
+        loCtx.moveTo(cx + Math.cos(a) * (radius + 5), cy + Math.sin(a) * (radius + 5));
+        loCtx.lineTo(cx + Math.cos(a) * (radius + 17), cy + Math.sin(a) * (radius + 17));
+        loCtx.stroke();
+      }
+    } else if (profile.id === 'rocket' || profile.id === 'artillery' || profile.id === 'bombing'){
+      const half = radius * 0.82;
+      loCtx.strokeRect(cx - half, cy - half, half * 2, half * 2);
+      loCtx.beginPath();
+      loCtx.moveTo(cx - half * 1.3, cy); loCtx.lineTo(cx - 9, cy);
+      loCtx.moveTo(cx + 9, cy); loCtx.lineTo(cx + half * 1.3, cy);
+      loCtx.moveTo(cx, cy - half * 1.3); loCtx.lineTo(cx, cy - 9);
+      loCtx.moveTo(cx, cy + 9); loCtx.lineTo(cx, cy + half * 1.3); loCtx.stroke();
+      if (profile.id === 'bombing'){
+        loCtx.beginPath(); loCtx.arc(cx, cy, 15, 0, Math.PI * 2); loCtx.stroke();
+      }
+    } else if (profile.id === 'seeker'){
+      loCtx.beginPath();
+      loCtx.moveTo(cx, cy - radius); loCtx.lineTo(cx + radius, cy);
+      loCtx.lineTo(cx, cy + radius); loCtx.lineTo(cx - radius, cy); loCtx.closePath(); loCtx.stroke();
+      loCtx.beginPath(); loCtx.arc(cx, cy, 8 + (1 - settle) * 8, 0, Math.PI * 2); loCtx.stroke();
+    } else {
+      const arm = radius * 0.82, gap = 14;
+      loCtx.beginPath();
+      loCtx.moveTo(cx - arm, cy - arm); loCtx.lineTo(cx - gap, cy - arm); loCtx.lineTo(cx - gap, cy - gap);
+      loCtx.moveTo(cx + arm, cy - arm); loCtx.lineTo(cx + gap, cy - arm); loCtx.lineTo(cx + gap, cy - gap);
+      loCtx.moveTo(cx - arm, cy + arm); loCtx.lineTo(cx - gap, cy + arm); loCtx.lineTo(cx - gap, cy + gap);
+      loCtx.moveTo(cx + arm, cy + arm); loCtx.lineTo(cx + gap, cy + arm); loCtx.lineTo(cx + gap, cy + gap); loCtx.stroke();
+      loCtx.fillRect(cx - 2, cy - 2, 4, 4);
+    }
+
+    const left = Math.max(20, cx - radius - 82), top = Math.max(34, cy - radius - 42);
+    loCtx.fillText(profile.label, left, top);
+    loCtx.fillStyle = '#b9ddd8'; loCtx.font = '11px monospace';
+    loCtx.fillText(`RANGE ${range}m · AIM ×${coefficient.toFixed(2)}`, left, top + 17);
+    loCtx.fillText(`STABILITY ${Math.round(settle * 100)}%`, left, top + 34);
+    loCtx.textAlign = 'right';
+    loCtx.fillText(sniperLatched ? 'N · EXIT AIM' : 'RELEASE RMB · EXIT AIM', cx + radius + 82, cy + radius + 42);
     loCtx.restore();
   }
   // ARTILLERY overlay: the ballistic trajectory line from the muzzle + a pulsing impact ring where it lands.
@@ -5599,8 +5675,10 @@ export function startBattle(renderer, opts, onEnd){
     if (player.suit.mobilityMultiplier != null){
       wHtml += `<br>ARMAMENT LOAD <span class="ammo">${Math.round(player.suit.carriedWeaponMass)} t · MOVE ${Math.round(player.suit.mobilityMultiplier * 100)}%</span>`;
     }
-    if (sniperMode && isSniperWeapon(w)){
-      wHtml += `<br>SNIPER ADS <span class="ammo" style="color:${sniperSteady > 0.82 ? 'var(--ok)' : 'var(--acc)'}">RMB/N · STABILITY ${Math.round(sniperSteady * 100)}% · BREATH ${Math.round(sniperBreath * 100)}%</span>`;
+    const aimProfile = sniperMode ? weaponAimProfile(w) : null;
+    if (aimProfile){
+      const breath = aimProfile.breath ? ` · BREATH ${Math.round(sniperBreath * 100)}%` : '';
+      wHtml += `<br>${aimProfile.label} <span class="ammo" style="color:${sniperSteady > 0.78 ? 'var(--ok)' : 'var(--acc)'}">RMB/N · AIM ×${weaponAimCoefficient(w, sniperSteady).toFixed(2)} · STABILITY ${Math.round(sniperSteady * 100)}%${breath}</span>`;
     }
     wEl.innerHTML = wHtml;
     objEl.textContent = objectiveText();
@@ -5654,9 +5732,10 @@ export function startBattle(renderer, opts, onEnd){
   function cameraUpdate(dt){
     const p = player.root.position;
     const motion = player.vel.length();
-    if (sniperMode){
+    const aimProfile = activeAimProfile();
+    if (aimProfile){
       if (!keys.has('shift')) sniperBreathBlocked = false;
-      sniperHoldingBreath = keys.has('shift') && !sniperBreathBlocked && sniperBreath > 0.01
+      sniperHoldingBreath = aimProfile.breath && keys.has('shift') && !sniperBreathBlocked && sniperBreath > 0.01
         && motion < 3.5 && !player.boosting;
       if (sniperHoldingBreath){
         sniperBreath = Math.max(0, sniperBreath - 0.22 * dt);
@@ -5664,11 +5743,11 @@ export function startBattle(renderer, opts, onEnd){
       } else sniperBreath = Math.min(1, sniperBreath + (sniperBreathBlocked ? 0.11 : 0.16) * dt);
       const kneelBrace = clamp(player.kneelBlend || 0, 0, 1);
       sniperSteady = clamp(sniperSteady + (motion < 3.5 && !player.boosting
-        ? (sniperHoldingBreath ? 3.4 + kneelBrace * 0.8 : 1.15 + kneelBrace * 1.3) : -2.8) * dt, 0, 1);
+        ? (sniperHoldingBreath ? 3.4 + kneelBrace * 0.8 : aimProfile.steadyRate + kneelBrace * 1.3) : -2.8) * dt, 0, 1);
       sniperZoom = lerp(sniperZoom, 1, Math.min(1, 7 * dt));
       const tNow = performance.now() * 0.001;
       const movePenalty = clamp(motion / 14, 0, 1);
-      const swayAmp = (sniperHoldingBreath ? 0.00018 : lerp(0.0065, 0.0011, sniperSteady) * (1 + movePenalty * 1.7))
+      const swayAmp = (sniperHoldingBreath ? 0.00018 : lerp(aimProfile.sway, aimProfile.settledSway, sniperSteady) * (1 + movePenalty * 1.7))
         * lerp(1, 0.45, kneelBrace);
       sniperSwayYaw = (Math.sin(tNow * 1.73) + Math.sin(tNow * 0.61 + 1.2) * 0.42) * swayAmp;
       sniperSwayPitch = (Math.cos(tNow * 1.31 + 0.4) + Math.sin(tNow * 0.47) * 0.35) * swayAmp * 0.72;
@@ -5686,6 +5765,8 @@ export function startBattle(renderer, opts, onEnd){
     const fwd = tmpV.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp);
     let lookOverride = null; // branches that don't look straight along the aim set this
     hud.classList.toggle('sniper-mode', sniperMode);
+    hud.classList.toggle('aim-mode', sniperMode);
+    hud.dataset.aimType = aimProfile?.id || '';
     const cockpitVisible = firstPerson && !sniperMode && player.alive && !player.air && !player.suit.vehicle;
     hud.classList.toggle('cockpit-view', cockpitVisible);
     cockpitEl.classList.toggle('hidden', !cockpitVisible);
@@ -5712,9 +5793,12 @@ export function startBattle(renderer, opts, onEnd){
       }
     }
     if (firstPerson && !player.air){
-      // cockpit: camera rides in the head, own mech hidden
+      // Cockpit/weapon sight: use the best available sensor anchor. Vehicles,
+      // alternate model rigs and a battle-damaged MS are not guaranteed to
+      // expose the ordinary humanoid `head` node.
       player.root.visible = false;
-      const head = player.parts.head.getWorldPosition(tmpV3);
+      const sensor = player.parts.head || player.parts.eye || player.parts.turret || player.parts.body || player.root;
+      const head = sensor.getWorldPosition(tmpV3);
       head.addScaledVector(fwd, 1.5);
       camera.position.lerp(head, started ? Math.min(1, 22 * dt) : 1);
     } else if (player.air && firstPerson){
@@ -5853,7 +5937,7 @@ export function startBattle(renderer, opts, onEnd){
       camera.lookAt(look);
     }
     const normalFov = (player.boosting ? 8 : 0) + (firstPerson ? 68 : 62);
-    const adsFov = lerp(normalFov, 18, sniperZoom);
+    const adsFov = lerp(normalFov, aimProfile?.fov ?? normalFov, sniperZoom);
     camera.fov = lerp(camera.fov, adsFov, (sniperMode ? 10 : 5) * dt);
     camera.updateProjectionMatrix();
   }
@@ -6321,6 +6405,7 @@ export function startBattle(renderer, opts, onEnd){
       if ('fp' in o) firstPerson = o.fp;
       if ('view' in o){ firstPerson = !!o.view; buildViewGun(vgMeleeOverride); }
       if ('sniper' in o) setSniperMode(!!o.sniper, true);
+      if ('aim' in o) setSniperMode(!!o.aim, true);
       if ('keys' in o){ keys.clear(); for (const k of o.keys) keys.add(k); }
       if ('hover' in o){ if (o.hover) keys.add('e'); else keys.delete('e'); }
       if ('blocking' in o) player.blocking = !!o.blocking;
@@ -6552,6 +6637,10 @@ export function startBattle(renderer, opts, onEnd){
         cockpitMeshVisible: cockpitInterior.visible, cockpitMeshChildren: cockpitInterior.children.length,
         cockpitRoleCounts, cockpitScale: cockpitInterior.scale.toArray(),
         cameraFov: camera.fov, cameraAspect: camera.aspect,
+        aimMode: sniperMode, aimCapable: player.wi !== SABER_SLOT && canAimWeapon(player.suit.weapons[player.wi]),
+        aimType: weaponAimProfile(player.suit.weapons[player.wi])?.id || null,
+        aimLabel: weaponAimProfile(player.suit.weapons[player.wi])?.label || null,
+        aimCoefficient: weaponAimCoefficient(player.suit.weapons[player.wi], sniperSteady),
         sniperMode, sniperCapable: player.wi !== SABER_SLOT && isSniperWeapon(player.suit.weapons[player.wi]),
         sniperSteady, sniperZoom, sniperBreath, sniperHoldingBreath, sniperBreathBlocked,
         sniperSwayYaw, sniperSwayPitch, sniperLatched, sniperRmbHeld,
