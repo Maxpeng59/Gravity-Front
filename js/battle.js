@@ -25,7 +25,10 @@ import {
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
-import { assignSquadRoles, formationSlotOffset, groundTacticalDecision, squadSizes } from './squad-doctrine.js';
+import {
+  assignSquadRoles, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, squadSizes,
+} from './squad-doctrine.js';
 import {
   landshipCombatYaw,
   landshipProfile,
@@ -3816,11 +3819,23 @@ export function startBattle(renderer, opts, onEnd){
       const foes = mechs.filter(o => o.alive && o.team !== m.team);
       const hostileProps = props.filter(p => p.alive && p.team !== m.team && !p.scenery);
       if (!foes.length && !hostileProps.length){ ai.target = null; setKneelTarget(m, false); return; }
+      const nearest = arr => arr.reduce((a, b) =>
+        a.root.position.distanceToSquared(m.root.position) < b.root.position.distanceToSquared(m.root.position) ? a : b);
+      const nearestFoe = foes.length ? nearest(foes) : null;
+      const sharedTarget = squad?.target?.alive && squad.target.team !== m.team ? squad.target : null;
+      const sharedRangeSq = sharedTarget ? sharedTarget.root.position.distanceToSquared(m.root.position) : Infinity;
+      const nearestFoeRangeSq = nearestFoe ? nearestFoe.root.position.distanceToSquared(m.root.position) : Infinity;
+      // Do not let a whole squad stare at an obsolete far-away objective while
+      // an enemy formation is already on top of it. The closer threat becomes
+      // the new shared target and combat resumes immediately.
+      const nearerThreat = nearestFoe && nearestFoeRangeSq < sharedRangeSq * 0.42;
       // objective pressure: raiders sometimes ignore mechs and press the structures/convoy
       // (relaxed in grand battles so the landships aren't under permanent all-army siege)
       const propBias = mission.type === 'odessa' ? 0.15 : m.team === 'ZEON' ? 0.45 : 0.3;
-      if (squad?.target?.alive && squad.target.team !== m.team){
-        ai.target = squad.target;
+      if (nearerThreat){
+        ai.target = nearestFoe;
+      } else if (sharedTarget){
+        ai.target = sharedTarget;
       } else if (hostileProps.length && (!foes.length || rng.chance(propBias)) && !(m.suit.aa && foes.some(f => f.air))){
         ai.target = hostileProps[rng.int(0, hostileProps.length - 1)];
       } else if (!foes.length){
@@ -3828,8 +3843,6 @@ export function startBattle(renderer, opts, onEnd){
       } else {
         // spread fire across the lance: nearest target by default, hold a grudge
         // against whoever shot us last, and never let the whole squad pile on the player
-        const nearest = arr => arr.reduce((a, b) =>
-          a.root.position.distanceToSquared(m.root.position) < b.root.position.distanceToSquared(m.root.position) ? a : b);
         const airFoes = m.suit.aa ? foes.filter(f => f.air) : null;     // dedicated AA platforms hunt aircraft first
         let pick = (airFoes && airFoes.length) ? nearest(airFoes)
           : (ai.grudge && ai.grudge.alive && ai.grudge.team !== m.team) ? ai.grudge : nearest(foes);
@@ -4024,12 +4037,25 @@ export function startBattle(renderer, opts, onEnd){
       if (formation && !hurt){
         const fx = formation.x - m.root.position.x, fz = formation.z - m.root.position.z;
         const fd = Math.hypot(fx, fz);
-        const tolerance = ai.squadRole === 'assault' ? 42 : 62;
-        if (fd > tolerance){
+        const formationStrength = formationSteeringStrength({
+          role: ai.squadRole, distanceToSlot: fd, targetRange: d, preferredRange: pref,
+          reposition: groundTactic.reposition,
+          meleeReady: ai.squadRole === 'assault' && groundTactic.melee && d <= 560,
+        });
+        if (formationStrength > 0){
           const formationDesired = new THREE.Vector3(fx / fd * speed, 0, fz / fd * speed);
-          const cohesion = ai.squadRole === 'assault' ? 0.68 : 0.78;
-          desired.lerp(formationDesired, clamp((fd - tolerance) / 240, 0.28,
-            groundTactic.reposition ? 0.9 : cohesion));
+          desired.lerp(formationDesired, formationStrength);
+        }
+      }
+      // Cohesion may bend the path, but it can never remove the forward attack
+      // component while the selected target is outside weapon range.
+      const advanceFloor = minimumAttackAdvance(d, pref) * speed;
+      const currentAdvance = desired.x * toT.x + desired.z * toT.z;
+      if (advanceFloor > 0 && currentAdvance < advanceFloor){
+        desired.addScaledVector(toT, advanceFloor - currentAdvance);
+        const planarSpeed = Math.hypot(desired.x, desired.z);
+        if (planarSpeed > speed && planarSpeed > 0){
+          desired.x *= speed / planarSpeed; desired.z *= speed / planarSpeed;
         }
       }
     }

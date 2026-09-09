@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignSquadRoles, formationSlotOffset, groundTacticalDecision, squadSizes,
+  assignSquadRoles, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, squadSizes,
 } from '../js/squad-doctrine.js';
 
 test('large forces divide into normal five-to-seven unit combat groups', () => {
@@ -65,4 +66,22 @@ test('support slots form a wide gun line behind the assault wedge', () => {
   assert.ok(left.forward <= center.forward);
   assert.equal(left.forward, right.forward);
   assert.equal(left.lateral, -right.lateral);
+});
+
+test('formation steering yields to attack approach and terrain repositioning', () => {
+  const longApproach = formationSteeringStrength({ role: 'support', distanceToSlot: 300,
+    targetRange: 1800, preferredRange: 500 });
+  const inRange = formationSteeringStrength({ role: 'support', distanceToSlot: 300,
+    targetRange: 600, preferredRange: 500 });
+  assert.ok(longApproach < inRange);
+  assert.equal(formationSteeringStrength({ role: 'support', distanceToSlot: 300,
+    targetRange: 600, preferredRange: 500, reposition: true }), 0);
+  assert.equal(formationSteeringStrength({ role: 'assault', distanceToSlot: 300,
+    targetRange: 400, preferredRange: 500, meleeReady: true }), 0);
+});
+
+test('a distant target always retains a forward attack-speed floor', () => {
+  assert.equal(minimumAttackAdvance(1500, 500), 0.72);
+  assert.equal(minimumAttackAdvance(900, 500), 0.42);
+  assert.equal(minimumAttackAdvance(600, 500), 0);
 });

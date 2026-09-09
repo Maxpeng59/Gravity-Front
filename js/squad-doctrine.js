@@ -50,6 +50,32 @@ export function formationSlotOffset(role = 'support', slot = 0){
   };
 }
 
+export function formationSteeringStrength({
+  role = 'support', distanceToSlot = 0, targetRange = 0, preferredRange = 1,
+  reposition = false, meleeReady = false,
+} = {}){
+  const tolerance = role === 'assault' ? 42 : 62;
+  const error = Math.max(0, Number(distanceToSlot) || 0);
+  if (error <= tolerance || reposition || meleeReady) return 0;
+  const preferred = Math.max(1, Number(preferredRange) || 1);
+  const range = Math.max(0, Number(targetRange) || 0);
+  // Formation is strongest once the squad reaches combat range. On a long
+  // approach it becomes a light correction so nobody marches sideways forever
+  // instead of closing with the enemy.
+  const approachUrgency = Math.max(0, Math.min(1, (range - preferred * 1.55) / (preferred * 0.85)));
+  const base = role === 'assault' ? 0.62 : 0.72;
+  const errorScale = Math.max(0.25, Math.min(1, (error - tolerance) / 220));
+  return base * errorScale * (1 - approachUrgency * 0.58);
+}
+
+export function minimumAttackAdvance(targetRange = 0, preferredRange = 1){
+  const range = Math.max(0, Number(targetRange) || 0);
+  const preferred = Math.max(1, Number(preferredRange) || 1);
+  if (range > preferred * 2.2) return 0.72;
+  if (range > preferred * 1.55) return 0.42;
+  return 0;
+}
+
 export function groundTacticalDecision({
   role = 'line', range = 0, preferredRange = 1, highGround = 0,
   localSlope = 0, routeRise = 0, lineOfSight = true, hasMelee = false,
