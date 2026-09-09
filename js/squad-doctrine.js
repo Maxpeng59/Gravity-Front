@@ -28,6 +28,28 @@ export function assignSquadRoles(members){
     : { role: 'support', slot: supportIndex++ });
 }
 
+// Local combat-formation coordinates. `forward` points toward the squad's
+// target and `lateral` points to its right. The assault element forms a shallow
+// arrowhead; ranged machines occupy a wider, deeper gun line so their muzzles
+// are not masked by the front rank.
+export function formationSlotOffset(role = 'support', slot = 0){
+  const index = Math.max(0, Math.trunc(Number(slot)) || 0);
+  if (role === 'assault'){
+    if (index === 0) return { forward: 0, lateral: 0 };
+    const row = Math.ceil(index / 2);
+    return {
+      forward: -48 * row,
+      lateral: (index % 2 ? -1 : 1) * (62 + (row - 1) * 24),
+    };
+  }
+  if (index === 0) return { forward: -155, lateral: 0 };
+  const row = Math.ceil(index / 2);
+  return {
+    forward: -180 - (row - 1) * 82,
+    lateral: (index % 2 ? -1 : 1) * (82 + (row - 1) * 28),
+  };
+}
+
 export function groundTacticalDecision({
   role = 'line', range = 0, preferredRange = 1, highGround = 0,
   localSlope = 0, routeRise = 0, lineOfSight = true, hasMelee = false,

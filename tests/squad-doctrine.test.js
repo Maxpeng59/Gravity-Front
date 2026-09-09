@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignSquadRoles, groundTacticalDecision, squadSizes,
+  assignSquadRoles, formationSlotOffset, groundTacticalDecision, squadSizes,
 } from '../js/squad-doctrine.js';
 
 test('large forces divide into normal five-to-seven unit combat groups', () => {
@@ -45,4 +45,24 @@ test('only an assault slot takes a traversable melee route', () => {
   assert.equal(groundTacticalDecision({ ...ground, role: 'assault' }).melee, true);
   assert.equal(groundTacticalDecision({ ...ground, role: 'support' }).melee, false);
   assert.equal(groundTacticalDecision({ ...ground, role: 'assault', routeRise: 25 }).melee, false);
+});
+
+test('assault slots form a shallow forward wedge', () => {
+  const leader = formationSlotOffset('assault', 0);
+  const left = formationSlotOffset('assault', 1);
+  const right = formationSlotOffset('assault', 2);
+  assert.deepEqual(leader, { forward: 0, lateral: 0 });
+  assert.equal(left.forward, right.forward);
+  assert.equal(left.lateral, -right.lateral);
+  assert.ok(left.forward < leader.forward);
+});
+
+test('support slots form a wide gun line behind the assault wedge', () => {
+  const center = formationSlotOffset('support', 0);
+  const left = formationSlotOffset('support', 1);
+  const right = formationSlotOffset('support', 2);
+  assert.ok(center.forward < formationSlotOffset('assault', 2).forward);
+  assert.ok(left.forward <= center.forward);
+  assert.equal(left.forward, right.forward);
+  assert.equal(left.lateral, -right.lateral);
 });

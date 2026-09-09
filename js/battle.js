@@ -25,7 +25,7 @@ import {
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
-import { assignSquadRoles, groundTacticalDecision, squadSizes } from './squad-doctrine.js';
+import { assignSquadRoles, formationSlotOffset, groundTacticalDecision, squadSizes } from './squad-doctrine.js';
 import {
   landshipCombatYaw,
   landshipProfile,
@@ -3767,17 +3767,25 @@ export function startBattle(renderer, opts, onEnd){
 
   function squadFormationPoint(m, target){
     const squad = combatSquads.get(m.ai.squadId);
-    if (!squad || m.ai.squadRole !== 'support') return null;
-    const front = squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'assault');
-    if (!front.length) return null;
-    let x = 0, z = 0;
-    for (const unit of front){ x += unit.root.position.x; z += unit.root.position.z; }
-    x /= front.length; z /= front.length;
-    let ax = x - target.root.position.x, az = z - target.root.position.z;
-    const length = Math.hypot(ax, az) || 1; ax /= length; az /= length;
-    const lane = (m.ai.squadSlot % 2 ? -1 : 1) * (75 + Math.floor(m.ai.squadSlot / 2) * 28);
-    const depth = 150 + Math.floor(m.ai.squadSlot / 2) * 85;
-    return { x: x + ax * depth - az * lane, z: z + az * depth + ax * lane };
+    if (!squad || !target?.alive) return null;
+    const alive = squad.members.filter(unit => unit.alive);
+    const leader = alive.find(unit => unit.ai.squadRole === 'assault' && unit.ai.squadSlot === 0)
+      || alive.find(unit => unit.ai.squadSlot === 0) || alive[0];
+    if (!leader) return null;
+    let fx = target.root.position.x - leader.root.position.x;
+    let fz = target.root.position.z - leader.root.position.z;
+    const length = Math.hypot(fx, fz) || 1; fx /= length; fz /= length;
+    const rightX = fz, rightZ = -fx;
+    const leaderOffset = formationSlotOffset(leader.ai.squadRole, leader.ai.squadSlot);
+    const memberOffset = formationSlotOffset(m.ai.squadRole, m.ai.squadSlot);
+    // Recover the moving formation origin from the leader's assigned slot. This
+    // also lets gun-only or all-vehicle squads form up around a support leader.
+    const originX = leader.root.position.x - fx * leaderOffset.forward - rightX * leaderOffset.lateral;
+    const originZ = leader.root.position.z - fz * leaderOffset.forward - rightZ * leaderOffset.lateral;
+    return {
+      x: originX + fx * memberOffset.forward + rightX * memberOffset.lateral,
+      z: originZ + fz * memberOffset.forward + rightZ * memberOffset.lateral,
+    };
   }
   // scenario anchor: units with an objective stay LEASHED to it instead of chasing across the map.
   // Defenders hold their base, assault garrisons guard their structures, escorts hug the convoy.
@@ -3877,6 +3885,9 @@ export function startBattle(renderer, opts, onEnd){
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
     const hurt = !relentless && m.hp < m.maxHp * retreatAt;
     const groundTactic = ai.groundTactic || sampleGroundTactics(m, t, pref);
+    const formation = !commanderSpace ? squadFormationPoint(m, t) : null;
+    const formationDistance = formation
+      ? Math.hypot(formation.x - m.root.position.x, formation.z - m.root.position.z) : 0;
     const normalRangedPosture = shouldAiKneel({
       range: d,
       preferredRange: pref,
@@ -3892,7 +3903,7 @@ export function startBattle(renderer, opts, onEnd){
     // deliberately the easiest to plant, guaranteeing persistent support when
     // the geology provides a clear, stable firing shelf.
     const supportCanPlant = kneelEligible(m) && !m.dropping && !hurt && !m.blocking
-      && !ai.pass && !commanderSpace && !groundTactic.reposition;
+      && !ai.pass && !commanderSpace && !groundTactic.reposition && formationDistance <= 80;
     const rangedPosture = ai.squadRole === 'support' ? supportCanPlant && groundTactic.kneel
       : ai.squadRole === 'assault' ? false : normalRangedPosture;
     setKneelTarget(m, rangedPosture);
@@ -4010,13 +4021,15 @@ export function startBattle(renderer, opts, onEnd){
           desired.z = desired.z * (1 - k) + az * inv * k;
         }
       }
-      const formation = squadFormationPoint(m, t);
       if (formation && !hurt){
         const fx = formation.x - m.root.position.x, fz = formation.z - m.root.position.z;
         const fd = Math.hypot(fx, fz);
-        if (fd > 70){
+        const tolerance = ai.squadRole === 'assault' ? 42 : 62;
+        if (fd > tolerance){
           const formationDesired = new THREE.Vector3(fx / fd * speed, 0, fz / fd * speed);
-          desired.lerp(formationDesired, clamp((fd - 70) / 260, 0.22, groundTactic.reposition ? 0.9 : 0.72));
+          const cohesion = ai.squadRole === 'assault' ? 0.68 : 0.78;
+          desired.lerp(formationDesired, clamp((fd - tolerance) / 240, 0.28,
+            groundTactic.reposition ? 0.9 : cohesion));
         }
       }
     }
@@ -6860,6 +6873,7 @@ export function startBattle(renderer, opts, onEnd){
               kneelTarget: !!m.kneelTarget, kneelBlend: m.kneelBlend || 0, kneelState: m.kneelState || 'standing',
               squadId: m.ai?.squadId || null, squadRole: m.ai?.squadRole || null,
               squadSlot: m.ai?.squadSlot ?? null, squadSize: m.ai?.squadSize || 0,
+              formationPoint: m.ai?.target?.alive ? squadFormationPoint(m, m.ai.target) : null,
               groundTactic: m.ai?.groundTactic ? { ...m.ai.groundTactic } : null,
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
