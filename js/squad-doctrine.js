@@ -51,6 +51,46 @@ export function assignSquadIds(items, team = 'SQUAD'){
   return assigned;
 }
 
+export function assignRequestedSquadIds(items, team = 'SQUAD'){
+  const list = Array.isArray(items) ? items : [];
+  const result = new Array(list.length);
+  const usedSquads = new Set();
+  const automatic = [];
+  list.forEach((item, index) => {
+    const requested = Math.trunc(Number(item?.requestedSquad)) || 0;
+    if (requested > 0){
+      usedSquads.add(requested);
+      result[index] = { ...item, squadId: `${team}-${requested}` };
+    } else automatic.push({ item, index });
+  });
+  let nextSquad = 1;
+  const takeUnusedSquad = () => {
+    while (usedSquads.has(nextSquad)) nextSquad++;
+    const chosen = nextSquad++;
+    usedSquads.add(chosen);
+    return chosen;
+  };
+  let offset = 0;
+  for (const size of squadSizes(automatic.length)){
+    const squad = takeUnusedSquad();
+    for (let slot = 0; slot < size; slot++){
+      const { item, index } = automatic[offset++];
+      result[index] = { ...item, squadId: `${team}-${squad}` };
+    }
+  }
+  return result;
+}
+
+export function overfilledRequestedSquads(items, maximum = SQUAD_MAX_SIZE){
+  const counts = new Map();
+  for (const item of Array.isArray(items) ? items : []){
+    const squad = Math.trunc(Number(item?.requestedSquad)) || 0;
+    if (squad > 0) counts.set(squad, (counts.get(squad) || 0) + 1);
+  }
+  return [...counts.entries()].filter(([, count]) => count > maximum)
+    .map(([squad, count]) => ({ squad, count }));
+}
+
 export function minimumCombatMovementSpeed({
   walkSpeed = 0, legDamage = 0, blocking = false, kneeling = false,
 } = {}){

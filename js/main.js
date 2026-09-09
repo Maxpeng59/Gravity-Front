@@ -18,7 +18,7 @@ import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
-import { assignSquadIds } from './squad-doctrine.js';
+import { assignRequestedSquadIds, overfilledRequestedSquads } from './squad-doctrine.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -832,7 +832,7 @@ addEventListener('beforeunload', () => pvpSession.room?.close());
 // enemies/allies: each entry is a { id, n, dist } — a unit TYPE, how many, and its spawn
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
-const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12; // 12 Big Trays fought at Odessa; capital props have no mech LOD
+const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12, CUSTOM_SQUAD_COUNT = 40; // 12 Big Trays fought at Odessa; capital props have no mech LOD
 const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
@@ -1014,11 +1014,11 @@ function renderCustom(){
     const deployedRows = [];
     arr.forEach((entry, rowIndex) => {
       for (let unit = 0; unit < entry.n && deployedRows.length < PER_SIDE_CAP; unit++)
-        deployedRows.push({ rowIndex, id: entry.id });
+        deployedRows.push({ rowIndex, id: entry.id, requestedSquad: entry.squad || 0 });
     });
     const mobileSuitRows = deployedRows.filter(unit => !SHIP_IDS.has(unit.id) && !suitById(unit.id).air);
     const squadRows = new Map();
-    for (const assignment of assignSquadIds(mobileSuitRows, faction)){
+    for (const assignment of assignRequestedSquadIds(mobileSuitRows, faction)){
       if (!squadRows.has(assignment.rowIndex)) squadRows.set(assignment.rowIndex, new Set());
       squadRows.get(assignment.rowIndex).add(Number(assignment.squadId.split('-').at(-1)));
     }
@@ -1048,15 +1048,29 @@ function renderCustom(){
       row.appendChild(cnt);
       const suit = SHIP_IDS.has(entry.id) ? null : suitById(entry.id);
       const squadNumbers = [...(squadRows.get(i) || [])].sort((a, b) => a - b);
-      const squadTag = el('span', 'sq', SHIP_IDS.has(entry.id) ? 'SHIP' : suit?.air ? 'AIR'
-        : !squadNumbers.length ? 'CAP'
-        : squadNumbers.length === 1 ? `${shortFaction}-${squadNumbers[0]}`
-        : `${shortFaction}-${squadNumbers[0]}–${squadNumbers.at(-1)}`);
-      squadTag.title = squadNumbers.length
+      const squadPick = document.createElement('select');
+      squadPick.className = 'squad-pick';
+      const nonSquad = SHIP_IDS.has(entry.id) ? 'SHIP' : suit?.air ? 'AIR' : !squadNumbers.length ? 'CAP' : null;
+      if (nonSquad){
+        const option = document.createElement('option'); option.textContent = nonSquad; option.value = '0';
+        squadPick.appendChild(option); squadPick.disabled = true;
+      } else {
+        const automatic = document.createElement('option');
+        automatic.value = '0'; automatic.textContent = squadNumbers.length === 1
+          ? `AUTO · ${shortFaction}-${squadNumbers[0]}` : `AUTO · ${shortFaction}-${squadNumbers[0]}–${squadNumbers.at(-1)}`;
+        squadPick.appendChild(automatic);
+        for (let squad = 1; squad <= CUSTOM_SQUAD_COUNT; squad++){
+          const option = document.createElement('option');
+          option.value = '' + squad; option.textContent = `SQUAD ${squad}`; option.selected = Number(entry.squad) === squad;
+          squadPick.appendChild(option);
+        }
+        squadPick.onchange = () => { entry.squad = Math.max(0, Math.trunc(Number(squadPick.value)) || 0); renderCustom(); };
+      }
+      squadPick.title = squadNumbers.length
         ? `Assigned to ${faction}-${squadNumbers[0]}${squadNumbers.length > 1 ? ` through ${faction}-${squadNumbers.at(-1)}` : ''}`
         : SHIP_IDS.has(entry.id) ? 'Capital ship — outside the mobile-suit squad net'
         : suit?.air ? 'Aircraft flight — outside the ground mobile-suit squad net' : `Outside the ${PER_SIDE_CAP}-unit deployment cap`;
-      row.appendChild(squadTag);
+      row.appendChild(squadPick);
       const x = el('span', 'x', '✕');
       x.onclick = () => { arr.splice(i, 1); renderCustom(); };
       row.appendChild(x);
@@ -1065,15 +1079,25 @@ function renderCustom(){
     const count = $(`${team}-roster-count`);
     const squadCount = new Set([...squadRows.values()].flatMap(ids => [...ids])).size;
     if (count) count.textContent = `${arr.length} / ${ROWS_MAX} TYPES · ${squadCount} SQUADS`;
+    return { faction, overfilled: overfilledRequestedSquads(mobileSuitRows) };
   };
-  mkList('enemy-list', custom.enemies, 'enemy');
-  mkList('ally-list', custom.allies, 'ally');
+  const enemySquads = mkList('enemy-list', custom.enemies, 'enemy');
+  const allySquads = mkList('ally-list', custom.allies, 'ally');
+  const manualSquadErrors = [enemySquads, allySquads].flatMap(side => side.overfilled.map(group => `${side.faction}-${group.squad} has ${group.count}`));
+  const squadWarning = $('squad-warning');
+  if (squadWarning){
+    const massBattle = custom.army > 0;
+    squadWarning.classList.toggle('error', !massBattle && manualSquadErrors.length > 0);
+    squadWarning.textContent = massBattle ? 'Mass Battle uses automatic 5–7 MS squads.'
+      : manualSquadErrors.length ? `Squad limit exceeded: ${manualSquadErrors.join(', ')}. Move units until every squad has 7 or fewer.`
+      : 'Choose AUTO or assign each MS group to a numbered squad. Multiple unit types can share one squad.';
+  }
   const landshipCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
   $('btn-add-enemy-landships').disabled = landshipCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
   $('btn-add-ally-landships').disabled = landshipCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
   $('btn-add-enemy').disabled = custom.enemies.length >= ROWS_MAX;
   $('btn-add-ally').disabled = custom.allies.length >= ROWS_MAX;
-  $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
+  $('btn-launch-custom').disabled = custom.army === 0 && (!custom.enemies.length || manualSquadErrors.length > 0);
   // right column: spinning model + stat readout + deployment map
   renderCustomLoadout();
   renderCustomHoverCraft();
@@ -1143,19 +1167,19 @@ $('btn-launch-custom').onclick = () => {
   // mass battle: generate N-per-side armies from random pools; otherwise use the manual lists
   const zPool = ['zaku2', 'zaku2b', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)
-  const expand = list => { const out = []; for (const e of list) for (let k = 0; k < e.n; k++) out.push({ id: e.id, pos: e.pos }); return out.slice(0, PER_SIDE_CAP); };
+  const expand = list => { const out = []; for (const e of list) for (let k = 0; k < e.n; k++) out.push({ id: e.id, pos: e.pos, requestedSquad: e.squad || 0 }); return out.slice(0, PER_SIDE_CAP); };
   const enemyEx = expand(custom.enemies), allyEx = expand(custom.allies);
   const assignGroundSquads = (specs, faction) => {
-    const ground = assignSquadIds(specs.filter(spec => !suitById(spec.suitId).air), faction);
+    const ground = assignRequestedSquadIds(specs.filter(spec => !suitById(spec.suitId).air), faction);
     let groundIndex = 0;
     return specs.map(spec => suitById(spec.suitId).air ? spec : ground[groundIndex++]);
   };
   const enemySpecs = custom.army > 0
     ? Array.from({ length: custom.army }, () => ({ suitId: rng.pick(zPool), ace: rng.chance(0.04) }))
-    : enemyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos }));
+    : enemyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const allySpecs = custom.army > 0
     ? Array.from({ length: custom.army - 1 }, () => ({ suitId: rng.pick(ARMY_FED) }))
-    : allyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos }));
+    : allyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const enemies = assignGroundSquads(enemySpecs, 'ZEON');
   const allies = assignGroundSquads(allySpecs, 'FED');
   // Landships retain canonical faction identity; the picker exposes Zeon hulls only to the enemy

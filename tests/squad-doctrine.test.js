@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignSquadIds, assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
+  assignRequestedSquadIds, assignSquadIds, assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, overfilledRequestedSquads, shouldProtectAlly, squadSizes,
   targetPriorityScore,
 } from '../js/squad-doctrine.js';
 
@@ -22,6 +22,22 @@ test('custom battle roster receives stable faction squad IDs before deployment',
   assert.equal(assigned.filter(unit => unit.squadId === 'ZEON-1').length, 7);
   assert.equal(assigned.filter(unit => unit.squadId === 'ZEON-2').length, 6);
   assert.deepEqual(assigned.map(unit => unit.index), Array.from({ length: 13 }, (_, index) => index));
+});
+
+test('custom battle honors player-selected squads and assigns AUTO units around them', () => {
+  const assigned = assignRequestedSquadIds([
+    { id: 'gm', requestedSquad: 3 },
+    { id: 'guncannon', requestedSquad: 3 },
+    { id: 'gmbazooka', requestedSquad: 0 },
+    { id: 'rgm79sp' },
+  ], 'FED');
+  assert.deepEqual(assigned.map(unit => unit.squadId), ['FED-3', 'FED-3', 'FED-1', 'FED-1']);
+});
+
+test('manual squad capacity reports an invalid eight-MS selection', () => {
+  const roster = Array.from({ length: 8 }, () => ({ requestedSquad: 2 }));
+  assert.deepEqual(overfilledRequestedSquads(roster), [{ squad: 2, count: 8 }]);
+  assert.deepEqual(overfilledRequestedSquads(roster.slice(0, 7)), []);
 });
 
 test('active combatants retain a movement floor unless deliberately kneeling', () => {
