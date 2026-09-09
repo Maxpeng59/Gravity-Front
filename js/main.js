@@ -134,6 +134,7 @@ function renderMsStats(suit){
   const box = $('ms-stats'); if (!box || !suit) return;
   const rows = [
     ['CLASS', suit.air ? 'FIGHTER' : suit.apc ? `${suit.faction} APC` : suit.faction],
+    ['TACTICAL VALUE', Number(suit.value || 0).toLocaleString()],
     ['INTEGRITY', suit.hp],
     ['ARMOR', suit.armor != null ? suit.armor : '—'],
     [suit.air ? 'AIRSPEED' : 'WALK', suit.air ? suit.boost : (suit.walk != null ? suit.walk : '—')],

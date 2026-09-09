@@ -1,6 +1,30 @@
 export const SQUAD_MIN_SIZE = 5;
 export const SQUAD_MAX_SIZE = 7;
 export const SQUAD_ASSAULT_SLOTS = 3;
+export const PROTECTION_MAX_RANGE = 100;
+export const PROTECTION_MELEE_RANGE = 50;
+export const ASSAULT_SUPPORT_TETHER = 225;
+
+export function shouldProtectAlly({ selfValue = 0, allyValue = 0, hpFraction = 0 } = {}){
+  return Number(selfValue) < Number(allyValue) && Number(hpFraction) > 0.5;
+}
+
+export function targetPriorityScore(value = 0, distance = 0){
+  const tacticalValue = Math.max(1, Number(value) || 1);
+  const range = Math.max(0, Number(distance) || 0);
+  // Value wins the strategic choice, but distance prevents the squad from
+  // ignoring an immediate threat for a flagship on the far side of the map.
+  const proximity = 1 + range / 900;
+  const closeThreat = range <= PROTECTION_MELEE_RANGE ? 4 : range <= 180 ? 1.6 : 1;
+  return tacticalValue * closeThreat / proximity;
+}
+
+export function chooseRouteSide({ leftBlocked = false, rightBlocked = false, leftRise = 0, rightRise = 0, fallback = 1 } = {}){
+  const leftScore = (leftBlocked ? 1000 : 0) + Math.max(0, Number(leftRise) || 0);
+  const rightScore = (rightBlocked ? 1000 : 0) + Math.max(0, Number(rightRise) || 0);
+  if (leftScore === rightScore) return fallback < 0 ? -1 : 1;
+  return leftScore < rightScore ? -1 : 1;
+}
 
 export function squadSizes(total){
   const count = Math.max(0, Math.trunc(Number(total)) || 0);

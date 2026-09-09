@@ -476,6 +476,24 @@ export const AIRCRAFT = [
   },
 ];
 
+// Tactical value is the battlefield priority of a unit, distinct from raw HP.
+// Procurement cost supplies the lore/progression ordering; the campaign's free
+// RX-78 starter receives a stat-derived value instead of being treated as bait.
+export function deriveUnitValue(suit){
+  if (!suit) return 0;
+  const listed = Math.max(0, Number(suit.cost) || 0);
+  if (listed > 0){
+    const commandMul = suit.commander ? 1.2 : suit.ace ? 1.1 : 1;
+    return Math.round(listed * commandMul / 100) * 100;
+  }
+  const peakGun = Math.max(0, ...(suit.weapons || []).map(w => (Number(w.dmg) || 0) * Math.sqrt(Math.max(0.1, Number(w.rof) || 0.1))));
+  const estimate = (Number(suit.hp) || 0) * 3 + (Number(suit.armor) || 0) * 500
+    + (Number(suit.boost) || 0) * 45 + (Number(suit.saber?.dmg) || 0) * 12 + peakGun * 18;
+  return Math.max(1000, Math.round(estimate / 100) * 100);
+}
+
+for (const suit of [...SUITS, ...AIRCRAFT]) suit.value = deriveUnitValue(suit);
+
 export const suitById = id => SUITS.find(s => s.id === id) || AIRCRAFT.find(a => a.id === id);
 export const isAircraft = id => AIRCRAFT.some(a => a.id === id);
 

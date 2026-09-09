@@ -1,9 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignSquadRoles, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, squadSizes,
+  assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, shouldProtectAlly, squadSizes,
+  targetPriorityScore,
 } from '../js/squad-doctrine.js';
 
 test('large forces divide into normal five-to-seven unit combat groups', () => {
@@ -84,4 +86,23 @@ test('a distant target always retains a forward attack-speed floor', () => {
   assert.equal(minimumAttackAdvance(1500, 500), 0.72);
   assert.equal(minimumAttackAdvance(900, 500), 0.42);
   assert.equal(minimumAttackAdvance(600, 500), 0);
+});
+
+test('healthy low-value mobile suits protect more valuable squadmates', () => {
+  assert.equal(shouldProtectAlly({ selfValue: 9000, allyValue: 40000, hpFraction: 0.51 }), true);
+  assert.equal(shouldProtectAlly({ selfValue: 9000, allyValue: 40000, hpFraction: 0.5 }), false);
+  assert.equal(shouldProtectAlly({ selfValue: 40000, allyValue: 9000, hpFraction: 1 }), false);
+  assert.equal(PROTECTION_MAX_RANGE, 100);
+  assert.equal(PROTECTION_MELEE_RANGE, 50);
+});
+
+test('target priority favors high value without ignoring a close threat', () => {
+  assert.ok(targetPriorityScore(50000, 650) > targetPriorityScore(9000, 650));
+  assert.ok(targetPriorityScore(9000, 40) > targetPriorityScore(18000, 900));
+});
+
+test('squads choose the clearer lower route and keep melee within support tether', () => {
+  assert.equal(chooseRouteSide({ leftBlocked: true, rightBlocked: false, leftRise: 0, rightRise: 20 }), 1);
+  assert.equal(chooseRouteSide({ leftRise: 4, rightRise: 18 }), -1);
+  assert.ok(ASSAULT_SUPPORT_TETHER >= 200 && ASSAULT_SUPPORT_TETHER <= 250);
 });

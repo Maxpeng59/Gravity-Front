@@ -26,8 +26,10 @@ import {
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
 import {
-  assignSquadRoles, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, squadSizes,
+  ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
+  assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, shouldProtectAlly, squadSizes,
+  targetPriorityScore,
 } from './squad-doctrine.js';
 import {
   landshipCombatYaw,
@@ -769,6 +771,8 @@ export function startBattle(renderer, opts, onEnd){
     const m = {
       uid: nextMechUid++,
       suit, team, root, parts: null, detail: null, lodNear: false, alwaysFull: isPlayer || isNetworkRemote,
+      value: Math.round((suit.value || suit.cost || 1000) * (ace ? 1.15 : 1)
+        * (typeof spec === 'object' && spec.vip ? 1.4 : 1)),
       ace, core, fromBlip, isPlayer, networkRemote: isNetworkRemote, air,
       networkId: isNetworkRemote ? String(specObject?.networkId || '') : null,
       vip: typeof spec === 'object' && !!spec.vip,
@@ -1198,6 +1202,7 @@ export function startBattle(renderer, opts, onEnd){
     if (isShip) root.rotation.y = team === 'ZEON' ? Math.PI : 0;
     scene.add(root);
     const p = { kind, team, root, vel: new THREE.Vector3(), hp, maxHp: hp, alive: true,
+      value: Math.round(hp * (isShip ? 2.5 : kind === 'base' || kind === 'depot' ? 1.2 : 0.65)),
       isProp: true, isShip,
       radius: kind === 'truck' ? 8 : kind === 'solfortress' ? 58
         : kind === 'bigtray' ? 55 : kind === 'dabude' ? 50 : kind === 'gallop' ? 30
@@ -3724,7 +3729,12 @@ export function startBattle(renderer, opts, onEnd){
             dedicatedSupport: ['sniper', 'artillery', 'tank', 'aa', 'heavy'].includes(role),
           };
         }));
-        const squad = { id, team, members, target: old?.target?.alive ? old.target : null };
+        const protectedUnit = members.reduce((best, unit) => !best || unit.value > best.value ? unit : best, null);
+        const squad = {
+          id, team, members, protectedUnit,
+          target: old?.target?.alive ? old.target : null,
+          route: old?.route || null,
+        };
         combatSquads.set(id, squad);
         members.forEach((unit, index) => {
           unit.ai.squadId = id;
@@ -3790,6 +3800,90 @@ export function startBattle(renderer, opts, onEnd){
       z: originZ + fz * memberOffset.forward + rightZ * memberOffset.lateral,
     };
   }
+
+  function squadSupportCenter(squad){
+    const support = squad?.members.filter(unit => unit.alive && unit.ai.squadRole === 'support') || [];
+    if (!support.length) return null;
+    let x = 0, z = 0;
+    for (const unit of support){ x += unit.root.position.x; z += unit.root.position.z; }
+    return { x: x / support.length, z: z / support.length };
+  }
+
+  function protectionAssignment(m, squad){
+    if (SPACE || !squad || m.suit.vehicle || m.air) return null;
+    let ally = squad.protectedUnit;
+    if (!ally?.alive){
+      ally = squad.members.reduce((best, unit) => unit.alive && (!best || unit.value > best.value) ? unit : best, null);
+      squad.protectedUnit = ally;
+    }
+    return ally && ally !== m && shouldProtectAlly({
+      selfValue: m.value, allyValue: ally.value, hpFraction: m.hp / Math.max(1, m.maxHp),
+    }) ? ally : null;
+  }
+
+  function protectionPoint(m, ally, threat){
+    let fx = threat.root.position.x - ally.root.position.x;
+    let fz = threat.root.position.z - ally.root.position.z;
+    const length = Math.hypot(fx, fz) || 1; fx /= length; fz /= length;
+    const side = (m.ai.squadSlot % 2 ? -1 : 1) * 28;
+    return {
+      x: ally.root.position.x + fx * 58 + fz * side,
+      z: ally.root.position.z + fz * 58 - fx * side,
+    };
+  }
+
+  function entityValue(unit){
+    if (Number.isFinite(unit?.value)) return unit.value;
+    return Math.max(1000, (unit?.maxHp || unit?.hp || 1000) * (unit?.isShip ? 2.5 : 1));
+  }
+
+  function priorityTarget(candidates, from){
+    return candidates.reduce((best, candidate) => {
+      const distance = candidate.root.position.distanceTo(from.root.position);
+      const score = targetPriorityScore(entityValue(candidate), distance);
+      return !best || score > best.score ? { unit: candidate, score } : best;
+    }, null)?.unit || null;
+  }
+
+  function squadRoutePoint(m, target){
+    const squad = combatSquads.get(m.ai.squadId);
+    if (SPACE || !hfn || !squad || !target?.alive) return null;
+    const leader = squad.members.find(unit => unit.alive && unit.ai.squadRole === 'assault' && unit.ai.squadSlot === 0)
+      || squad.members.find(unit => unit.alive) || m;
+    const dx = target.root.position.x - leader.root.position.x;
+    const dz = target.root.position.z - leader.root.position.z;
+    const distance = Math.hypot(dx, dz);
+    if (distance < 420){ squad.route = null; return null; }
+    const now = performance.now();
+    if (squad.route?.target === target && now < squad.route.expires
+      && Math.hypot(squad.route.x - leader.root.position.x, squad.route.z - leader.root.position.z) > 65) return squad.route;
+    const fx = dx / distance, fz = dz / distance, rightX = fz, rightZ = -fx;
+    const progress = Math.min(310, distance * 0.34);
+    const lateral = Math.min(175, 105 + distance * 0.045);
+    const baseX = leader.root.position.x + fx * progress;
+    const baseZ = leader.root.position.z + fz * progress;
+    const left = { x: baseX - rightX * lateral, z: baseZ - rightZ * lateral };
+    const right = { x: baseX + rightX * lateral, z: baseZ + rightZ * lateral };
+    const baseY = groundY(leader.root.position.x, leader.root.position.z);
+    const scoreRise = point => {
+      const y = groundY(point.x, point.z), step = 20;
+      const slope = Math.max(
+        Math.abs(groundY(point.x + step, point.z) - y), Math.abs(groundY(point.x - step, point.z) - y),
+        Math.abs(groundY(point.x, point.z + step) - y), Math.abs(groundY(point.x, point.z - step) - y),
+      );
+      return Math.max(0, y - baseY) + slope * 1.8;
+    };
+    const leftY = groundY(left.x, left.z), rightY = groundY(right.x, right.z);
+    const side = chooseRouteSide({
+      leftBlocked: staticCircleBlocked(left.x, left.z, 18, leftY, leftY + 22),
+      rightBlocked: staticCircleBlocked(right.x, right.z, 18, rightY, rightY + 22),
+      leftRise: scoreRise(left), rightRise: scoreRise(right),
+      fallback: (squad.team === 'FED' ? 1 : -1) * (Number(squad.id.split('-').at(-1)) % 2 ? 1 : -1),
+    });
+    const point = side < 0 ? left : right;
+    squad.route = { ...point, side, target, expires: now + 6500 };
+    return squad.route;
+  }
   // scenario anchor: units with an objective stay LEASHED to it instead of chasing across the map.
   // Defenders hold their base, assault garrisons guard their structures, escorts hug the convoy.
   function missionAnchor(m){
@@ -3822,6 +3916,7 @@ export function startBattle(renderer, opts, onEnd){
       const nearest = arr => arr.reduce((a, b) =>
         a.root.position.distanceToSquared(m.root.position) < b.root.position.distanceToSquared(m.root.position) ? a : b);
       const nearestFoe = foes.length ? nearest(foes) : null;
+      const priorityFoe = foes.length ? priorityTarget(foes, m) : null;
       const sharedTarget = squad?.target?.alive && squad.target.team !== m.team ? squad.target : null;
       const sharedRangeSq = sharedTarget ? sharedTarget.root.position.distanceToSquared(m.root.position) : Infinity;
       const nearestFoeRangeSq = nearestFoe ? nearestFoe.root.position.distanceToSquared(m.root.position) : Infinity;
@@ -3829,23 +3924,26 @@ export function startBattle(renderer, opts, onEnd){
       // an enemy formation is already on top of it. The closer threat becomes
       // the new shared target and combat resumes immediately.
       const nearerThreat = nearestFoe && nearestFoeRangeSq < sharedRangeSq * 0.42;
+      const sharedScore = sharedTarget ? targetPriorityScore(entityValue(sharedTarget), Math.sqrt(sharedRangeSq)) : -Infinity;
+      const priorityScore = priorityFoe
+        ? targetPriorityScore(entityValue(priorityFoe), priorityFoe.root.position.distanceTo(m.root.position)) : -Infinity;
+      const higherValueOpportunity = priorityFoe && priorityFoe !== sharedTarget && priorityScore > sharedScore * 1.3;
       // objective pressure: raiders sometimes ignore mechs and press the structures/convoy
       // (relaxed in grand battles so the landships aren't under permanent all-army siege)
       const propBias = mission.type === 'odessa' ? 0.15 : m.team === 'ZEON' ? 0.45 : 0.3;
-      if (nearerThreat){
-        ai.target = nearestFoe;
+      if (nearerThreat || higherValueOpportunity){
+        ai.target = nearerThreat ? nearestFoe : priorityFoe;
       } else if (sharedTarget){
         ai.target = sharedTarget;
       } else if (hostileProps.length && (!foes.length || rng.chance(propBias)) && !(m.suit.aa && foes.some(f => f.air))){
-        ai.target = hostileProps[rng.int(0, hostileProps.length - 1)];
+        ai.target = priorityTarget(hostileProps, m);
       } else if (!foes.length){
         ai.target = null;
       } else {
-        // spread fire across the lance: nearest target by default, hold a grudge
-        // against whoever shot us last, and never let the whole squad pile on the player
+        // The squad attacks the most valuable reachable threat first. Proximity
+        // remains part of the score, so a cheap unit at knife range is never ignored.
         const airFoes = m.suit.aa ? foes.filter(f => f.air) : null;     // dedicated AA platforms hunt aircraft first
-        let pick = (airFoes && airFoes.length) ? nearest(airFoes)
-          : (ai.grudge && ai.grudge.alive && ai.grudge.team !== m.team) ? ai.grudge : nearest(foes);
+        let pick = (airFoes && airFoes.length) ? priorityTarget(airFoes, m) : priorityFoe;
         // hunt escorts SCREEN their vip: intercept whoever is pressing the boss hardest
         if (mission.type === 'hunt' && m.team === 'ZEON' && !m.vip && (!airFoes || !airFoes.length)){
           const vip = mechs.find(v => v.alive && v.vip);
@@ -3864,13 +3962,16 @@ export function startBattle(renderer, opts, onEnd){
         if (m.team === 'ZEON' && pick.isPlayer){
           const others = foes.filter(f => !f.isPlayer);
           const onPlayer = mechs.filter(o => o.alive && o !== m && o.ai && o.ai.target === player).length;
-          if (others.length && onPlayer >= 6) pick = nearest(others);
+          if (others.length && onPlayer >= 6) pick = priorityTarget(others, m);
         }
         if (ai.target !== pick) ai.pass = null;   // fresh target → fresh hit-and-run pass, no stale peel-away
         ai.target = pick;
         ai.grudge = null;
       }
-      if (squad && ai.target?.alive && ai.target.team !== m.team) squad.target = ai.target;
+      if (squad && ai.target?.alive && ai.target.team !== m.team){
+        if (squad.target !== ai.target) squad.route = null;
+        squad.target = ai.target;
+      }
       ai.anchor = missionAnchor(m);       // objective leash, refreshed at think cadence
       if (!ai.target){ setKneelTarget(m, false); return; }
       // pick weapon by range
@@ -3901,6 +4002,18 @@ export function startBattle(renderer, opts, onEnd){
     const formation = !commanderSpace ? squadFormationPoint(m, t) : null;
     const formationDistance = formation
       ? Math.hypot(formation.x - m.root.position.x, formation.z - m.root.position.z) : 0;
+    const protectedAlly = protectionAssignment(m, squad);
+    const protectDistance = protectedAlly ? m.root.position.distanceTo(protectedAlly.root.position) : 0;
+    const guardPoint = protectedAlly ? protectionPoint(m, protectedAlly, t) : null;
+    const supportCenter = ai.squadRole === 'assault' ? squadSupportCenter(squad) : null;
+    const supportDistance = supportCenter
+      ? Math.hypot(supportCenter.x - m.root.position.x, supportCenter.z - m.root.position.z) : 0;
+    const squadTethered = !!supportCenter && supportDistance > ASSAULT_SUPPORT_TETHER;
+    const protectionMelee = !!protectedAlly && d <= PROTECTION_MELEE_RANGE;
+    const routePoint = !commanderSpace ? squadRoutePoint(m, t) : null;
+    ai.protectTarget = protectedAlly;
+    ai.protectDistance = protectDistance;
+    ai.squadTethered = squadTethered;
     const normalRangedPosture = shouldAiKneel({
       range: d,
       preferredRange: pref,
@@ -3916,16 +4029,19 @@ export function startBattle(renderer, opts, onEnd){
     // deliberately the easiest to plant, guaranteeing persistent support when
     // the geology provides a clear, stable firing shelf.
     const supportCanPlant = kneelEligible(m) && !m.dropping && !hurt && !m.blocking
-      && !ai.pass && !commanderSpace && !groundTactic.reposition && formationDistance <= 80;
-    const rangedPosture = ai.squadRole === 'support' ? supportCanPlant && groundTactic.kneel
+      && !protectedAlly && !ai.pass && !commanderSpace && !groundTactic.reposition && formationDistance <= 80;
+    const rangedPosture = protectedAlly ? false
+      : ai.squadRole === 'support' ? supportCanPlant && groundTactic.kneel
       : ai.squadRole === 'assault' ? false : normalRangedPosture;
     setKneelTarget(m, rangedPosture);
 
     // ----- melee charge (ground): lunge in with the blade, swing, then thrust back out -----
     m.meleeT -= dt;
     ai.meleeCd -= dt;
-    const canMelee = !SPACE && tune.melee > 0 && ai.squadRole !== 'support'
-      && (ai.squadRole !== 'assault' || groundTactic.melee)
+    const meleeDoctrineAllows = protectionMelee
+      || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee));
+    const canMelee = !SPACE && tune.melee > 0 && meleeDoctrineAllows && !squadTethered
+      && (!protectedAlly || protectionMelee)
       && !hurt && (m.kneelBlend || 0) <= 0.001
       && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
       && !t.isProp && !t.air && !m.dropping; // never blade-charge an aircraft — the swing can't reach the sky
@@ -3934,14 +4050,21 @@ export function startBattle(renderer, opts, onEnd){
       // more often; timid roles (snipers, heavies) barely ever break formation to lunge. The roll is
       // consumed per WINDOW (a failed roll re-arms the cooldown) so tune.melee is a real appetite knob,
       // not a per-frame lottery that every role wins within a second.
-      const reach = ai.squadRole === 'assault' ? 520 : (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
-      const chance = ai.squadRole === 'assault' ? 0.82 : Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
+      const reach = protectionMelee ? PROTECTION_MELEE_RANGE
+        : ai.squadRole === 'assault' ? 520 : (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
+      const chance = protectionMelee ? 1
+        : ai.squadRole === 'assault' ? 0.82 : Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
       if (d < reach && d > 26){
         if (rng.chance(chance)){
           ai.meleeRun = { phase: 'charge', swings: 0, t: 0 };
           m.hopT = m.suit.noJump ? 0 : 0.5; // a hop as it springs onto the enemy (tracked chassis can't hop)
         } else ai.meleeCd = rng.range(1.2, 2.4) / Math.max(0.2, tune.melee);
       }
+    }
+    if (ai.meleeRun && squadTethered && !protectionMelee){
+      ai.meleeRun = null;
+      ai.meleeCd = rng.range(1.5, 3);
+      m.hopY = 0;
     }
     if (ai.meleeRun){
       setKneelTarget(m, false);
@@ -3971,7 +4094,11 @@ export function startBattle(renderer, opts, onEnd){
     }
 
     // shield guard: shielded units periodically raise their guard at mid-range
-    if (!commanderSpace && m.shieldMax > 0 && !m.shieldBroken){
+    if (!commanderSpace && protectedAlly && !protectionMelee && m.shieldMax > 0 && !m.shieldBroken){
+      m.blocking = true;
+      ai.blockT = 0.35;
+      ai.blockCd = 0;
+    } else if (!commanderSpace && m.shieldMax > 0 && !m.shieldBroken){
       ai.blockCd = (ai.blockCd ?? rng.range(2, 6)) - dt;
       if (m.blocking){
         ai.blockT -= dt;
@@ -4034,6 +4161,14 @@ export function startBattle(renderer, opts, onEnd){
           desired.z = desired.z * (1 - k) + az * inv * k;
         }
       }
+      if (routePoint && !protectedAlly && !squadTethered && !groundTactic.reposition){
+        const rx = routePoint.x - m.root.position.x, rz = routePoint.z - m.root.position.z;
+        const rd = Math.hypot(rx, rz);
+        if (rd > 45){
+          const routeDesired = new THREE.Vector3(rx / rd * speed, 0, rz / rd * speed);
+          desired.lerp(routeDesired, d > 800 ? 0.48 : 0.3);
+        }
+      }
       if (formation && !hurt){
         const fx = formation.x - m.root.position.x, fz = formation.z - m.root.position.z;
         const fd = Math.hypot(fx, fz);
@@ -4047,9 +4182,24 @@ export function startBattle(renderer, opts, onEnd){
           desired.lerp(formationDesired, formationStrength);
         }
       }
+      if (guardPoint && !protectionMelee){
+        const gx = guardPoint.x - m.root.position.x, gz = guardPoint.z - m.root.position.z;
+        const gd = Math.hypot(gx, gz);
+        if (gd > 24){
+          const guardDesired = new THREE.Vector3(gx / gd * speed, 0, gz / gd * speed);
+          desired.lerp(guardDesired, protectDistance > PROTECTION_MAX_RANGE ? 0.94 : 0.68);
+          if (protectDistance > PROTECTION_MAX_RANGE && m.fuel > 10) boost = true;
+        }
+      } else if (squadTethered){
+        const sx = supportCenter.x - m.root.position.x, sz = supportCenter.z - m.root.position.z;
+        const sd = Math.hypot(sx, sz) || 1;
+        const tetherDesired = new THREE.Vector3(sx / sd * speed, 0, sz / sd * speed);
+        desired.lerp(tetherDesired, 0.92);
+        if (supportDistance > ASSAULT_SUPPORT_TETHER + 50 && m.fuel > 10) boost = true;
+      }
       // Cohesion may bend the path, but it can never remove the forward attack
       // component while the selected target is outside weapon range.
-      const advanceFloor = minimumAttackAdvance(d, pref) * speed;
+      const advanceFloor = (!protectedAlly && !squadTethered ? minimumAttackAdvance(d, pref) : 0) * speed;
       const currentAdvance = desired.x * toT.x + desired.z * toT.z;
       if (advanceFloor > 0 && currentAdvance < advanceFloor){
         desired.addScaledVector(toT, advanceFloor - currentAdvance);
@@ -4077,6 +4227,15 @@ export function startBattle(renderer, opts, onEnd){
     if (boost) m.fuel = Math.max(0, m.fuel - (commanderIntent ? commanderIntent.boostDrain : 18) * dt);
     else m.fuel = Math.min(m.maxFuel, m.fuel + (commanderIntent ? commanderIntent.recharge : 12) * dt);
     m.vel.lerp(desired, clamp(accel * dt, 0, 1));
+    if (squadTethered && supportCenter){
+      const awayX = m.root.position.x - supportCenter.x, awayZ = m.root.position.z - supportCenter.z;
+      const awayLength = Math.hypot(awayX, awayZ) || 1;
+      const outwardSpeed = (m.vel.x * awayX + m.vel.z * awayZ) / awayLength;
+      if (outwardSpeed > 0){
+        m.vel.x -= awayX / awayLength * outwardSpeed;
+        m.vel.z -= awayZ / awayLength * outwardSpeed;
+      }
+    }
     if (postureLocked){
       m.vel.x = 0; m.vel.z = 0;
       if (SPACE) m.vel.y = 0;
@@ -4119,7 +4278,8 @@ export function startBattle(renderer, opts, onEnd){
     }
     // melee when point-blank (fallback for space combat and non-charging contact)
     const meleeAllowed = commanderIntent ? commanderIntent.meleeAllowed
-      : tune.melee > 0 && ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee);
+      : tune.melee > 0 && !squadTethered && (!protectedAlly || protectionMelee)
+        && (protectionMelee || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee)));
     const meleeRange = commanderIntent ? commanderIntent.meleeRange : 20;
     if (meleeAllowed && d < meleeRange && m.meleeT <= 0 && !m.dropping && m.suit.saber && m.suit.saber.dmg > 0){
       m.meleeT = commanderIntent ? 1.3 : 2.4; m.bladeT = 0.4;
@@ -6893,6 +7053,7 @@ export function startBattle(renderer, opts, onEnd){
             return {
               index, id: m.suit.id, specAce: !!m.ace, commander: !!m.suit.commander,
               networkRemote: !!m.networkRemote,
+              value: m.value,
               doctrine: m.suit.spaceDoctrine || null,
               p: m.root.position.toArray(), v: m.vel.toArray(), yaw: m.yaw,
               hp: m.hp, vip: m.vip, fuel: m.fuel, boosting: m.boosting,
@@ -6900,6 +7061,9 @@ export function startBattle(renderer, opts, onEnd){
               squadId: m.ai?.squadId || null, squadRole: m.ai?.squadRole || null,
               squadSlot: m.ai?.squadSlot ?? null, squadSize: m.ai?.squadSize || 0,
               formationPoint: m.ai?.target?.alive ? squadFormationPoint(m, m.ai.target) : null,
+              protectTarget: m.ai?.protectTarget?.name || null,
+              protectDistance: m.ai?.protectDistance ?? null,
+              squadTethered: !!m.ai?.squadTethered,
               groundTactic: m.ai?.groundTactic ? { ...m.ai.groundTactic } : null,
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
@@ -6917,6 +7081,9 @@ export function startBattle(renderer, opts, onEnd){
           assault: squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'assault').length,
           support: squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'support').length,
           target: squad.target?.name || squad.target?.label || null,
+          targetValue: squad.target ? entityValue(squad.target) : null,
+          protectedUnit: squad.protectedUnit?.alive ? squad.protectedUnit.name : null,
+          route: squad.route ? { x: squad.route.x, z: squad.route.z, side: squad.route.side } : null,
         })),
         wing: mechs.filter(m => m.wingId !== undefined)
           .map(m => ({ wingId: m.wingId, alive: m.alive, hp: m.hp })),
