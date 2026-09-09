@@ -25,6 +25,7 @@ import {
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
+import { assignSquadRoles, groundTacticalDecision, squadSizes } from './squad-doctrine.js';
 import {
   landshipCombatYaw,
   landshipProfile,
@@ -744,6 +745,7 @@ export function startBattle(renderer, opts, onEnd){
   // Infantry rendering is initialized after the opening deployment. Once it exists,
   // reinforcement APCs use this hook to dismount their own passenger squads too.
   let deployCarrierPassengers = null;
+  let nextMechUid = 1;
   function spawnMech(spec, team, pos, { isPlayer = false, core = true, fromBlip = false, hpFrac = 1 } = {}){
     const specObject = typeof spec === 'object' ? spec : null;
     let suit = suitById(typeof spec === 'string' ? spec : spec.suitId);
@@ -762,6 +764,7 @@ export function startBattle(renderer, opts, onEnd){
     const hasShield = !air && SHIELDED_IDS.has(suit.id);
     const shieldCap = hasShield ? clamp(Math.round(maxHp * 0.45), 1200, 2600) : 0;
     const m = {
+      uid: nextMechUid++,
       suit, team, root, parts: null, detail: null, lodNear: false, alwaysFull: isPlayer || isNetworkRemote,
       ace, core, fromBlip, isPlayer, networkRemote: isNetworkRemote, air,
       networkId: isNetworkRemote ? String(specObject?.networkId || '') : null,
@@ -3661,6 +3664,121 @@ export function startBattle(renderer, opts, onEnd){
     tank:       { near: 0.90, far: 1.60, strafe: 0.60, dodge: 0.9, melee: 0.0, aimMul: 0.90, plant: 0.30, retreatHp: 0.45 },
     aa:         { near: 0.90, far: 1.60, strafe: 0.70, dodge: 0.9, melee: 0.3, aimMul: 0.85, plant: 0.30, retreatHp: 0.35 },
   };
+
+  // Ground forces fight as stable 5–7 machine groups. Each full group receives
+  // three forward assault slots; the remaining machines form a rear gun line.
+  // Rebuild only when the live roster changes, so casualties and reinforcements
+  // close ranks without units swapping jobs every think tick.
+  let combatSquads = new Map(), combatSquadSignature = '', nextSquadRefreshAt = 0;
+  function refreshCombatSquads(){
+    if (SPACE) return;
+    const now = performance.now();
+    if (now < nextSquadRefreshAt) return;
+    nextSquadRefreshAt = now + 1000;
+    const candidates = mechs.filter(unit => unit.alive && unit.ai && !unit.air && !unit.networkRemote);
+    const signature = candidates.map(unit => unit.uid).join(',');
+    if (signature === combatSquadSignature) return;
+    combatSquadSignature = signature;
+    const previous = combatSquads;
+    combatSquads = new Map();
+    for (const team of ['FED', 'ZEON']){
+      const units = candidates.filter(unit => unit.team === team);
+      const sizes = squadSizes(units.length);
+      const ranked = units.slice().sort((a, b) => {
+        const score = unit => {
+          const role = combatRole(unit.suit);
+          const melee = unit.suit.saber?.dmg > 0 ? unit.suit.saber.dmg : 0;
+          return melee + (role === 'brawler' ? 900 : role === 'skirmisher' ? 500 : role === 'line' ? 260 : -600);
+        };
+        return score(b) - score(a) || a.uid - b.uid;
+      });
+      const groups = sizes.map(() => []);
+      const assaultNeed = sizes.map(size => Math.min(3, Math.max(1, Math.ceil(size / 2))));
+      let cursor = 0;
+      for (let group = 0; group < groups.length; group++)
+        for (let slot = 0; slot < assaultNeed[group] && cursor < ranked.length; slot++) groups[group].push(ranked[cursor++]);
+      const remaining = ranked.slice(cursor).sort((a, b) => {
+        const support = unit => ['sniper', 'artillery', 'tank', 'aa', 'heavy'].includes(combatRole(unit.suit)) ? 1 : 0;
+        return support(b) - support(a) || a.uid - b.uid;
+      });
+      cursor = 0;
+      while (cursor < remaining.length){
+        let placed = false;
+        for (let group = 0; group < groups.length && cursor < remaining.length; group++){
+          if (groups[group].length >= sizes[group]) continue;
+          groups[group].push(remaining[cursor++]); placed = true;
+        }
+        if (!placed) break;
+      }
+      groups.forEach((members, groupIndex) => {
+        const id = `${team}-${groupIndex + 1}`;
+        const old = previous.get(id);
+        const roles = assignSquadRoles(members.map(unit => {
+          const role = combatRole(unit.suit);
+          return {
+            meleeCapable: !!(unit.suit.saber?.dmg > 0) && !unit.suit.vehicle,
+            meleeScore: unit.suit.saber?.dmg || 0,
+            dedicatedSupport: ['sniper', 'artillery', 'tank', 'aa', 'heavy'].includes(role),
+          };
+        }));
+        const squad = { id, team, members, target: old?.target?.alive ? old.target : null };
+        combatSquads.set(id, squad);
+        members.forEach((unit, index) => {
+          unit.ai.squadId = id;
+          unit.ai.squadRole = roles[index].role;
+          unit.ai.squadSlot = roles[index].slot;
+          unit.ai.squadSize = members.length;
+        });
+      });
+    }
+  }
+
+  function sampleGroundTactics(m, target, preferredRange){
+    if (SPACE || !hfn) return { lineOfSight: true, kneel: false, reposition: false, melee: true, holdRange: false };
+    const from = m.root.position.clone(); from.y += weaponHeight(m);
+    const to = target.root.position.clone(); to.y += aimHeight(target);
+    const lineOfSight = !hasSolidCoverBetween(from, to);
+    const step = 18, x = m.root.position.x, z = m.root.position.z;
+    const base = groundY(x, z);
+    const localSlope = Math.max(
+      Math.abs(groundY(x + step, z) - base), Math.abs(groundY(x - step, z) - base),
+      Math.abs(groundY(x, z + step) - base), Math.abs(groundY(x, z - step) - base),
+    ) / step;
+    const targetGround = groundY(target.root.position.x, target.root.position.z);
+    let routeRise = 0;
+    for (const q of [0.25, 0.5, 0.75]){
+      const sx = x + (target.root.position.x - x) * q;
+      const sz = z + (target.root.position.z - z) * q;
+      routeRise = Math.max(routeRise, groundY(sx, sz) - (base + (targetGround - base) * q));
+    }
+    const decision = groundTacticalDecision({
+      role: m.ai.squadRole || 'line',
+      range: m.root.position.distanceTo(target.root.position),
+      preferredRange,
+      highGround: clamp((base - targetGround) / 45, -1.5, 1.5),
+      localSlope,
+      routeRise,
+      lineOfSight,
+      hasMelee: !!(m.suit.saber?.dmg > 0) && !m.suit.vehicle,
+      anchorSupport: m.ai.squadRole === 'support' && m.ai.squadSlot === 0,
+    });
+    return { ...decision, lineOfSight, localSlope, routeRise };
+  }
+
+  function squadFormationPoint(m, target){
+    const squad = combatSquads.get(m.ai.squadId);
+    if (!squad || m.ai.squadRole !== 'support') return null;
+    const front = squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'assault');
+    if (!front.length) return null;
+    let x = 0, z = 0;
+    for (const unit of front){ x += unit.root.position.x; z += unit.root.position.z; }
+    x /= front.length; z /= front.length;
+    let ax = x - target.root.position.x, az = z - target.root.position.z;
+    const length = Math.hypot(ax, az) || 1; ax /= length; az /= length;
+    const lane = (m.ai.squadSlot % 2 ? -1 : 1) * (75 + Math.floor(m.ai.squadSlot / 2) * 28);
+    const depth = 150 + Math.floor(m.ai.squadSlot / 2) * 85;
+    return { x: x + ax * depth - az * lane, z: z + az * depth + ax * lane };
+  }
   // scenario anchor: units with an objective stay LEASHED to it instead of chasing across the map.
   // Defenders hold their base, assault garrisons guard their structures, escorts hug the convoy.
   function missionAnchor(m){
@@ -3679,9 +3797,11 @@ export function startBattle(renderer, opts, onEnd){
 
   function aiUpdate(m, dt){
     const ai = m.ai;
+    refreshCombatSquads();
     const commanderSpace = SPACE && m.suit.commander && !!m.suit.spaceDoctrine;
     const role = ai.role || (ai.role = combatRole(m.suit));
     const tune = ROLE_TUNE[role];
+    const squad = combatSquads.get(ai.squadId);
     ai.tThink -= dt;
     if (ai.tThink <= 0){
       ai.tThink = 1.2;
@@ -3691,7 +3811,9 @@ export function startBattle(renderer, opts, onEnd){
       // objective pressure: raiders sometimes ignore mechs and press the structures/convoy
       // (relaxed in grand battles so the landships aren't under permanent all-army siege)
       const propBias = mission.type === 'odessa' ? 0.15 : m.team === 'ZEON' ? 0.45 : 0.3;
-      if (hostileProps.length && (!foes.length || rng.chance(propBias)) && !(m.suit.aa && foes.some(f => f.air))){
+      if (squad?.target?.alive && squad.target.team !== m.team){
+        ai.target = squad.target;
+      } else if (hostileProps.length && (!foes.length || rng.chance(propBias)) && !(m.suit.aa && foes.some(f => f.air))){
         ai.target = hostileProps[rng.int(0, hostileProps.length - 1)];
       } else if (!foes.length){
         ai.target = null;
@@ -3721,12 +3843,13 @@ export function startBattle(renderer, opts, onEnd){
         if (m.team === 'ZEON' && pick.isPlayer){
           const others = foes.filter(f => !f.isPlayer);
           const onPlayer = mechs.filter(o => o.alive && o !== m && o.ai && o.ai.target === player).length;
-          if (others.length && onPlayer >= 2) pick = nearest(others);
+          if (others.length && onPlayer >= 6) pick = nearest(others);
         }
         if (ai.target !== pick) ai.pass = null;   // fresh target → fresh hit-and-run pass, no stale peel-away
         ai.target = pick;
         ai.grudge = null;
       }
+      if (squad && ai.target?.alive && ai.target.team !== m.team) squad.target = ai.target;
       ai.anchor = missionAnchor(m);       // objective leash, refreshed at think cadence
       if (!ai.target){ setKneelTarget(m, false); return; }
       // pick weapon by range
@@ -3739,6 +3862,7 @@ export function startBattle(renderer, opts, onEnd){
         });
       }
       if (best !== m.wi){ m.wi = best; resetMuzzleCycle(m, best); m.clip = m.suit.weapons[best].clip; m.reloadT = 0; m.parts?.rebuildGun?.(best); }
+      ai.groundTactic = sampleGroundTactics(m, ai.target, m.suit.weapons[m.wi].pref || PREF_RANGE[m.suit.weapons[m.wi].type]);
     }
     const t = ai.target;
     if (!t || !t.alive){ ai.meleeRun = null; ai.pass = null; m.hopY = 0; setKneelTarget(m, false); return; }
@@ -3752,23 +3876,33 @@ export function startBattle(renderer, opts, onEnd){
     const retreatAt = m.vip ? Math.max(tune.retreatHp, 0.55) : tune.retreatHp;
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
     const hurt = !relentless && m.hp < m.maxHp * retreatAt;
-    const rangedPosture = shouldAiKneel({
+    const groundTactic = ai.groundTactic || sampleGroundTactics(m, t, pref);
+    const normalRangedPosture = shouldAiKneel({
       range: d,
       preferredRange: pref,
       currentlyKneeling: m.kneelTarget || (m.kneelBlend || 0) > 0.5,
       eligible: kneelEligible(m) && !m.dropping && !hurt && !m.blocking && role !== 'brawler' && role !== 'skirmisher',
       ranged: !!w && !w.arc,
       hasTarget: !!t?.alive,
-      hasLineOfSight: true,
-      repositioning: !!ai.pass || !!commanderSpace,
+      hasLineOfSight: groundTactic.lineOfSight !== false,
+      repositioning: !!ai.pass || !!commanderSpace || !!groundTactic.reposition,
       meleeRun: !!ai.meleeRun,
     });
+    // In a full squad the rear line owns the kneeling job. Its anchor gunner is
+    // deliberately the easiest to plant, guaranteeing persistent support when
+    // the geology provides a clear, stable firing shelf.
+    const supportCanPlant = kneelEligible(m) && !m.dropping && !hurt && !m.blocking
+      && !ai.pass && !commanderSpace && !groundTactic.reposition;
+    const rangedPosture = ai.squadRole === 'support' ? supportCanPlant && groundTactic.kneel
+      : ai.squadRole === 'assault' ? false : normalRangedPosture;
     setKneelTarget(m, rangedPosture);
 
     // ----- melee charge (ground): lunge in with the blade, swing, then thrust back out -----
     m.meleeT -= dt;
     ai.meleeCd -= dt;
-    const canMelee = !SPACE && tune.melee > 0 && !hurt && (m.kneelBlend || 0) <= 0.001
+    const canMelee = !SPACE && tune.melee > 0 && ai.squadRole !== 'support'
+      && (ai.squadRole !== 'assault' || groundTactic.melee)
+      && !hurt && (m.kneelBlend || 0) <= 0.001
       && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
       && !t.isProp && !t.air && !m.dropping; // never blade-charge an aircraft — the swing can't reach the sky
     if (canMelee && !ai.meleeRun && ai.meleeCd <= 0){
@@ -3776,8 +3910,8 @@ export function startBattle(renderer, opts, onEnd){
       // more often; timid roles (snipers, heavies) barely ever break formation to lunge. The roll is
       // consumed per WINDOW (a failed roll re-arms the cooldown) so tune.melee is a real appetite knob,
       // not a per-frame lottery that every role wins within a second.
-      const reach = (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
-      const chance = Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
+      const reach = ai.squadRole === 'assault' ? 520 : (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
+      const chance = ai.squadRole === 'assault' ? 0.82 : Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
       if (d < reach && d > 26){
         if (rng.chance(chance)){
           ai.meleeRun = { phase: 'charge', swings: 0, t: 0 };
@@ -3843,6 +3977,13 @@ export function startBattle(renderer, opts, onEnd){
       // engagement band by ROLE (×weapon pref)
       let radial;
       if (hurt) radial = d > pref * 2.0 ? 0.03 : -1;                  // kite to max range, then HOLD and keep firing — never flee the map
+      else if (ai.squadRole === 'support'){
+        // The rear element preserves standoff. A masked shot produces a measured
+        // advance/flank instead of kneeling uselessly behind a ridge or building.
+        radial = groundTactic.reposition ? (d > pref * 0.72 ? 0.55 : -0.35)
+          : d > pref * 1.35 ? 0.65 : d < pref * 0.72 ? -0.8 : 0.02;
+      }
+      else if (ai.squadRole === 'assault' && groundTactic.melee && d > 34) radial = 1;
       else if (tune.passes){
         // skirmisher hit-and-run: dive in, rake the target, peel out wide, come around again
         ai.pass = ai.pass || { phase: 'in', t: 0 };
@@ -3867,6 +4008,15 @@ export function startBattle(renderer, opts, onEnd){
           const k = Math.min(1, (adist - ai.anchor.leash) / (ai.anchor.leash * 0.5)), inv = speed / adist;
           desired.x = desired.x * (1 - k) + ax * inv * k;
           desired.z = desired.z * (1 - k) + az * inv * k;
+        }
+      }
+      const formation = squadFormationPoint(m, t);
+      if (formation && !hurt){
+        const fx = formation.x - m.root.position.x, fz = formation.z - m.root.position.z;
+        const fd = Math.hypot(fx, fz);
+        if (fd > 70){
+          const formationDesired = new THREE.Vector3(fx / fd * speed, 0, fz / fd * speed);
+          desired.lerp(formationDesired, clamp((fd - 70) / 260, 0.22, groundTactic.reposition ? 0.9 : 0.72));
         }
       }
     }
@@ -3915,7 +4065,8 @@ export function startBattle(renderer, opts, onEnd){
     // onto this lead point before the projectile leaves the animated muzzle.
     const fireCone = commanderIntent ? commanderIntent.fireCone : 0.18;
     const rangedAllowed = !commanderIntent || commanderIntent.fireAllowed;
-    if (rangedAllowed && (m.suit.vehicle || Math.abs(dy) < fireCone) && d < pref * 2.4 && !(w.arc && d < 140)){ // artillery holds fire inside its own splash
+    if (rangedAllowed && groundTactic.lineOfSight !== false
+      && (m.suit.vehicle || Math.abs(dy) < fireCone) && d < pref * 2.4 && !(w.arc && d < 140)){ // artillery holds fire inside its own splash
       // lead the target, with skill-scaled error; aim point scales with target size
       const lead = tmpV2.copy(t.root.position).addScaledVector(t.vel, d / w.speed);
       lead.y += aimHeight(t);
@@ -3928,7 +4079,8 @@ export function startBattle(renderer, opts, onEnd){
       fire(m, dir, m.root.position.clone().addScaledVector(dir, Math.max(50, d)));
     }
     // melee when point-blank (fallback for space combat and non-charging contact)
-    const meleeAllowed = commanderIntent ? commanderIntent.meleeAllowed : tune.melee > 0;
+    const meleeAllowed = commanderIntent ? commanderIntent.meleeAllowed
+      : tune.melee > 0 && ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee);
     const meleeRange = commanderIntent ? commanderIntent.meleeRange : 20;
     if (meleeAllowed && d < meleeRange && m.meleeT <= 0 && !m.dropping && m.suit.saber && m.suit.saber.dmg > 0){
       m.meleeT = commanderIntent ? 1.3 : 2.4; m.bladeT = 0.4;
@@ -6706,6 +6858,9 @@ export function startBattle(renderer, opts, onEnd){
               p: m.root.position.toArray(), v: m.vel.toArray(), yaw: m.yaw,
               hp: m.hp, vip: m.vip, fuel: m.fuel, boosting: m.boosting,
               kneelTarget: !!m.kneelTarget, kneelBlend: m.kneelBlend || 0, kneelState: m.kneelState || 'standing',
+              squadId: m.ai?.squadId || null, squadRole: m.ai?.squadRole || null,
+              squadSlot: m.ai?.squadSlot ?? null, squadSize: m.ai?.squadSize || 0,
+              groundTactic: m.ai?.groundTactic ? { ...m.ai.groundTactic } : null,
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
               phaseSide: s?.side || null, phaseUp: s?.up || null,
@@ -6717,6 +6872,12 @@ export function startBattle(renderer, opts, onEnd){
               targetRange, radialSpeed, targetingPlayer: target === player,
             };
           }),
+        squads: [...combatSquads.values()].map(squad => ({
+          id: squad.id, team: squad.team, size: squad.members.filter(unit => unit.alive).length,
+          assault: squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'assault').length,
+          support: squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'support').length,
+          target: squad.target?.name || squad.target?.label || null,
+        })),
         wing: mechs.filter(m => m.wingId !== undefined)
           .map(m => ({ wingId: m.wingId, alive: m.alive, hp: m.hp })),
         props: props.map(p => ({ kind: p.kind, team: p.team, p: p.root.position.toArray(),
