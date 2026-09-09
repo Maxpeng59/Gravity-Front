@@ -36,6 +36,29 @@ export function squadSizes(total){
   return Array.from({ length: groups }, (_, index) => base + (index < extra ? 1 : 0));
 }
 
+// Custom Battle assigns the roster before deployment. Keeping this pure makes
+// the same stable squad IDs available to the setup UI and the runtime spawner.
+export function assignSquadIds(items, team = 'SQUAD'){
+  const list = Array.isArray(items) ? items : [];
+  const sizes = squadSizes(list.length);
+  const assigned = [];
+  let offset = 0;
+  sizes.forEach((size, squadIndex) => {
+    for (let slot = 0; slot < size; slot++){
+      assigned.push({ ...list[offset++], squadId: `${team}-${squadIndex + 1}` });
+    }
+  });
+  return assigned;
+}
+
+export function minimumCombatMovementSpeed({
+  walkSpeed = 0, legDamage = 0, blocking = false, kneeling = false,
+} = {}){
+  if (kneeling) return 0;
+  const mobility = 1 - Math.min(0.45, Math.max(0, Number(legDamage) || 0) * 0.6);
+  return Math.max(0, Number(walkSpeed) || 0) * mobility * (blocking ? 0.5 : 1) * 0.28;
+}
+
 export function assignSquadRoles(members){
   const list = Array.isArray(members) ? members : [];
   const meleeCapable = list.filter(member => member?.meleeCapable).length;

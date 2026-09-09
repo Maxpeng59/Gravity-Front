@@ -28,7 +28,7 @@ import { formatKillNotice } from './kill-feed.js';
 import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, shouldProtectAlly, squadSizes,
+  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
   targetPriorityScore,
 } from './squad-doctrine.js';
 import {
@@ -797,7 +797,9 @@ export function startBattle(renderer, opts, onEnd){
         skill: ace ? 1.6 : rng.range(0.7, 1.15), err: ace ? 0.018 : 0.05,
         strafe: rng.chance(0.5) ? 1 : -1, tThink: 0, tStrafe: rng.range(1, 3),
         tDodge: rng.range(1, 3), target: null, meleeRun: null, meleeCd: rng.range(0, 3),
+        squadId: specObject?.squadId || null,
       },
+      assignedSquadId: specObject?.squadId || null,
     };
     if (air && !isPlayer){ // launch with forward momentum, nose toward the battlefield centre
       m.yaw = Math.atan2(-pos.x, -pos.z);
@@ -3684,15 +3686,24 @@ export function startBattle(renderer, opts, onEnd){
     if (now < nextSquadRefreshAt) return;
     nextSquadRefreshAt = now + 1000;
     const candidates = mechs.filter(unit => unit.alive && unit.ai && !unit.air && !unit.networkRemote);
-    const signature = candidates.map(unit => unit.uid).join(',');
+    const signature = candidates.map(unit => `${unit.uid}:${unit.assignedSquadId || ''}`).join(',');
     if (signature === combatSquadSignature) return;
     combatSquadSignature = signature;
     const previous = combatSquads;
     combatSquads = new Map();
     for (const team of ['FED', 'ZEON']){
       const units = candidates.filter(unit => unit.team === team);
-      const sizes = squadSizes(units.length);
-      const ranked = units.slice().sort((a, b) => {
+      const explicit = new Map();
+      const unassigned = [];
+      for (const unit of units){
+        if (!unit.assignedSquadId) unassigned.push(unit);
+        else {
+          if (!explicit.has(unit.assignedSquadId)) explicit.set(unit.assignedSquadId, []);
+          explicit.get(unit.assignedSquadId).push(unit);
+        }
+      }
+      const sizes = squadSizes(unassigned.length);
+      const ranked = unassigned.slice().sort((a, b) => {
         const score = unit => {
           const role = combatRole(unit.suit);
           const melee = unit.suit.saber?.dmg > 0 ? unit.suit.saber.dmg : 0;
@@ -3718,8 +3729,13 @@ export function startBattle(renderer, opts, onEnd){
         }
         if (!placed) break;
       }
-      groups.forEach((members, groupIndex) => {
-        const id = `${team}-${groupIndex + 1}`;
+      const explicitIndexes = [...explicit.keys()].map(id => Number(id.split('-').at(-1))).filter(Number.isFinite);
+      const autoOffset = explicitIndexes.length ? Math.max(...explicitIndexes) : 0;
+      const namedGroups = [
+        ...[...explicit.entries()].map(([id, members]) => ({ id, members })),
+        ...groups.map((members, groupIndex) => ({ id: `${team}-${autoOffset + groupIndex + 1}`, members })),
+      ];
+      namedGroups.forEach(({ id, members }) => {
         const old = previous.get(id);
         const roles = assignSquadRoles(members.map(unit => {
           const role = combatRole(unit.suit);
@@ -4110,7 +4126,9 @@ export function startBattle(renderer, opts, onEnd){
       }
     } else if (!commanderSpace && m.blocking) m.blocking = false;
 
-    // movement intent — grounded suits hold a firing stance; space/hover stay agile
+    // Movement intent — mobile units keep orbiting, flanking, or advancing while
+    // they fight. Kneeling is the deliberate exception because it trades motion
+    // for weapon stability.
     const commanderIntent = commanderSpaceIntent(m, t, d, dt);
     let calm = false, tangent = null;
     let boost, speed, accel;
@@ -4209,15 +4227,36 @@ export function startBattle(renderer, opts, onEnd){
         }
       }
     }
+    const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
+    const movementFloor = commanderIntent ? 0 : minimumCombatMovementSpeed({
+      walkSpeed: m.suit.walk,
+      legDamage: m.legDmg,
+      blocking: m.blocking,
+      kneeling: postureLocked,
+    });
+    if (movementFloor > 0){
+      const planarSpeed = Math.hypot(desired.x, desired.z);
+      if (planarSpeed < movementFloor){
+        if (planarSpeed > 0.001){
+          desired.x *= movementFloor / planarSpeed;
+          desired.z *= movementFloor / planarSpeed;
+        } else {
+          const sidestepX = tangent?.x || Math.cos(m.yaw);
+          const sidestepZ = tangent?.z || -Math.sin(m.yaw);
+          const sidestepLength = Math.hypot(sidestepX, sidestepZ) || 1;
+          desired.x = sidestepX / sidestepLength * movementFloor;
+          desired.z = sidestepZ / sidestepLength * movementFloor;
+        }
+      }
+    }
     const aiTurn = commanderIntent ? commanderIntent.turnRate : (m.suit.aiTurn || 2.6);
     if (!commanderIntent && m.suit.vehicle && desired.lengthSq() > 0.001){
       // Wheeled AI follows its travel vector prow-first. Its turret remains free to
       // track the target, eliminating the old sideways APC slide and wheel mismatch.
       const travelYaw = Math.atan2(desired.x, desired.z);
       m.yaw += clamp(wrapAngle(travelYaw - m.yaw), -aiTurn * dt, aiTurn * dt);
-      desired.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(speed);
+      desired.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(Math.max(speed, movementFloor));
     }
-    const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
     if (postureLocked){
       desired.set(0, 0, 0);
       boost = false;

@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, shouldProtectAlly, squadSizes,
+  assignSquadIds, assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
   targetPriorityScore,
 } from '../js/squad-doctrine.js';
 
@@ -14,6 +14,21 @@ test('large forces divide into normal five-to-seven unit combat groups', () => {
     assert.equal(sizes.reduce((sum, size) => sum + size, 0), total);
     assert.ok(sizes.every(size => size >= SQUAD_MIN_SIZE && size <= SQUAD_MAX_SIZE), `${total}: ${sizes}`);
   }
+});
+
+test('custom battle roster receives stable faction squad IDs before deployment', () => {
+  const assigned = assignSquadIds(Array.from({ length: 13 }, (_, index) => ({ index })), 'ZEON');
+  assert.deepEqual([...new Set(assigned.map(unit => unit.squadId))], ['ZEON-1', 'ZEON-2']);
+  assert.equal(assigned.filter(unit => unit.squadId === 'ZEON-1').length, 7);
+  assert.equal(assigned.filter(unit => unit.squadId === 'ZEON-2').length, 6);
+  assert.deepEqual(assigned.map(unit => unit.index), Array.from({ length: 13 }, (_, index) => index));
+});
+
+test('active combatants retain a movement floor unless deliberately kneeling', () => {
+  const mobile = minimumCombatMovementSpeed({ walkSpeed: 60 });
+  assert.equal(mobile, 16.8);
+  assert.ok(minimumCombatMovementSpeed({ walkSpeed: 60, legDamage: 0.5, blocking: true }) > 0);
+  assert.equal(minimumCombatMovementSpeed({ walkSpeed: 60, kneeling: true }), 0);
 });
 
 test('a six-unit squad puts three melee-capable machines in front and three support machines behind', () => {

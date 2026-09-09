@@ -18,6 +18,7 @@ import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
+import { assignSquadIds } from './squad-doctrine.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -1008,6 +1009,19 @@ function renderCustom(){
 
   const mkList = (boxId, arr, team) => {
     const box = $(boxId); box.innerHTML = '';
+    const faction = team === 'enemy' ? 'ZEON' : 'FED';
+    const shortFaction = faction === 'ZEON' ? 'Z' : 'F';
+    const deployedRows = [];
+    arr.forEach((entry, rowIndex) => {
+      for (let unit = 0; unit < entry.n && deployedRows.length < PER_SIDE_CAP; unit++)
+        deployedRows.push({ rowIndex, id: entry.id });
+    });
+    const mobileSuitRows = deployedRows.filter(unit => !SHIP_IDS.has(unit.id) && !suitById(unit.id).air);
+    const squadRows = new Map();
+    for (const assignment of assignSquadIds(mobileSuitRows, faction)){
+      if (!squadRows.has(assignment.rowIndex)) squadRows.set(assignment.rowIndex, new Set());
+      squadRows.get(assignment.rowIndex).add(Number(assignment.squadId.split('-').at(-1)));
+    }
     arr.forEach((entry, i) => {
       if (!entry.pos) entry.pos = defaultPos(team, i);           // ensure every entry has a map spawn point
       const row = el('div', 'enemy-row');
@@ -1025,20 +1039,32 @@ function renderCustom(){
       const maxForEntry = () => SHIP_IDS.has(entry.id) ? LANDSHIP_CAP : ENTRY_MAX;
       sel.onchange = () => {
         entry.id = sel.value; entry.n = Math.min(entry.n, maxForEntry());
-        cnt.max = '' + maxForEntry(); cnt.value = entry.n;
+        renderCustom();
       };
       row.appendChild(sel);
       const cnt = document.createElement('input');               // how many of this unit to field
       cnt.type = 'number'; cnt.min = '1'; cnt.max = '' + maxForEntry(); cnt.value = Math.min(entry.n, maxForEntry()); cnt.title = 'count';
-      cnt.onchange = () => { entry.n = Math.max(1, Math.min(maxForEntry(), Math.round(+cnt.value || 1))); cnt.value = entry.n; };
+      cnt.onchange = () => { entry.n = Math.max(1, Math.min(maxForEntry(), Math.round(+cnt.value || 1))); renderCustom(); };
       row.appendChild(cnt);
+      const suit = SHIP_IDS.has(entry.id) ? null : suitById(entry.id);
+      const squadNumbers = [...(squadRows.get(i) || [])].sort((a, b) => a - b);
+      const squadTag = el('span', 'sq', SHIP_IDS.has(entry.id) ? 'SHIP' : suit?.air ? 'AIR'
+        : !squadNumbers.length ? 'CAP'
+        : squadNumbers.length === 1 ? `${shortFaction}-${squadNumbers[0]}`
+        : `${shortFaction}-${squadNumbers[0]}–${squadNumbers.at(-1)}`);
+      squadTag.title = squadNumbers.length
+        ? `Assigned to ${faction}-${squadNumbers[0]}${squadNumbers.length > 1 ? ` through ${faction}-${squadNumbers.at(-1)}` : ''}`
+        : SHIP_IDS.has(entry.id) ? 'Capital ship — outside the mobile-suit squad net'
+        : suit?.air ? 'Aircraft flight — outside the ground mobile-suit squad net' : `Outside the ${PER_SIDE_CAP}-unit deployment cap`;
+      row.appendChild(squadTag);
       const x = el('span', 'x', '✕');
       x.onclick = () => { arr.splice(i, 1); renderCustom(); };
       row.appendChild(x);
       box.appendChild(row);
     });
     const count = $(`${team}-roster-count`);
-    if (count) count.textContent = `${arr.length} / ${ROWS_MAX} TYPES`;
+    const squadCount = new Set([...squadRows.values()].flatMap(ids => [...ids])).size;
+    if (count) count.textContent = `${arr.length} / ${ROWS_MAX} TYPES · ${squadCount} SQUADS`;
   };
   mkList('enemy-list', custom.enemies, 'enemy');
   mkList('ally-list', custom.allies, 'ally');
@@ -1119,12 +1145,19 @@ $('btn-launch-custom').onclick = () => {
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)
   const expand = list => { const out = []; for (const e of list) for (let k = 0; k < e.n; k++) out.push({ id: e.id, pos: e.pos }); return out.slice(0, PER_SIDE_CAP); };
   const enemyEx = expand(custom.enemies), allyEx = expand(custom.allies);
-  const enemies = custom.army > 0
+  const assignGroundSquads = (specs, faction) => {
+    const ground = assignSquadIds(specs.filter(spec => !suitById(spec.suitId).air), faction);
+    let groundIndex = 0;
+    return specs.map(spec => suitById(spec.suitId).air ? spec : ground[groundIndex++]);
+  };
+  const enemySpecs = custom.army > 0
     ? Array.from({ length: custom.army }, () => ({ suitId: rng.pick(zPool), ace: rng.chance(0.04) }))
     : enemyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos }));
-  const allies = custom.army > 0
+  const allySpecs = custom.army > 0
     ? Array.from({ length: custom.army - 1 }, () => ({ suitId: rng.pick(ARMY_FED) }))
     : allyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos }));
+  const enemies = assignGroundSquads(enemySpecs, 'ZEON');
+  const allies = assignGroundSquads(allySpecs, 'FED');
   // Landships retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
   // list and Federation hulls only to the ally list. Cap capital props because they do not use mech LOD.
   const customShips = custom.army > 0 ? [] : [
