@@ -201,6 +201,89 @@ export const MAPS = [
       { kind: 'rubble', x: 96, z: 1110, rotY: -0.2, scale: 0.78 },
     ],
   },
+
+  {
+    id: 'odessa',
+    name: 'OPERATION ODESSA',
+    subtitle: 'Clear-sky mining basin warfare — rail cuts, refinery stacks, armored ridges and the Zeon landship line.',
+    faction: 'NEUTRAL',
+    // The Odessa offensive is staged as a dry Black Sea mining district: pale
+    // steppe, exposed ore, deep blue sky and long combined-arms sightlines.
+    biome: { lo: 0x8b7655, hi: 0xb9a47a, sky: 0x63b8ee, fog: 0xc8d8da, airless: false },
+    fog: { near: 1600, far: 3400 },
+    light: { sun: 0xffedc3, intensity: 1.72, ambient: 0.9 },
+    terrain: { style: 'valley', rollingAmp: 46, ridgeAmp: 72, flattenRadius: 520 },
+    mission: { type: 'odessa', playerFaction: 'FED', enemyFaction: 'ZEON',
+      summary: 'OPERATION ODESSA · Break through the open-pit mine, destroy the Zeon landship line and seize the ore-processing stronghold.' },
+    spawn: { player: { x: 0, z: -980 } },
+    recommendedForces: {
+      playerSuitId: 'rx78',
+      allies: [
+        { id: 'gm', n: 12, pos: { x: -360, z: -760 } },
+        { id: 'rgm79sp', n: 3, pos: { x: 330, z: -720 } },
+        { id: 'guncannon', n: 3, pos: { x: -80, z: -850 } },
+        { id: 'guntank', n: 2, pos: { x: 440, z: -900 } },
+        { id: 'type61', n: 12, pos: { x: -520, z: -900 } },
+        { id: 'bigtray', n: 2, pos: { x: 0, z: -1250 } },
+      ],
+      enemies: [
+        { id: 'zaku2g', n: 16, pos: { x: 0, z: 1150 } },
+        { id: 'gouf', n: 4, pos: { x: -430, z: 1050 } },
+        { id: 'dom', n: 3, pos: { x: 430, z: 1050 } },
+        { id: 'magella', n: 10, pos: { x: 520, z: 850 } },
+        { id: 'weasel', n: 4, pos: { x: -560, z: 820 } },
+        { id: 'dabude', n: 2, pos: { x: 0, z: 1480 } },
+      ],
+    },
+    structures: [
+      // South: Federation assembly area and Big Tray approach lanes.
+      { kind: 'road', x: -250, z: -1020, rotY: 0, scale: 3.8 },
+      { kind: 'road', x: 250, z: -1020, rotY: 0, scale: 3.8 },
+      { kind: 'landingpad', x: 0, z: -1180, rotY: 0, scale: 1.4 },
+      { kind: 'commandpost', x: -360, z: -1220, rotY: 0.2, scale: 1.05 },
+      { kind: 'depot', x: 370, z: -1200, rotY: -0.2, scale: 1.15 },
+      { kind: 'fueltank', x: 470, z: -1150, rotY: 0, scale: 1.0 },
+
+      // The open-pit bowl: broken benches and haul roads create cover without
+      // closing the long north/south fire lanes.
+      { kind: 'rockcluster', x: -620, z: -520, rotY: 0.1, scale: 2.0 },
+      { kind: 'rockcluster', x: -690, z: -120, rotY: -0.2, scale: 1.8 },
+      { kind: 'rockcluster', x: -640, z: 310, rotY: 0.4, scale: 2.1 },
+      { kind: 'rockcluster', x: 640, z: -470, rotY: -0.2, scale: 2.0 },
+      { kind: 'rockcluster', x: 700, z: -40, rotY: 0.3, scale: 1.8 },
+      { kind: 'rockcluster', x: 630, z: 390, rotY: 0, scale: 2.15 },
+      { kind: 'road', x: -210, z: -420, rotY: 0.08, scale: 4.6 },
+      { kind: 'road', x: 210, z: 210, rotY: -0.08, scale: 4.6 },
+      { kind: 'rubble', x: -180, z: -80, rotY: 0.3, scale: 1.25 },
+      { kind: 'rubble', x: 210, z: 340, rotY: -0.4, scale: 1.15 },
+      { kind: 'bunker', x: -470, z: 250, rotY: 0.7, scale: 1.1 },
+      { kind: 'bunker', x: 470, z: 40, rotY: -0.7, scale: 1.1 },
+
+      // Ore railway and processing complex on the northern high ground.
+      { kind: 'cityroad', x: 0, z: 650, rotY: 1.5708, length: 1650, width: 34, variant: 'rail-cut' },
+      { kind: 'hangar', x: -420, z: 700, rotY: 1.5708, scale: 1.25 },
+      { kind: 'hangar', x: -250, z: 700, rotY: 1.5708, scale: 1.25 },
+      { kind: 'depot', x: 300, z: 690, rotY: 0, scale: 1.35 },
+      { kind: 'fueltank', x: 470, z: 720, rotY: 0, scale: 1.25 },
+      { kind: 'radar', x: 610, z: 790, rotY: -0.25, scale: 1.2 },
+      { kind: 'watchtower', x: -600, z: 820, rotY: 0.2, scale: 1.2 },
+      { kind: 'commandpost', x: 0, z: 930, rotY: 3.14159, scale: 1.35 },
+      { kind: 'barracks', x: -230, z: 940, rotY: 0.05, scale: 1.15 },
+      { kind: 'barracks', x: 230, z: 940, rotY: -0.05, scale: 1.15 },
+
+      // Zeon defensive belt and landship departure gate.
+      { kind: 'wall', x: -360, z: 1080, rotY: 0.1, scale: 2.4 },
+      { kind: 'wall', x: 360, z: 1080, rotY: -0.1, scale: 2.4 },
+      { kind: 'gate', x: 0, z: 1080, rotY: 0, scale: 1.35 },
+      { kind: 'guntower', x: -570, z: 1110, rotY: 0, scale: 1.25 },
+      { kind: 'guntower', x: 570, z: 1110, rotY: 0, scale: 1.25 },
+      { kind: 'bunker', x: -180, z: 1160, rotY: 3.14159, scale: 1.2 },
+      { kind: 'bunker', x: 180, z: 1160, rotY: 3.14159, scale: 1.2 },
+      { kind: 'base', x: 0, z: 1390, rotY: 3.14159, scale: 1.45 },
+      { kind: 'rockcluster', x: -710, z: 1390, rotY: 0, scale: 1.8 },
+      { kind: 'rockcluster', x: 710, z: 1390, rotY: 0, scale: 1.8 },
+    ],
+  },
 ];
 
 export const MAP_BY_ID = Object.fromEntries(MAPS.map(m => [m.id, m]));

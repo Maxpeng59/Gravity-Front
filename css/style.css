@@ -283,8 +283,9 @@ select{background:#0d1828;color:var(--txt);border:1px solid var(--line2);font-fa
 #hud.cockpit-view .hud-tc{top:4.5%}#hud.cockpit-view #hud-objective{font-size:10px}#hud.cockpit-view .hud-sim{font-size:7px}
 @media (max-width:760px){.cockpit-side{display:none}
   .cockpit-deck{width:20%}.cockpit-deck.left{left:3%}.cockpit-deck.right{right:3%}}
-#hud-killfeed{position:absolute;z-index:4;top:24px;right:24px;width:min(440px,40vw);display:flex;
-  flex-direction:column;align-items:flex-end;gap:6px;text-align:right}
+#hud-killfeed{position:fixed;z-index:12;top:max(18px,env(safe-area-inset-top));right:max(18px,env(safe-area-inset-right));
+  width:min(440px,calc(100vw - 36px));display:flex;flex-direction:column;align-items:flex-end;gap:6px;
+  text-align:right;pointer-events:none}
 .kill-notice{max-width:100%;box-sizing:border-box;padding:6px 10px;color:#eef4f8;font-size:11px;letter-spacing:.04em;
   background:linear-gradient(90deg,rgba(8,13,18,.2),rgba(8,13,18,.86));border-right:3px solid var(--acc);
   text-shadow:0 1px 5px #000;animation:kill-in .16s ease-out,kill-out .45s ease-in 4.55s forwards}

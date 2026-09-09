@@ -24,6 +24,7 @@ import {
   shouldAiKneel,
 } from './combat-posture.js';
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
+import { formatKillNotice } from './kill-feed.js';
 import {
   landshipCombatYaw,
   landshipProfile,
@@ -124,8 +125,8 @@ export function startBattle(renderer, opts, onEnd){
   const multiplayer = opts.multiplayer || null;
   const pvpLink = multiplayer?.link || null;
   const PVP = !!(pvpLink && typeof pvpLink.send === 'function');
-  let networkRemote = null;
-  let pvpLocalSeq = 0, pvpRemoteSeq = -1, pvpStateT = 0;
+  const networkRemotes = new Map();
+  let pvpLocalSeq = 0, pvpStateT = 0;
   let pvpLastSnapshotAt = 0, pvpLastMessageAt = 0;
   let pvpDisconnectedAt = 0;
   let pvpShotsSent = 0, pvpShotsReceived = 0, pvpHitsSent = 0, pvpHitsReceived = 0;
@@ -441,7 +442,7 @@ export function startBattle(renderer, opts, onEnd){
     if (!attacker || !victim || attacker === victim) return;
     const row = document.createElement('div');
     row.className = `kill-notice ${attacker.team === player?.team ? 'friendly' : 'hostile'}`;
-    row.textContent = `${unitNoticeName(attacker)} killed (${weaponName || 'UNKNOWN WEAPON'}) ${unitNoticeName(victim)}`;
+    row.textContent = formatKillNotice(unitNoticeName(attacker), weaponName, unitNoticeName(victim));
     killFeedEl.prepend(row);
     while (killFeedEl.children.length > 5) killFeedEl.lastElementChild?.remove();
     setTimeout(() => row.remove(), 5100);
@@ -763,6 +764,7 @@ export function startBattle(renderer, opts, onEnd){
     const m = {
       suit, team, root, parts: null, detail: null, lodNear: false, alwaysFull: isPlayer || isNetworkRemote,
       ace, core, fromBlip, isPlayer, networkRemote: isNetworkRemote, air,
+      networkId: isNetworkRemote ? String(specObject?.networkId || '') : null,
       vip: typeof spec === 'object' && !!spec.vip,
       name: (typeof spec === 'object' && spec.name) || suit.name,
       vel: new THREE.Vector3(), yaw: isPlayer ? 0 : Math.PI, walkPhase: 0, pitch: 0, bank: 0,
@@ -936,8 +938,7 @@ export function startBattle(renderer, opts, onEnd){
       : ringPos(rng.range(-55, 55), e.dist ? enemyDistBand(e.dist) : rng.range(600, 1050), 220);
     const spawned = spawnMech(e, 'ZEON', pos, { core: true });
     if (PVP && e.networkRemote){
-      networkRemote = spawned;
-      networkRemote.name = multiplayer.remoteName || networkRemote.name;
+      if (spawned.networkId) networkRemotes.set(spawned.networkId, spawned);
     }
   });
 
@@ -2771,6 +2772,7 @@ export function startBattle(renderer, opts, onEnd){
       const point = hitPoint?.isVector3 ? hitPoint : m.root.position;
       if (pvpSend({
         type: 'hit',
+        targetId: m.networkId,
         damage: Number(dmg) || 0,
         hitPoint: point.toArray(),
         melee: !!melee,
@@ -2792,8 +2794,8 @@ export function startBattle(renderer, opts, onEnd){
           attacker.vel.addScaledVector(tmpV2.subVectors(attacker.root.position, m.root.position).setY(0).normalize(), 26);
           if (attacker.ai) attacker.meleeRun = null;          // knock a charging bot out of its lunge
         }
-        if (PVP && m === player && attacker === networkRemote)
-          pvpSend({ type: 'parry' });
+        if (PVP && m === player && attacker?.networkRemote)
+          pvpSend({ type: 'parry', targetId: attacker.networkId });
         sfx('saber', m.isPlayer ? 0.22 : clamp(300 / m.root.position.distanceTo(player.root.position), 0.05, 0.18));
         return;
       }
@@ -2862,7 +2864,7 @@ export function startBattle(renderer, opts, onEnd){
   // Replayed rounds are presentation-only. Hit authority remains with the
   // shooter's simulation and arrives separately as a bounded `hit` message.
   function pvpReplayShot(message){
-    const m = networkRemote;
+    const m = networkRemotes.get(String(message.senderId || ''));
     if (!m || !m.alive) return;
     const position = pvpVector(message.position), velocity = pvpVector(message.velocity);
     if (!position || !velocity || velocity.lengthSq() < 0.001) return;
@@ -2906,7 +2908,9 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function pvpApplyHit(message){
-    if (!networkRemote || !player.alive) return;
+    if (String(message.targetId || '') !== String(multiplayer?.localId || '') || !player.alive) return;
+    const networkRemote = networkRemotes.get(String(message.senderId || ''));
+    if (!networkRemote) return;
     const requested = Number(message.damage);
     const hitPoint = pvpVector(message.hitPoint);
     const weaponName = typeof message.weapon === 'string' ? message.weapon.slice(0, 96) : '';
@@ -2927,10 +2931,13 @@ export function startBattle(renderer, opts, onEnd){
     const bounded = Math.min(requested, cap);
     if (!(bounded > 0)) return;
     pvpHitsReceived++;
+    player.lastNetworkAttackerId = networkRemote.networkId;
     damage(player, bounded, hitPoint, networkRemote, !!message.melee, weaponName);
   }
 
-  function pvpApplyParry(){
+  function pvpApplyParry(message){
+    if (String(message.targetId || '') !== String(multiplayer?.localId || '')) return;
+    const networkRemote = networkRemotes.get(String(message.senderId || ''));
     if (!networkRemote || !networkRemote.alive || !player.alive) return;
     if (player.root.position.distanceTo(networkRemote.root.position) > 120) return;
     player.meleeT = Math.max(player.meleeT || 0, 0.9);
@@ -2941,13 +2948,13 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function pvpApplyState(message){
-    const m = networkRemote;
+    const m = networkRemotes.get(String(message.senderId || ''));
     if (!m) return;
     const seq = Math.trunc(Number(message.seq));
-    if (!Number.isFinite(seq) || seq <= pvpRemoteSeq) return;
+    if (!Number.isFinite(seq) || seq <= (m.netSeq ?? -1)) return;
     const position = pvpVector(message.position), velocity = pvpVector(message.velocity);
     if (!position || !velocity) return;
-    pvpRemoteSeq = seq;
+    m.netSeq = seq;
     pvpLastSnapshotAt = performance.now();
     m.netTargetPosition ||= new THREE.Vector3();
     m.netTargetVelocity ||= new THREE.Vector3();
@@ -2990,8 +2997,9 @@ export function startBattle(renderer, opts, onEnd){
     if (m.alive && !alive){
       m.hp = 0;
       const deathWeapon = typeof message.deathWeapon === 'string' && message.deathWeapon
-        ? message.deathWeapon.slice(0, 96) : 'PVP DUEL';
-      kill(m, player, deathWeapon);
+        ? message.deathWeapon.slice(0, 96) : 'PVP BATTLE';
+      const killer = networkRemotes.get(String(message.killerId || '')) || player;
+      kill(m, killer, deathWeapon);
     }
   }
 
@@ -3015,7 +3023,7 @@ export function startBattle(renderer, opts, onEnd){
     if (!PVP) return;
     pvpStateT -= dt;
     if (pvpStateT > 0) return;
-    pvpStateT = 0.05;
+    pvpStateT = Number(multiplayer?.totalPlayers) > 8 ? 0.1 : 0.05;
     const saberEquipped = hasSaber && player.wi === SABER_SLOT;
     const rangedWeapon = clamp(saberEquipped ? player.suit.weapons.length - 1 : player.wi, 0, player.suit.weapons.length - 1);
     pvpSend({
@@ -3046,6 +3054,7 @@ export function startBattle(renderer, opts, onEnd){
       hp: Math.max(0, player.hp),
       alive: !!player.alive,
       deathWeapon: player.deathWeapon || null,
+      killerId: player.lastNetworkAttackerId || null,
     });
   }
 
@@ -3055,20 +3064,29 @@ export function startBattle(renderer, opts, onEnd){
     if (event.detail.type === 'state') pvpApplyState(event.detail);
     else if (event.detail.type === 'shot') pvpReplayShot(event.detail);
     else if (event.detail.type === 'hit') pvpApplyHit(event.detail);
-    else if (event.detail.type === 'parry') pvpApplyParry();
+    else if (event.detail.type === 'parry') pvpApplyParry(event.detail);
   }
 
   function onPvpClose(){
     if (!PVP || ended || outcome !== null || !player.alive) return;
     pvpForfeit = true;
-    setMsg('OPPONENT DISCONNECTED — FORFEIT VICTORY', 4);
+    setMsg('PVP ROOM DISCONNECTED — FORFEIT VICTORY', 4);
+  }
+
+  function onPvpPeerClose(event){
+    if (!PVP || ended || outcome !== null) return;
+    const remote = networkRemotes.get(String(event?.detail?.peerId || ''));
+    if (!remote?.alive) return;
+    remote.hp = 0;
+    kill(remote, player, 'LINK DISCONNECT');
+    setMsg(`${remote.name} DISCONNECTED`, 2.4);
   }
 
   function onPvpStatus(event){
     const state = event?.detail?.state;
     if (state === 'connected') pvpDisconnectedAt = 0;
-    else if (state === 'disconnected' && !pvpDisconnectedAt) pvpDisconnectedAt = performance.now();
-    else if (state === 'failed' || state === 'closed') onPvpClose();
+    else if (state === 'disconnected' && !pvpLink.connected && !pvpDisconnectedAt) pvpDisconnectedAt = performance.now();
+    else if ((state === 'failed' || state === 'closed') && !pvpLink.connected) onPvpClose();
   }
 
   function pvpConnectionWatchdog(){
@@ -3092,6 +3110,7 @@ export function startBattle(renderer, opts, onEnd){
     if (!PVP || pvpListenersAttached) return;
     pvpLink.addEventListener('message', onPvpMessage);
     pvpLink.addEventListener('close', onPvpClose);
+    pvpLink.addEventListener('peerclose', onPvpPeerClose);
     pvpLink.addEventListener('status', onPvpStatus);
     pvpListenersAttached = true;
     pvpLastMessageAt = performance.now();
@@ -3101,6 +3120,7 @@ export function startBattle(renderer, opts, onEnd){
     if (!PVP || !pvpListenersAttached) return;
     pvpLink.removeEventListener('message', onPvpMessage);
     pvpLink.removeEventListener('close', onPvpClose);
+    pvpLink.removeEventListener('peerclose', onPvpPeerClose);
     pvpLink.removeEventListener('status', onPvpStatus);
     pvpListenersAttached = false;
   }
@@ -5601,6 +5621,10 @@ export function startBattle(renderer, opts, onEnd){
         return `${base} · ENEMY ARMOR ${total - liveZ}/${total} · ${shipName} ${landZ.filter(p => p.alive).length}/2`
           + ` · TROOPS ${infantry.aliveF} vs ${infantry.aliveZ}`;
       }
+      case 'pvp': {
+        const alive = mechs.filter(m => m.alive && (m.isPlayer || m.networkRemote)).length;
+        return `${base} · ${alive} PILOT${alive === 1 ? '' : 'S'} REMAIN`;
+      }
       case 'fleet': {
         const liveZ = mechs.filter(m => m.alive && m.core && m.team === 'ZEON').length + zeonReserve.length;
         return `${base} · ENEMY FLEET ${fleetZ.filter(p => !p.alive).length}/${fleetZ.length} SUNK · OUR FLEET ${fleetF.filter(p => p.alive).length}/${fleetF.length} · HOSTILE MS ${liveZ}`;
@@ -6012,6 +6036,10 @@ export function startBattle(renderer, opts, onEnd){
           if (!landF.some(p => p.alive)) lose = 'FEDERATION LANDSHIPS DESTROYED — THE OFFENSIVE COLLAPSES';
           win = !zCore && !landZ.some(p => p.alive);
           winMsg = mission.winMsg || 'ODESSA HAS FALLEN — ZEON RETREATS FROM EARTH';
+          break;
+        case 'pvp':
+          win = !zCore;
+          winMsg = 'LAST MOBILE SUIT STANDING — PVP VICTORY';
           break;
         case 'fleet': {
           // a BROKEN fleet fails the assault — not just a fully-annihilated one. mission.fleetLoseFrac
@@ -6539,7 +6567,7 @@ export function startBattle(renderer, opts, onEnd){
           readyState: pvpLink?.readyState || null,
           connectionState: pvpLink?.connectionState || null,
           localSeq: pvpLocalSeq,
-          remoteSeq: pvpRemoteSeq,
+          remoteSeq: Math.max(-1, ...[...networkRemotes.values()].map(remote => remote.netSeq ?? -1)),
           lastSnapshotAge: pvpLastSnapshotAt ? (performance.now() - pvpLastSnapshotAt) / 1000 : null,
           lastMessageAge: pvpLastMessageAt ? (performance.now() - pvpLastMessageAt) / 1000 : null,
           shotsSent: pvpShotsSent,
@@ -6550,24 +6578,25 @@ export function startBattle(renderer, opts, onEnd){
           listenersAttached: pvpListenersAttached,
           disconnectedAge: pvpDisconnectedAt ? (performance.now() - pvpDisconnectedAt) / 1000 : null,
         },
-        pvpRemote: networkRemote ? {
-          id: networkRemote.suit.id,
-          name: networkRemote.name,
-          alive: networkRemote.alive,
-          hp: networkRemote.hp,
-          maxHp: networkRemote.maxHp,
-          position: networkRemote.root.position.toArray(),
-          targetPosition: networkRemote.netTargetPosition?.toArray() || null,
-          velocity: networkRemote.vel.toArray(),
-          yaw: networkRemote.yaw,
-          aimYaw: networkRemote.netAimYaw ?? null,
-          aimPitch: networkRemote.netAimPitch ?? null,
-          weaponIndex: networkRemote.wi,
-          saberEquipped: !!networkRemote.networkSaberEquipped,
-          blocking: !!networkRemote.blocking,
-          kneelTarget: !!networkRemote.kneelTarget,
-          kneelBlend: networkRemote.kneelBlend || 0,
-        } : null,
+        pvpRemote: networkRemotes.size ? [...networkRemotes.values()].map(remote => ({
+          networkId: remote.networkId,
+          id: remote.suit.id,
+          name: remote.name,
+          alive: remote.alive,
+          hp: remote.hp,
+          maxHp: remote.maxHp,
+          position: remote.root.position.toArray(),
+          targetPosition: remote.netTargetPosition?.toArray() || null,
+          velocity: remote.vel.toArray(),
+          yaw: remote.yaw,
+          aimYaw: remote.netAimYaw ?? null,
+          aimPitch: remote.netAimPitch ?? null,
+          weaponIndex: remote.wi,
+          saberEquipped: !!remote.networkSaberEquipped,
+          blocking: !!remote.blocking,
+          kneelTarget: !!remote.kneelTarget,
+          kneelBlend: remote.kneelBlend || 0,
+        })) : null,
         playerSuitId: player.suit.id, playerStyle: player.suit.style,
         firstPerson, viewGunChildren: viewGun.children.length, playerRootVisible: player.root.visible,
         viewMeleeOverride: vgMeleeOverride, viewShowsSaber: player.wi === SABER_SLOT || vgMeleeOverride,

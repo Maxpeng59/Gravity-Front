@@ -92,13 +92,13 @@
   </div>
 </div>
 
-<!-- ============ PVP DUEL LOBBY ============ -->
+<!-- ============ PVP ROOM LOBBY ============ -->
 <div id="menu-pvp" class="screen pvp-screen hidden">
   <div class="pvp-shell">
     <header class="pvp-head">
-      <div class="title-eyebrow">DIRECT PEER-TO-PEER LINK</div>
-      <h2>PVP DUEL · ONLINE LOBBY</h2>
-      <p>Exchange connection codes with one opponent. No account or dedicated game server is required.</p>
+      <div class="title-eyebrow">HOST-RELAYED PEER ROOM · UP TO 16 PILOTS</div>
+      <h2>PVP BATTLE · ONLINE LOBBY</h2>
+      <p>The host repeats the invite exchange for each pilot, then relays the match over direct WebRTC links. No account or dedicated game server is required.</p>
     </header>
 
     <div class="pvp-grid">
@@ -117,26 +117,26 @@
         </label>
 
         <label class="pvp-field" for="pvp-map">
-          <span>STANDARD BATTLE MAP</span>
+          <span>GROUND BATTLE MAP</span>
           <select id="pvp-map" aria-describedby="pvp-host-note"></select>
         </label>
 
-        <p id="pvp-host-note" class="pvp-note">All PvP duels deploy on the ground in Clear-Sky City.</p>
+        <p id="pvp-host-note" class="pvp-note">The host can deploy the room in Clear-Sky City or the Operation Odessa mining front.</p>
 
         <div id="pvp-progression" class="pvp-progression"></div>
         <div class="readout-section-label">PVP EQUIPMENT</div>
         <div id="pvp-equipment" class="loadout-editor pvp-equipment"></div>
 
         <div id="pvp-status" class="pvp-status" role="status" aria-live="polite">LINK OFFLINE · CHOOSE HOST OR JOIN</div>
-        <div id="pvp-peer" class="pvp-peer" aria-live="polite">OPPONENT · NOT CONNECTED</div>
+        <div id="pvp-peer" class="pvp-peer" aria-live="polite">ROOM 1/16 · NO OTHER PILOTS CONNECTED</div>
       </section>
 
       <section class="pvp-panel pvp-connect" aria-labelledby="pvp-connect-title">
         <h3 id="pvp-connect-title">MANUAL CONNECTION · THREE STEPS</h3>
         <ol class="pvp-steps">
-          <li><b>Host:</b> create an invite, then send the generated code to your opponent.</li>
+          <li><b>Host:</b> create an invite, then send the generated code to one pilot.</li>
           <li><b>Joiner:</b> paste the invite, join, then send the generated answer code back.</li>
-          <li><b>Host:</b> paste the answer and apply it. When the link is ready, launch the duel.</li>
+          <li><b>Host:</b> paste and apply the answer. Repeat “Add another pilot,” then launch when the room is ready.</li>
         </ol>
 
         <div class="pvp-action-row">
@@ -167,7 +167,7 @@
     <div class="pvp-footer">
       <button id="btn-pvp-back" class="small">◂ BACK</button>
       <button id="btn-pvp-reset" class="small" disabled>RESET LINK / TRY AGAIN</button>
-      <button id="btn-pvp-launch" class="big accent" disabled>LAUNCH PVP DUEL</button>
+      <button id="btn-pvp-launch" class="big accent" disabled>LAUNCH PVP BATTLE</button>
     </div>
   </div>
 </div>

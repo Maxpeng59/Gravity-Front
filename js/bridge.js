@@ -406,7 +406,8 @@ function confirmLaunch(w, d, c){
       const gunner = S.crew.find(cr => cr.role === 'gunner' && cr.job === 'FIRE SUPPORT');
       const bigOp = ['ASSAULT', 'HOLD', 'FINALE', 'DEFEND'].includes(c.kind);
       launchSortie({
-        env: c.env, biome: w.biome, terrainSeed: d.terrainSeed,
+        env: c.env, biome: w.biome, mapId: (c.kind === 'ODESSA' || c.kind === 'ODESSA2') ? 'odessa' : null,
+        terrainSeed: d.terrainSeed,
         objective: c.title.split('·')[0].trim(),
         enemies: c.enemies, allies: c.allies, mission: c.mission,
         sim: bigOp ? { fed: w.fed, zeon: w.zeon } : null,

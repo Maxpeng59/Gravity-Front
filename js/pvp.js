@@ -1,4 +1,4 @@
-// ---------- GRAVITY FRONT — backend-free 1v1 transport ----------
+// ---------- GRAVITY FRONT — backend-free WebRTC room transport ----------
 // Manual offer/answer signaling keeps this module usable from a static host such
 // as GitHub Pages. Once the two codes have been exchanged, game messages travel
 // directly over a reliable, ordered WebRTC data channel.
@@ -8,6 +8,31 @@ const SIGNAL_KIND = 'gravity-front-pvp';
 const SIGNAL_VERSION = 1;
 const MAX_SIGNAL_CHARS = 100000;
 const MAX_MESSAGE_CHARS = 65536;
+
+// A browser host relays one ordered data channel per guest. Sixteen pilots is a
+// deliberate ceiling: it is far beyond the former duel while keeping upstream
+// bandwidth and decode work within a realistic desktop-browser budget.
+export const MAX_PVP_PLAYERS = 16;
+
+export function pvpSeatId(index){
+  const seat = Math.trunc(Number(index));
+  if (!Number.isFinite(seat) || seat < 0 || seat >= MAX_PVP_PLAYERS)
+    throw new RangeError('PvP seat index is outside the room capacity.');
+  return seat === 0 ? 'host' : `pilot-${seat + 1}`;
+}
+
+export function pvpSpawnPoint(index, total, mapId = 'clearcity'){
+  const count = Math.max(2, Math.min(MAX_PVP_PLAYERS, Math.trunc(Number(total)) || 2));
+  const seat = Math.max(0, Math.min(count - 1, Math.trunc(Number(index)) || 0));
+  const centerZ = mapId === 'odessa' ? 350 : 450;
+  const radius = mapId === 'odessa' ? 980 : 900;
+  const angle = Math.PI + seat / count * Math.PI * 2;
+  return {
+    x: Math.sin(angle) * radius,
+    z: centerZ + Math.cos(angle) * radius,
+    yaw: angle + Math.PI,
+  };
+}
 
 export const DEFAULT_ICE_SERVERS = Object.freeze([
   Object.freeze({ urls: 'stun:stun.l.google.com:19302' }),
@@ -358,5 +383,146 @@ export class PvpLink extends EventTarget {
   _emitError(error){
     const normalized = error instanceof Error ? error : new Error(String(error || 'Unknown PvP error'));
     this.dispatchEvent(new CustomEvent('error', { detail: normalized }));
+  }
+}
+
+// Star room: guests maintain one connection to the host; the host relays combat
+// packets to the other guests. This avoids an N-by-N full mesh and works on the
+// existing static public site without pretending it has a game server.
+export class PvpRoom extends EventTarget {
+  constructor(role, options = {}){
+    super();
+    if (!['host', 'guest'].includes(role)) throw new TypeError('PvP room role must be host or guest.');
+    this.role = role;
+    this.localId = role === 'host' ? pvpSeatId(0) : null;
+    this.links = new Map();
+    this.pending = null;
+    this.guestLink = null;
+    this.inBattle = false;
+    this.options = options;
+    this._closed = false;
+  }
+
+  get connected(){
+    return this.role === 'host'
+      ? [...this.links.values()].some(link => link.connected)
+      : !!this.guestLink?.connected;
+  }
+
+  get playerCount(){ return 1 + (this.role === 'host' ? this.links.size : (this.connected ? 1 : 0)); }
+  get readyState(){ return this.connected ? 'open' : 'closed'; }
+  get connectionState(){ return this.connected ? 'connected' : 'closed'; }
+  get canInvite(){ return this.role === 'host' && !this.pending && this.playerCount < MAX_PVP_PLAYERS; }
+
+  _emit(type, detail){ this.dispatchEvent(new CustomEvent(type, { detail })); }
+  _status(state, message){ this._emit('status', { state, message, role: this.role }); }
+
+  _wire(link, peerId){
+    link.addEventListener('status', event => this._emit('status', { ...event.detail, peerId }));
+    link.addEventListener('warning', event => this._emit('warning', { ...event.detail, peerId }));
+    link.addEventListener('error', event => this._emit('error', Object.assign(event.detail, { peerId })));
+    link.addEventListener('open', () => {
+      if (this.role === 'host'){
+        if (this.pending?.link === link){
+          this.pending = null;
+          this.links.set(peerId, link);
+        }
+      }
+      this._emit('open', { role: this.role, peerId });
+      this._status('connected', `${this.playerCount}/${MAX_PVP_PLAYERS} pilots linked.`);
+    });
+    link.addEventListener('message', event => {
+      const value = event.detail;
+      if (!value || typeof value !== 'object') return;
+      if (this.role === 'host'){
+        const packet = { ...value, senderId: peerId };
+        if (this.inBattle){
+          for (const [otherId, other] of this.links){
+            if (otherId === peerId || !other.connected) continue;
+            try { other.send({ roomRelay: true, senderId: peerId, payload: value }); } catch {}
+          }
+        }
+        this._emit('message', packet);
+      } else if (value.roomRelay && value.payload && typeof value.payload === 'object'){
+        this._emit('message', { ...value.payload, senderId: value.senderId });
+      } else {
+        this._emit('message', { ...value, senderId: pvpSeatId(0) });
+      }
+    });
+    link.addEventListener('close', () => {
+      if (this.role === 'host'){
+        this.links.delete(peerId);
+        if (this.pending?.link === link) this.pending = null;
+        this._emit('peerclose', { peerId });
+        if (!this.links.size) this._emit('close', { peerId });
+      } else {
+        this._emit('peerclose', { peerId: pvpSeatId(0) });
+        this._emit('close', { peerId: pvpSeatId(0) });
+      }
+    });
+  }
+
+  async createHostOffer(){
+    if (!this.canInvite) throw new Error(this.pending ? 'Finish the current invite first.' : 'The PvP room is full.');
+    let peerId = null;
+    for (let seat = 1; seat < MAX_PVP_PLAYERS; seat++){
+      const candidate = pvpSeatId(seat);
+      if (!this.links.has(candidate)){ peerId = candidate; break; }
+    }
+    if (!peerId) throw new Error('The PvP room is full.');
+    const link = new PvpLink(this.options);
+    this.pending = { peerId, link };
+    this._wire(link, peerId);
+    try { return await link.createHostOffer(); }
+    catch (error){ if (this.pending?.link === link) this.pending = null; link.close(); throw error; }
+  }
+
+  async acceptGuestAnswer(code){
+    if (this.role !== 'host' || !this.pending) throw new Error('Create a host invite before applying an answer.');
+    return this.pending.link.acceptGuestAnswer(code);
+  }
+
+  async acceptHostOffer(code){
+    if (this.role !== 'guest') throw new Error('Only a guest can join a host invite.');
+    if (this.guestLink) throw new Error('Reset before joining another room.');
+    const link = new PvpLink(this.options);
+    this.guestLink = link;
+    this._wire(link, pvpSeatId(0));
+    return link.acceptHostOffer(code);
+  }
+
+  setLocalId(id){ this.localId = String(id || ''); }
+  beginBattle(){ this.inBattle = true; }
+
+  send(message){
+    if (this.role === 'host'){
+      let sent = 0;
+      for (const link of this.links.values()) if (link.connected){
+        link.send({ roomRelay: true, senderId: this.localId, payload: message });
+        sent++;
+      }
+      if (!sent) throw new Error('No PvP guests are connected.');
+      return;
+    }
+    if (!this.guestLink?.connected) throw new Error('The PvP host link is not connected.');
+    this.guestLink.send(message);
+  }
+
+  sendTo(peerId, message){
+    if (this.role !== 'host') return this.send(message);
+    const link = this.links.get(peerId);
+    if (!link?.connected) throw new Error(`Pilot ${peerId} is no longer connected.`);
+    link.send(message);
+  }
+
+  close(){
+    if (this._closed) return;
+    this._closed = true;
+    this.pending?.link?.close();
+    this.pending = null;
+    for (const link of this.links.values()) link.close();
+    this.links.clear();
+    this.guestLink?.close();
+    this.guestLink = null;
   }
 }
