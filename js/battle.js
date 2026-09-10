@@ -26,6 +26,9 @@ import {
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
 import {
+  galcezonAttackRadial, galcezonCruiseAltitude, playerCanBoardGalcezon,
+} from './galcezon-logic.js';
+import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   assignSquadRoles, carrierRiderEligible, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
   groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
@@ -421,7 +424,8 @@ export function startBattle(renderer, opts, onEnd){
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE';
   hintEl.textContent = baseHint
-    + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '');
+    + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
+    + ' · L GALCEZON BOARD/DISEMBARK';
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -3268,6 +3272,7 @@ export function startBattle(renderer, opts, onEnd){
       else if (setSniperMode(true)) sniperLatched = true;
     }
     if (k === 'k' && !e.repeat) togglePlayerKneel();
+    if (k === 'l' && !e.repeat) togglePlayerGalcezonRide();
     if (k === 'p'){ assistOn = !assistOn; setMsg(assistOn ? 'AIM SYSTEM ON — prediction + auto-aim on lock' : 'AIM SYSTEM OFF', 1.4); }
     if (k === 'f' && (player.parts.shield || hasSaber)){ // guard raises the shield OR the melee weapon; either parries a frontal melee strike
       if (sniperMode) setSniperMode(false, true);
@@ -3776,9 +3781,61 @@ export function startBattle(renderer, opts, onEnd){
   function mountOnGalcezon(carrier, rider, slot){
     rider.carrierRide = { carrier, slot };
     rider.kneelTarget = false; rider.kneelBlend = 0; rider.blocking = false;
-    rider.ai.meleeRun = null; rider.ai.pass = null;
+    if (rider.ai){ rider.ai.meleeRun = null; rider.ai.pass = null; }
+    carrier.carrierSlots ||= [];
     carrier.carrierSlots[slot] = rider;
     syncGalcezonRider(rider);
+  }
+
+  function dismountGalcezonRider(rider, requested = false){
+    const ride = rider.carrierRide, carrier = ride?.carrier;
+    if (!ride) return false;
+    if (carrier?.carrierSlots?.[ride.slot] === rider) carrier.carrierSlots[ride.slot] = null;
+    rider.carrierRide = null;
+    if (carrier?.root){
+      const side = ride.slot === 0 ? -1 : 1;
+      const c = Math.cos(carrier.yaw), s = Math.sin(carrier.yaw);
+      rider.root.position.set(
+        carrier.root.position.x + side * 14 * c - 3 * s,
+        carrier.root.position.y + 2,
+        carrier.root.position.z - side * 14 * s - 3 * c,
+      );
+      rider.vel.copy(carrier.vel).add(new THREE.Vector3(side * 8 * c, 6, -side * 8 * s));
+    }
+    combatSquadSignature = ''; // an AI passenger may claim the newly open slot on the next refresh
+    if (requested) setMsg('GALCEZON DISEMBARK — FREE FALL CONTROL RESTORED', 2.2);
+    return true;
+  }
+
+  function nearestBoardableGalcezon(){
+    let best = null, bestDistance = Infinity;
+    for (const carrier of mechs){
+      if (!carrier.suit.carrierSfs) continue;
+      carrier.carrierSlots ||= [];
+      const occupied = carrier.carrierSlots.filter(rider => rider?.alive).length;
+      const dx = carrier.root.position.x - player.root.position.x;
+      const dz = carrier.root.position.z - player.root.position.z;
+      const planarDistance = Math.hypot(dx, dz);
+      const verticalGap = Math.abs(carrier.root.position.y - player.root.position.y);
+      if (planarDistance >= bestDistance || !playerCanBoardGalcezon({
+        sameTeam: carrier.team === player.team, alive: carrier.alive,
+        capacity: carrier.suit.msCapacity, occupied, planarDistance, verticalGap,
+      })) continue;
+      const slot = Array.from({ length: carrier.suit.msCapacity }, (_, index) => index)
+        .find(index => !carrier.carrierSlots[index]?.alive);
+      if (slot == null) continue;
+      best = { carrier, slot }; bestDistance = planarDistance;
+    }
+    return best;
+  }
+
+  function togglePlayerGalcezonRide(){
+    if (player.carrierRide){ dismountGalcezonRider(player, true); return; }
+    if (player.hoverCraft?.alive){ setMsg('PERSONAL HOVER CRAFT MUST BE LOST BEFORE GALCEZON BOARDING', 2); return; }
+    const boarding = nearestBoardableGalcezon();
+    if (!boarding){ setMsg('NO FRIENDLY GALCEZON WITH AN OPEN DECK SLOT IN BOARDING RANGE', 2); return; }
+    mountOnGalcezon(boarding.carrier, player, boarding.slot);
+    setMsg(`GALCEZON DECK ${boarding.slot + 1} LOCKED · L TO DISEMBARK`, 2.4);
   }
 
   function refreshGalcezonLoads(){
@@ -3804,10 +3861,7 @@ export function startBattle(renderer, opts, onEnd){
   function syncGalcezonRider(rider){
     const ride = rider.carrierRide, carrier = ride?.carrier;
     if (!carrier?.alive){
-      if (ride){
-        rider.carrierRide = null;
-        rider.vel.copy(carrier?.vel || rider.vel).add(new THREE.Vector3(ride.slot ? 7 : -7, 4, -5));
-      }
+      if (ride) dismountGalcezonRider(rider);
       return false;
     }
     const localZ = ride.slot === 0 ? 4.2 : -5.2;
@@ -3820,6 +3874,11 @@ export function startBattle(renderer, opts, onEnd){
     );
     rider.vel.copy(carrier.vel); rider.boosting = false; rider.hovering = false;
     return true;
+  }
+
+  function galcezonCruiseY(m, x = m.root.position.x, z = m.root.position.z){
+    const phase = performance.now() * 0.00034 + m.uid * 0.83;
+    return groundY(x, z) + galcezonCruiseAltitude(phase);
   }
 
   function sampleGroundTactics(m, target, preferredRange){
@@ -4073,20 +4132,20 @@ export function startBattle(renderer, opts, onEnd){
     // early); hold-out attackers are relentless and never disengage
     const retreatAt = m.vip ? Math.max(tune.retreatHp, 0.55) : tune.retreatHp;
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
-    const hurt = !relentless && m.hp < m.maxHp * retreatAt;
+    const hurt = !m.suit.carrierSfs && !relentless && m.hp < m.maxHp * retreatAt;
     const groundTactic = ai.groundTactic || sampleGroundTactics(m, t, pref);
-    const formation = !commanderSpace ? squadFormationPoint(m, t) : null;
+    const formation = !commanderSpace && !m.suit.carrierSfs ? squadFormationPoint(m, t) : null;
     const formationDistance = formation
       ? Math.hypot(formation.x - m.root.position.x, formation.z - m.root.position.z) : 0;
     const protectedAlly = protectionAssignment(m, squad);
     const protectDistance = protectedAlly ? m.root.position.distanceTo(protectedAlly.root.position) : 0;
     const guardPoint = protectedAlly ? protectionPoint(m, protectedAlly, t) : null;
-    const supportCenter = ai.squadRole === 'assault' ? squadSupportCenter(squad) : null;
+    const supportCenter = ai.squadRole === 'assault' && !m.suit.carrierSfs ? squadSupportCenter(squad) : null;
     const supportDistance = supportCenter
       ? Math.hypot(supportCenter.x - m.root.position.x, supportCenter.z - m.root.position.z) : 0;
     const squadTethered = !!supportCenter && supportDistance > ASSAULT_SUPPORT_TETHER;
     const protectionMelee = !!protectedAlly && d <= PROTECTION_MELEE_RANGE;
-    const routePoint = !commanderSpace ? squadRoutePoint(m, t) : null;
+    const routePoint = !commanderSpace && !m.suit.carrierSfs ? squadRoutePoint(m, t) : null;
     ai.protectTarget = protectedAlly;
     ai.protectDistance = protectDistance;
     ai.squadTethered = squadTethered;
@@ -4205,7 +4264,8 @@ export function startBattle(renderer, opts, onEnd){
       tangent = tmpV2.crossVectors(UP, toT).multiplyScalar(ai.strafe);
       // engagement band by ROLE (×weapon pref)
       let radial;
-      if (hurt) radial = d > pref * 2.0 ? 0.03 : -1;                  // kite to max range, then HOLD and keep firing — never flee the map
+      if (m.suit.carrierSfs) radial = galcezonAttackRadial(d, pref); // attack SFS never receives a retreat vector
+      else if (hurt) radial = d > pref * 2.0 ? 0.03 : -1;            // kite to max range, then HOLD and keep firing — never flee the map
       else if (ai.squadRole === 'support'){
         // The rear element preserves standoff. A masked shot produces a measured
         // advance/flank instead of kneeling uselessly behind a ridge or building.
@@ -4230,7 +4290,7 @@ export function startBattle(renderer, opts, onEnd){
       desired.normalize().multiplyScalar(speed);
       accel = m.suit.aiAccel || 3;
       // objective leash: units bound to a base/convoy fall back toward it instead of chasing over the horizon
-      if (ai.anchor){
+      if (ai.anchor && !m.suit.carrierSfs){
         const ax = ai.anchor.x - m.root.position.x, az = ai.anchor.z - m.root.position.z;
         const adist = Math.hypot(ax, az);
         if (adist > ai.anchor.leash){
@@ -4431,10 +4491,35 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  function updatePlayerGroundFire(m, dt){
+    m.fireT -= dt; m.meleeT -= dt;
+    if (m.reloadT > 0){
+      m.reloadT -= dt;
+      if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
+    }
+    if (mouseDown && m.reloadT <= 0){
+      if (m.wi === SABER_SLOT) trySaber();
+      else if (m.swingT <= 0 && m.meleeT <= 0) {
+        fire(m, null, playerAimPoint(m.suit.weapons[m.wi]));
+        if (m.fireT >= 1 / m.suit.weapons[m.wi].rof - 0.001) camShake = Math.min(1.2, camShake + 0.08);
+      }
+    }
+  }
+
   function playerUpdate(dt){
     const m = player;
     if (!m.alive) return;
     if (m.air) return playerFlightUpdate(dt);
+    if (m.carrierRide?.carrier?.alive){
+      syncGalcezonRider(m);
+      m.hovering = false; m.boosting = false; m.thrusting = false;
+      let dy = camYaw - m.yaw;
+      while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      m.yaw += dy * Math.min(1, 10 * dt);
+      updatePlayerGroundFire(m, dt);
+      return;
+    }
+    if (m.carrierRide) dismountGalcezonRider(m);
     const w = m.suit;
     const mountedCraft = !!m.hoverCraft?.alive;
     // in space, thrust follows the full look direction; on the ground it stays planar
@@ -4609,19 +4694,7 @@ export function startBattle(renderer, opts, onEnd){
       m.yaw += dy * Math.min(1, 10 * dt);
     }
 
-    // firing
-    m.fireT -= dt; m.meleeT -= dt;
-    if (m.reloadT > 0){
-      m.reloadT -= dt;
-      if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
-    }
-    if (mouseDown && m.reloadT <= 0){
-      if (m.wi === SABER_SLOT) trySaber();
-      else if (m.swingT <= 0 && m.meleeT <= 0) {
-        fire(m, null, playerAimPoint(m.suit.weapons[m.wi]));
-        if (m.fireT >= 1 / m.suit.weapons[m.wi].rof - 0.001) camShake = Math.min(1.2, camShake + 0.08);
-      }
-    }
+    updatePlayerGroundFire(m, dt);
   }
 
   // ---------- artillery ballistics (Zaku Tank mode 2) ----------
@@ -5407,7 +5480,8 @@ export function startBattle(renderer, opts, onEnd){
         m.root.position.addScaledVector(m.vel, dt);
         if (!SPACE){
           const g = groundY(m.root.position.x, m.root.position.z);
-          const target = (m.suit.hover ? g + 3.5 + Math.sin(performance.now() * 0.002 + m.yaw) * 0.8 : g) + (m.hopY || 0);
+          const target = m.suit.carrierSfs ? galcezonCruiseY(m)
+            : (m.suit.hover ? g + 3.5 + Math.sin(performance.now() * 0.002 + m.yaw) * 0.8 : g) + (m.hopY || 0);
           m.root.position.y = m.suit.vehicle ? (m.suit.hover ? target : g) : lerp(m.root.position.y, target, Math.min(1, (m.hopY ? 13 : 6) * dt));
           if (m.suit.vehicle) m.vel.y = 0;
         }
@@ -6153,6 +6227,13 @@ export function startBattle(renderer, opts, onEnd){
         ? `${Math.max(0, Math.round(playerHoverCraft.hp))} / ${playerHoverCraft.maxHp} · ${HOVER_CRAFT_SPEED_MULTIPLIER.toFixed(1)}× SPEED · SPACE RISE · C DESCEND`
         : 'DESTROYED · MS RELEASED'}</span>`;
     }
+    if (player.carrierRide?.carrier?.alive){
+      const carrier = player.carrierRide.carrier;
+      wHtml += `<br>GALCEZON DECK <span class="ammo" style="color:var(--ok)">SLOT ${player.carrierRide.slot + 1}/${carrier.suit.msCapacity} · ${Math.round(carrier.root.position.y - groundY(carrier.root.position.x, carrier.root.position.z))} m AGL · L DISEMBARK</span>`;
+    } else {
+      const boarding = nearestBoardableGalcezon();
+      if (boarding) wHtml += `<br>GALCEZON LINK <span class="ammo" style="color:var(--acc)">DECK ${boarding.slot + 1} OPEN · L BOARD</span>`;
+    }
     if (kneelEligible(player)){
       const posture = player.kneelState || kneelState(player.kneelBlend, player.kneelTarget);
       const pct = Math.round(clamp(player.kneelBlend || 0, 0, 1) * 100);
@@ -6661,7 +6742,7 @@ export function startBattle(renderer, opts, onEnd){
     cancelInto(m, hit.nx, threeD ? (hit.ny || 0) : 0, hit.nz);
   }
   function enforceTerrainSlope(m){
-    if (SPACE || !hfn || m.air || !m._collisionPrev) return;
+    if (SPACE || !hfn || m.air || m.suit.carrierSfs || !m._collisionPrev) return;
     const start = m._collisionPrev, end = m.root.position;
     const dx = end.x - start.x, dz = end.z - start.z, distance = Math.hypot(dx, dz);
     if (distance < 0.001) return;
@@ -6877,8 +6958,8 @@ export function startBattle(renderer, opts, onEnd){
     // underground; airborne suits retain their jump height.
     if (!SPACE && hfn) for (const m of live){
       if (m.air) continue;
-      const floor = groundY(m.root.position.x, m.root.position.z)
-        + (m.hoverCraft?.alive ? 2.6 : m.suit.hover ? 3 : 0);
+      const floor = m.suit.carrierSfs ? galcezonCruiseY(m)
+        : groundY(m.root.position.x, m.root.position.z) + (m.hoverCraft?.alive ? 2.6 : m.suit.hover ? 3 : 0);
       if (groundVehicle(m)){ m.root.position.y = floor; m.vel.y = 0; }
       else if (m.root.position.y < floor){ m.root.position.y = floor; if (m.vel.y < 0) m.vel.y = 0; }
     }

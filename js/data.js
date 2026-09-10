@@ -379,6 +379,7 @@ export const SUITS = [
     id: 'galcezon', name: 'Galcezon Attack SFS', code: 'GALCEZON / ZEON', faction: 'ZEON', style: 'galcezon',
     hp: 8200, armor: 18, walk: 64, boost: 142, boostFuel: 180, scale: 1.0,
     noJump: true, groundOnly: true, vehicle: true, hover: true, agile: true, carrierSfs: true, msCapacity: 2, supportOnly: true,
+    cruiseAltitudeMin: 50, cruiseAltitudeMax: 100,
     groundAccel: 92, aiAccel: 4.2, groundTurn: 3.4, aiTurn: 2.2, turretTraverse: 4.5,
     aimHeight: 6.2, weaponHeight: 6.0, collisionRadius: 9.5,
     dimensions: { length: 29, width: 20, height: 6.2 },
