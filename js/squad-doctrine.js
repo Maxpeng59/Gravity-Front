@@ -5,6 +5,14 @@ export const PROTECTION_MAX_RANGE = 100;
 export const PROTECTION_MELEE_RANGE = 50;
 export const ASSAULT_SUPPORT_TETHER = 225;
 
+export function carrierRiderEligible({
+  carrierSquadId = null, riderSquadId = null, alive = false, ai = false,
+  air = false, vehicle = false, alreadyMounted = false,
+} = {}){
+  return !!carrierSquadId && riderSquadId === carrierSquadId && !!alive && !!ai
+    && !air && !vehicle && !alreadyMounted;
+}
+
 export function shouldProtectAlly({ selfValue = 0, allyValue = 0, hpFraction = 0 } = {}){
   return Number(selfValue) < Number(allyValue) && Number(hpFraction) > 0.5;
 }
@@ -70,25 +78,48 @@ export function assignRequestedSquadIds(items, team = 'SQUAD'){
     usedSquads.add(chosen);
     return chosen;
   };
-  let offset = 0;
-  for (const size of squadSizes(automatic.length)){
+  const sizes = squadSizes(automatic.length);
+  const buckets = sizes.map(() => []);
+  const melee = [], support = [], flexible = [];
+  for (const member of automatic){
+    if (member.item?.meleeCapable && !member.item?.dedicatedSupport) melee.push(member);
+    else if (member.item?.dedicatedSupport) support.push(member);
+    else flexible.push(member);
+  }
+  const placeRoundRobin = (pool, preferredLimit = Infinity) => {
+    let group = 0;
+    for (const member of pool){
+      let attempts = 0;
+      while (attempts++ < buckets.length){
+        const i = group++ % buckets.length;
+        if (buckets[i].length < sizes[i] && buckets[i].filter(({ item }) => item?.meleeCapable && !item?.dedicatedSupport).length < preferredLimit){
+          buckets[i].push(member); break;
+        }
+      }
+      if (!buckets.some(bucket => bucket.includes(member))){
+        const i = buckets.findIndex((bucket, index) => bucket.length < sizes[index]);
+        if (i >= 0) buckets[i].push(member);
+      }
+    }
+  };
+  // AUTO examines the roster instead of slicing it in menu order: spread front-line
+  // machines and fire-support machines across every seven-unit-or-smaller squad.
+  placeRoundRobin(melee, SQUAD_ASSAULT_SLOTS);
+  placeRoundRobin(support);
+  placeRoundRobin(flexible);
+  // Fill any capacity left by a role cap without changing the original result order.
+  for (const member of automatic){
+    if (buckets.some(bucket => bucket.includes(member))) continue;
+    const i = buckets.findIndex((bucket, index) => bucket.length < sizes[index]);
+    if (i >= 0) buckets[i].push(member);
+  }
+  for (const bucket of buckets){
     const squad = takeUnusedSquad();
-    for (let slot = 0; slot < size; slot++){
-      const { item, index } = automatic[offset++];
+    for (const { item, index } of bucket){
       result[index] = { ...item, squadId: `${team}-${squad}` };
     }
   }
   return result;
-}
-
-export function overfilledRequestedSquads(items, maximum = SQUAD_MAX_SIZE){
-  const counts = new Map();
-  for (const item of Array.isArray(items) ? items : []){
-    const squad = Math.trunc(Number(item?.requestedSquad)) || 0;
-    if (squad > 0) counts.set(squad, (counts.get(squad) || 0) + 1);
-  }
-  return [...counts.entries()].filter(([, count]) => count > maximum)
-    .map(([squad, count]) => ({ squad, count }));
 }
 
 export function minimumCombatMovementSpeed({

@@ -10,6 +10,7 @@
 import * as THREE from 'three';
 import { modelFor } from './models.js';
 import { buildGuntankMk2 } from './guntankmk2.js';
+import { buildGalcezon } from './galcezon.js';
 import { buildCanonicalAircraft } from './canonical-aircraft.js';
 import { buildZeonCanonical } from './canonical-zeon.js';
 import { buildFederationCanonical } from './canonical-fed.js';
@@ -1065,6 +1066,7 @@ export function buildMech(suit){
 
   // Requiem for Vengeance's RTX-440-B keeps its dedicated hero builder.
   if (suit.id === 'guntankmk2') return buildGuntankMk2(suit, M);
+  if (suit.id === 'galcezon') return buildGalcezon(suit, M);
 
   if (suit.faction === 'FED'){
     const canonical = buildFederationCanonical(suit, M);

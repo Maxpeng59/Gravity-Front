@@ -27,7 +27,7 @@ import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
 import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
-  assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  assignSquadRoles, carrierRiderEligible, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
   groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
   targetPriorityScore,
 } from './squad-doctrine.js';
@@ -103,7 +103,7 @@ const LITE_GEOS = {
     [.55,.55,5,-.55,-.35,6,.55], [.55,.55,5,.55,-.35,6,.55], [5,1.1,4,0,0,-6,.5],
   ]),
 };
-const liteKind = suit => suit.style === 'fighter' ? 'air' : suit.style === 'tank' ? 'tank' : suit.style === 'apc' ? 'apc'
+const liteKind = suit => suit.style === 'fighter' ? 'air' : suit.style === 'tank' || suit.style === 'galcezon' ? 'tank' : suit.style === 'apc' ? 'apc'
   : suit.style === 'guntank' || suit.style === 'crane' ? 'guntank'
   : suit.style === 'zakutank' ? 'zakutank' : suit.style === 'acguy' ? 'acguy' : 'humanoid';
 const FED_POOL = ['gm', 'gm', 'gmbazooka', 'guncannon'];
@@ -112,7 +112,7 @@ const SHIELDED_IDS = new Set([
   'zaku2','zaku2g','zaku2b','zaku2s','gouf','goufnh','gelgoog','gelgoogs',
 ]);
 // ground-only suits get swapped for a space-capable equivalent when fielded in orbit
-const SPACE_SUB = { gouf: 'zaku2', goufnh: 'zaku2b', guntank: 'guncannon', type61: 'gm', magella: 'zaku2', weasel: 'zaku2' };
+const SPACE_SUB = { gouf: 'zaku2', goufnh: 'zaku2b', guntank: 'guncannon', type61: 'gm', magella: 'zaku2', weasel: 'zaku2', galcezon: 'zaku2' };
 
 const BIOMES = {
   verdant:  { lo: 0x2e4d2a, hi: 0x8a8f7a, sky: 0x9db8d8, fog: 0xa8bccc, airless: false },
@@ -835,6 +835,7 @@ export function startBattle(renderer, opts, onEnd){
       m.hitSphereBody = true;
       m.hitSpheres = suit.hitSpheres.map(s => ({ ...s }));
     }
+    if (suit.carrierSfs) m.carrierSlots = [];
     // WEAK POINT (model-local units, ×scale at runtime): aircraft → rear engines; MS/tanks → cockpit (chest).
     // Hitting it deals 2.5× damage. The carrier's engine block is its rear thruster cluster.
     m.weakPoints = suit.weakPoints ? suit.weakPoints.map(w => ({ ...w }))
@@ -2844,6 +2845,15 @@ export function startBattle(renderer, opts, onEnd){
   let kills = 0; const destroyedIds = [];
   function kill(m, attacker, weaponName){
     m.alive = false; m.deadT = 1.1; m.deathWeapon = weaponName || null;
+    if (m.suit.carrierSfs && m.carrierSlots){
+      for (const rider of m.carrierSlots) if (rider?.alive) syncGalcezonRider(rider);
+      m.carrierSlots.length = 0;
+    }
+    if (m.carrierRide){
+      const ride = m.carrierRide;
+      if (ride.carrier?.carrierSlots?.[ride.slot] === m) ride.carrier.carrierSlots[ride.slot] = null;
+      m.carrierRide = null;
+    }
     explosion(m.root.position.clone().add(tmpV.set(0, 9, 0)), 16,
       clamp(420 / m.root.position.distanceTo(player.root.position), 0.06, 0.42));
     if (attacker && attacker.isPlayer){ kills++; if (m.core) destroyedIds.push(m.suit.id); }
@@ -3760,6 +3770,56 @@ export function startBattle(renderer, opts, onEnd){
         });
       });
     }
+    refreshGalcezonLoads();
+  }
+
+  function mountOnGalcezon(carrier, rider, slot){
+    rider.carrierRide = { carrier, slot };
+    rider.kneelTarget = false; rider.kneelBlend = 0; rider.blocking = false;
+    rider.ai.meleeRun = null; rider.ai.pass = null;
+    carrier.carrierSlots[slot] = rider;
+    syncGalcezonRider(rider);
+  }
+
+  function refreshGalcezonLoads(){
+    const carriers = mechs.filter(m => m.alive && m.ai && m.suit.carrierSfs && m.ai.squadId);
+    for (const carrier of carriers){
+      carrier.carrierSlots ||= [];
+      for (let slot = 0; slot < carrier.suit.msCapacity; slot++){
+        const current = carrier.carrierSlots[slot];
+        if (current?.alive && current.carrierRide?.carrier === carrier) continue;
+        carrier.carrierSlots[slot] = null;
+        const rider = mechs.filter(unit => unit !== carrier && carrierRiderEligible({
+          carrierSquadId: carrier.ai.squadId, riderSquadId: unit.ai?.squadId,
+          alive: unit.alive, ai: !!unit.ai, air: unit.air,
+          vehicle: unit.suit.vehicle, alreadyMounted: !!unit.carrierRide,
+        }))
+          .sort((a, b) => a.root.position.distanceToSquared(carrier.root.position)
+            - b.root.position.distanceToSquared(carrier.root.position))[0];
+        if (rider) mountOnGalcezon(carrier, rider, slot);
+      }
+    }
+  }
+
+  function syncGalcezonRider(rider){
+    const ride = rider.carrierRide, carrier = ride?.carrier;
+    if (!carrier?.alive){
+      if (ride){
+        rider.carrierRide = null;
+        rider.vel.copy(carrier?.vel || rider.vel).add(new THREE.Vector3(ride.slot ? 7 : -7, 4, -5));
+      }
+      return false;
+    }
+    const localZ = ride.slot === 0 ? 4.2 : -5.2;
+    const side = ride.slot === 0 ? -0.55 : 0.55;
+    const c = Math.cos(carrier.yaw), s = Math.sin(carrier.yaw);
+    rider.root.position.set(
+      carrier.root.position.x + side * c + localZ * s,
+      carrier.root.position.y + 4.05,
+      carrier.root.position.z - side * s + localZ * c,
+    );
+    rider.vel.copy(carrier.vel); rider.boosting = false; rider.hovering = false;
+    return true;
   }
 
   function sampleGroundTactics(m, target, preferredRange){
@@ -5335,13 +5395,20 @@ export function startBattle(renderer, opts, onEnd){
         const land = SPACE ? m.dropFloor : groundY(m.root.position.x, m.root.position.z);
         if (m.root.position.y <= land){ m.root.position.y = land; m.dropping = false; } // touched down → normal combat
       }
+      else if (m.carrierRide?.carrier?.alive){
+        // Riders keep independent target selection and ranged fire while the
+        // carrier owns their translation on the two docking rails.
+        aiUpdate(m, dt);
+        syncGalcezonRider(m);
+      }
       else {
+        if (m.carrierRide) syncGalcezonRider(m);
         aiUpdate(m, dt);
         m.root.position.addScaledVector(m.vel, dt);
         if (!SPACE){
           const g = groundY(m.root.position.x, m.root.position.z);
           const target = (m.suit.hover ? g + 3.5 + Math.sin(performance.now() * 0.002 + m.yaw) * 0.8 : g) + (m.hopY || 0);
-          m.root.position.y = m.suit.vehicle ? g : lerp(m.root.position.y, target, Math.min(1, (m.hopY ? 13 : 6) * dt));
+          m.root.position.y = m.suit.vehicle ? (m.suit.hover ? target : g) : lerp(m.root.position.y, target, Math.min(1, (m.hopY ? 13 : 6) * dt));
           if (m.suit.vehicle) m.vel.y = 0;
         }
       }
@@ -6731,7 +6798,7 @@ export function startBattle(renderer, opts, onEnd){
     collisionGrid.clear();
     const live = [];
     for (const m of mechs){
-      if (!m.alive) continue;
+      if (!m.alive || m.carrierRide?.carrier?.alive) continue;
       m._ci = live.length; m._r = bodyRadius(m); live.push(m);
       enforceTerrainSlope(m);
       const key = Math.floor(m.root.position.x / CELL) + ',' + Math.floor(m.root.position.z / CELL);
@@ -7099,6 +7166,8 @@ export function startBattle(renderer, opts, onEnd){
               kneelTarget: !!m.kneelTarget, kneelBlend: m.kneelBlend || 0, kneelState: m.kneelState || 'standing',
               squadId: m.ai?.squadId || null, squadRole: m.ai?.squadRole || null,
               squadSlot: m.ai?.squadSlot ?? null, squadSize: m.ai?.squadSize || 0,
+              carrierRiders: m.suit.carrierSfs ? (m.carrierSlots || []).filter(rider => rider?.alive).map(rider => rider.suit.id) : null,
+              carrierRide: m.carrierRide?.carrier?.alive ? { carrierId: m.carrierRide.carrier.uid, slot: m.carrierRide.slot } : null,
               formationPoint: m.ai?.target?.alive ? squadFormationPoint(m, m.ai.target) : null,
               protectTarget: m.ai?.protectTarget?.name || null,
               protectDistance: m.ai?.protectDistance ?? null,
@@ -7166,6 +7235,7 @@ export function startBattle(renderer, opts, onEnd){
         lodTimer -= dt;
         if (lodTimer <= 0){ lodRepartition(); lodTimer = 0.2; } // re-pick the near set ~5x/sec
         for (let i = 0, n = mechs.length; i < n; i++) mechUpdate(mechs[i], dt); // cached length: carrier-dropped mechs join next frame, not mid-loop
+        for (const m of mechs) if (m.alive && m.carrierRide?.carrier?.alive) syncGalcezonRider(m);
         resolveCollisions(dt); // solid bodies: nothing walks through anything
         updatePlayerHoverCraft(); // collision response may have shifted the rider
         projectilesUpdate(dt);

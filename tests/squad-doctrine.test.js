@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {
   ASSAULT_SUPPORT_TETHER, PROTECTION_MAX_RANGE, PROTECTION_MELEE_RANGE,
   SQUAD_ASSAULT_SLOTS, SQUAD_MAX_SIZE, SQUAD_MIN_SIZE,
-  assignRequestedSquadIds, assignSquadIds, assignSquadRoles, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
-  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, overfilledRequestedSquads, shouldProtectAlly, squadSizes,
+  assignRequestedSquadIds, assignSquadIds, assignSquadRoles, carrierRiderEligible, chooseRouteSide, formationSlotOffset, formationSteeringStrength,
+  groundTacticalDecision, minimumAttackAdvance, minimumCombatMovementSpeed, shouldProtectAlly, squadSizes,
   targetPriorityScore,
 } from '../js/squad-doctrine.js';
 
@@ -34,10 +34,37 @@ test('custom battle honors player-selected squads and assigns AUTO units around 
   assert.deepEqual(assigned.map(unit => unit.squadId), ['FED-3', 'FED-3', 'FED-1', 'FED-1']);
 });
 
-test('manual squad capacity reports an invalid eight-MS selection', () => {
-  const roster = Array.from({ length: 8 }, () => ({ requestedSquad: 2 }));
-  assert.deepEqual(overfilledRequestedSquads(roster), [{ squad: 2, count: 8 }]);
-  assert.deepEqual(overfilledRequestedSquads(roster.slice(0, 7)), []);
+test('manual squads have no member cap', () => {
+  const roster = Array.from({ length: 24 }, (_, index) => ({ index, requestedSquad: 2 }));
+  const assigned = assignRequestedSquadIds(roster, 'ZEON');
+  assert.ok(assigned.every(unit => unit.squadId === 'ZEON-2'));
+});
+
+test('AUTO balances assault and support types while keeping every squad at seven or fewer', () => {
+  const roster = [
+    ...Array.from({ length: 9 }, (_, index) => ({ index, meleeCapable: true })),
+    ...Array.from({ length: 9 }, (_, index) => ({ index: index + 9, dedicatedSupport: true })),
+  ];
+  const assigned = assignRequestedSquadIds(roster, 'FED');
+  const groups = new Map();
+  for (const unit of assigned){
+    if (!groups.has(unit.squadId)) groups.set(unit.squadId, []);
+    groups.get(unit.squadId).push(unit);
+  }
+  for (const members of groups.values()){
+    assert.ok(members.length <= 7);
+    assert.ok(members.some(unit => unit.meleeCapable));
+    assert.ok(members.some(unit => unit.dedicatedSupport));
+  }
+});
+
+test('a Galcezon accepts only living ground MS from its own squad', () => {
+  const valid = { carrierSquadId: 'ZEON-3', riderSquadId: 'ZEON-3', alive: true, ai: true };
+  assert.equal(carrierRiderEligible(valid), true);
+  assert.equal(carrierRiderEligible({ ...valid, riderSquadId: 'ZEON-4' }), false);
+  assert.equal(carrierRiderEligible({ ...valid, vehicle: true }), false);
+  assert.equal(carrierRiderEligible({ ...valid, air: true }), false);
+  assert.equal(carrierRiderEligible({ ...valid, alreadyMounted: true }), false);
 });
 
 test('active combatants retain a movement floor unless deliberately kneeling', () => {

@@ -373,6 +373,32 @@ export const SUITS = [
     saber: { name: 'NONE', dmg: 0 }, cost: 3200,
   },
   {
+    // UC 0105 Galcezon SFS, reassigned to Zeon for this custom roster. The rear
+    // deck carries two MS in line; Gravity Front gives its visible gun battery a
+    // battlefield support loadout so it can fight with its assigned squad.
+    id: 'galcezon', name: 'Galcezon Attack SFS', code: 'GALCEZON / ZEON', faction: 'ZEON', style: 'galcezon',
+    hp: 8200, armor: 18, walk: 64, boost: 142, boostFuel: 180, scale: 1.0,
+    noJump: true, groundOnly: true, vehicle: true, hover: true, agile: true, carrierSfs: true, msCapacity: 2, supportOnly: true,
+    groundAccel: 92, aiAccel: 4.2, groundTurn: 3.4, aiTurn: 2.2, turretTraverse: 4.5,
+    aimHeight: 6.2, weaponHeight: 6.0, collisionRadius: 9.5,
+    dimensions: { length: 29, width: 20, height: 6.2 },
+    hitSpheres: [
+      { x: 0, y: 2.7, z: 10.5, r: 5.2 }, { x: 0, y: 2.5, z: 1.0, r: 6.6 }, { x: 0, y: 2.4, z: -9.5, r: 6.0 },
+      { x: -8.0, y: 2.0, z: 6.0, r: 3.5 }, { x: 8.0, y: 2.0, z: 6.0, r: 3.5 },
+      { x: -8.0, y: 2.0, z: -7.0, r: 3.5 }, { x: 8.0, y: 2.0, z: -7.0, r: 3.5 },
+    ],
+    weakPoints: [
+      { x: 0, y: 4.5, z: 13.0, r: 1.7, mult: 2.3 },
+      { x: 0, y: 2.0, z: -13.5, r: 2.5, mult: 2.0 },
+    ],
+    colors: { main: 0xc7bea2, chest: 0x874c3c, accent: 0xa7583f, trim: 0xd8cba8 },
+    weapons: [
+      { name: 'TRIPLE BEAM CANNON', type: 'beam', dmg: 300, rof: 1.5, clip: 36, reload: 3.4, speed: 1600, spread: 0.008, pref: 820, integrated: true },
+      { name: 'SFS MISSILE BATTERY', type: 'bazooka', dmg: 360, rof: 1.0, clip: 16, reload: 4.2, speed: 620, spread: 0.014, splash: 12, pref: 650, integrated: true },
+    ],
+    saber: { name: 'NONE', dmg: 0 }, cost: 36000,
+  },
+  {
     id: 'acguy', name: 'MSM-04 Acguy', code: 'MSM-04', faction: 'ZEON', style: 'acguy',
     hp: 3600, armor: 10, walk: 24, boost: 72, boostFuel: 75, scale: 0.95,
     colors: { main: 0x8a705e, chest: 0x4b111b, accent: 0x6d5248, trim: 0x999ba5 },
