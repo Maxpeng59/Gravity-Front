@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  GALCEZON_ATTACK_STRAFE_WEIGHT,
   GALCEZON_CRUISE_MAX, GALCEZON_CRUISE_MIN,
   GALCEZON_UNDERSIDE_RADIUS, GALCEZON_UNDERSIDE_REACH,
   galcezonAttackRadial, galcezonCruiseAltitude, playerCanBoardGalcezon,
@@ -13,9 +14,9 @@ test('Galcezon cruise stays between fifty and one hundred metres', () => {
   }
 });
 
-test('Galcezon combat steering never escapes from its target', () => {
-  for (const range of [20, 300, 800, 1200, 2400]) assert.ok(galcezonAttackRadial(range, 820) >= 0);
-  assert.equal(galcezonAttackRadial(300, 820), 0);
+test('Galcezon combat steering keeps advancing instead of orbiting or escaping', () => {
+  for (const range of [20, 300, 800, 1200, 2400]) assert.ok(galcezonAttackRadial(range, 820) > 0);
+  assert.ok(galcezonAttackRadial(300, 820) > GALCEZON_ATTACK_STRAFE_WEIGHT);
   assert.ok(galcezonAttackRadial(2400, 820) > galcezonAttackRadial(600, 820));
 });
 

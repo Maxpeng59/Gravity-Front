@@ -26,6 +26,7 @@ import {
 import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
 import {
+  GALCEZON_ATTACK_STRAFE_WEIGHT,
   galcezonAttackRadial, galcezonCruiseAltitude, playerCanBoardGalcezon,
 } from './galcezon-logic.js';
 import {
@@ -4287,7 +4288,8 @@ export function startBattle(renderer, opts, onEnd){
       boost = m.fuel > 10 && (hurt || d > pref * 2 || (tune.passes && radial > 0 && d > pref * 0.8));
       speed = (boost ? m.suit.boost : m.suit.walk) * (1 - Math.min(0.45, m.legDmg * 0.6)) * (m.blocking ? 0.5 : 1);
       if (calm && !boost && !hurt && d >= pref * tune.near && d < pref * tune.far) speed *= tune.plant; // in-band: plant by doctrine
-      desired.copy(toT).multiplyScalar(radial).addScaledVector(tangent, (calm ? 0.3 : 0.75) * tune.strafe);
+      const strafeWeight = m.suit.carrierSfs ? GALCEZON_ATTACK_STRAFE_WEIGHT : (calm ? 0.3 : 0.75);
+      desired.copy(toT).multiplyScalar(radial).addScaledVector(tangent, strafeWeight * tune.strafe);
       if (SPACE || m.suit.hover) desired.y += clamp((t.root.position.y - m.root.position.y) / Math.max(d, 1), -0.5, 0.5);
       desired.normalize().multiplyScalar(speed);
       accel = m.suit.aiAccel || 3;

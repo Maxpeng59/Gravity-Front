@@ -4,6 +4,7 @@ export const GALCEZON_BOARD_RADIUS = 80;
 export const GALCEZON_BOARD_VERTICAL_REACH = 110;
 export const GALCEZON_UNDERSIDE_RADIUS = 48;
 export const GALCEZON_UNDERSIDE_REACH = 200;
+export const GALCEZON_ATTACK_STRAFE_WEIGHT = 0.24;
 
 export function galcezonCruiseAltitude(phase = 0){
   const middle = (GALCEZON_CRUISE_MIN + GALCEZON_CRUISE_MAX) / 2;
@@ -11,14 +12,14 @@ export function galcezonCruiseAltitude(phase = 0){
   return middle + Math.sin(Number(phase) || 0) * amplitude;
 }
 
-// An attack carrier closes until its weapons are useful, then patrols the
-// engagement band. It never receives a negative "retreat from target" input.
+// An attack carrier always retains an inward component. It closes hard from
+// long range and advances more deliberately while its guns are already useful.
 export function galcezonAttackRadial(range = 0, preferredRange = 1){
   const distance = Math.max(0, Number(range) || 0);
   const preferred = Math.max(1, Number(preferredRange) || 1);
   if (distance > preferred * 1.15) return 1;
-  if (distance > preferred * 0.82) return 0.18;
-  return 0;
+  if (distance > preferred * 0.82) return 0.72;
+  return 0.48;
 }
 
 export function playerCanBoardGalcezon({
