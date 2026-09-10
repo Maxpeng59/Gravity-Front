@@ -19,6 +19,7 @@ import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challe
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
+import { customSquadTraits as customSquadTraitsForUnit } from './custom-roster.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -833,14 +834,7 @@ addEventListener('beforeunload', () => pvpSession.room?.close());
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
 const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12, CUSTOM_SQUAD_COUNT = 40; // 12 Big Trays fought at Odessa; capital props have no mech LOD
-const customSquadTraits = id => {
-  const suit = suitById(id);
-  const longGun = suit.weapons?.some(w => (w.pref || ({ mg: 420, beam: 520, bazooka: 480, sniper: 1000 }[w.type] || 400)) >= 750);
-  return {
-    meleeCapable: !!(suit.saber?.dmg > 0) && !suit.vehicle,
-    dedicatedSupport: !!suit.vehicle || !!longGun || suit.weapons?.some(w => w.arc),
-  };
-};
+const customSquadTraits = id => customSquadTraitsForUnit(suitById(id));
 const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
