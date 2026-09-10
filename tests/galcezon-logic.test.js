@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   GALCEZON_CRUISE_MAX, GALCEZON_CRUISE_MIN,
+  GALCEZON_UNDERSIDE_RADIUS, GALCEZON_UNDERSIDE_REACH,
   galcezonAttackRadial, galcezonCruiseAltitude, playerCanBoardGalcezon,
 } from '../js/galcezon-logic.js';
 
@@ -25,4 +26,18 @@ test('player boarding requires a living friendly Galcezon with a free nearby slo
   assert.equal(playerCanBoardGalcezon({ ...valid, occupied: 2 }), false);
   assert.equal(playerCanBoardGalcezon({ ...valid, planarDistance: 81 }), false);
   assert.equal(playerCanBoardGalcezon({ ...valid, verticalGap: 111 }), false);
+});
+
+test('player can board through the underside capture corridor', () => {
+  const beneath = {
+    sameTeam: true, alive: true, capacity: 2, occupied: 1,
+    planarDistance: GALCEZON_UNDERSIDE_RADIUS,
+    verticalGap: GALCEZON_UNDERSIDE_REACH,
+    carrierAbovePlayer: true,
+  };
+  assert.equal(playerCanBoardGalcezon(beneath), true);
+  assert.equal(playerCanBoardGalcezon({ ...beneath, carrierAbovePlayer: false }), false);
+  assert.equal(playerCanBoardGalcezon({ ...beneath, planarDistance: GALCEZON_UNDERSIDE_RADIUS + 1 }), false);
+  assert.equal(playerCanBoardGalcezon({ ...beneath, verticalGap: GALCEZON_UNDERSIDE_REACH + 1 }), false);
+  assert.equal(playerCanBoardGalcezon({ ...beneath, occupied: 2 }), false);
 });

@@ -2,6 +2,8 @@ export const GALCEZON_CRUISE_MIN = 50;
 export const GALCEZON_CRUISE_MAX = 100;
 export const GALCEZON_BOARD_RADIUS = 80;
 export const GALCEZON_BOARD_VERTICAL_REACH = 110;
+export const GALCEZON_UNDERSIDE_RADIUS = 48;
+export const GALCEZON_UNDERSIDE_REACH = 200;
 
 export function galcezonCruiseAltitude(phase = 0){
   const middle = (GALCEZON_CRUISE_MIN + GALCEZON_CRUISE_MAX) / 2;
@@ -21,9 +23,14 @@ export function galcezonAttackRadial(range = 0, preferredRange = 1){
 
 export function playerCanBoardGalcezon({
   sameTeam = false, alive = false, capacity = 0, occupied = 0,
-  planarDistance = Infinity, verticalGap = Infinity,
+  planarDistance = Infinity, verticalGap = Infinity, carrierAbovePlayer = false,
 } = {}){
+  const horizontal = Number(planarDistance), vertical = Number(verticalGap);
+  const sideApproach = horizontal <= GALCEZON_BOARD_RADIUS
+    && vertical <= GALCEZON_BOARD_VERTICAL_REACH;
+  const undersideApproach = !!carrierAbovePlayer
+    && horizontal <= GALCEZON_UNDERSIDE_RADIUS
+    && vertical <= GALCEZON_UNDERSIDE_REACH;
   return !!sameTeam && !!alive && Number(occupied) < Number(capacity)
-    && Number(planarDistance) <= GALCEZON_BOARD_RADIUS
-    && Number(verticalGap) <= GALCEZON_BOARD_VERTICAL_REACH;
+    && (sideApproach || undersideApproach);
 }

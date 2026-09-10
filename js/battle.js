@@ -3816,10 +3816,12 @@ export function startBattle(renderer, opts, onEnd){
       const dx = carrier.root.position.x - player.root.position.x;
       const dz = carrier.root.position.z - player.root.position.z;
       const planarDistance = Math.hypot(dx, dz);
-      const verticalGap = Math.abs(carrier.root.position.y - player.root.position.y);
+      const verticalOffset = carrier.root.position.y - player.root.position.y;
+      const verticalGap = Math.abs(verticalOffset);
       if (planarDistance >= bestDistance || !playerCanBoardGalcezon({
         sameTeam: carrier.team === player.team, alive: carrier.alive,
         capacity: carrier.suit.msCapacity, occupied, planarDistance, verticalGap,
+        carrierAbovePlayer: verticalOffset >= 0,
       })) continue;
       const slot = Array.from({ length: carrier.suit.msCapacity }, (_, index) => index)
         .find(index => !carrier.carrierSlots[index]?.alive);
