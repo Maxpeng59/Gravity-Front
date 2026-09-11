@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js';
+import { startBattle } from './battle.js?v=35';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
@@ -20,6 +20,9 @@ import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './
 import { landshipProfile } from './landship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import { customSquadTraits as customSquadTraitsForUnit } from './custom-roster.js';
+import {
+  STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
+} from './stationary-batteries.js';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -919,10 +922,13 @@ const SHIPS = [
   { id: 'dabude',  name: 'DOBDAY-class',   code: 'tracked land cruiser', faction: 'ZEON' },
 ];
 const SHIP_IDS = new Set(SHIPS.map(s => s.id));
+const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...STATIONARY_BATTERY_IDS]);
 // One row for every selectable combat type. The roster panels scroll, so the
 // full catalogue remains usable without pushing the launch controls off-screen.
 const ROWS_MAX = SUITS.length + AIRCRAFT.length
-  + Math.max(...['FED', 'ZEON'].map(faction => SHIPS.filter(ship => ship.faction === faction).length));
+  + Math.max(...['FED', 'ZEON'].map(faction =>
+    SHIPS.filter(ship => ship.faction === faction).length
+    + STATIONARY_BATTERIES.filter(battery => battery.faction === faction).length));
 
 function applyRecommendedMapForces(map){
   const preset = map?.recommendedForces;
@@ -1049,10 +1055,11 @@ function renderCustom(){
     const shortFaction = faction === 'ZEON' ? 'Z' : 'F';
     const deployedRows = [];
     arr.forEach((entry, rowIndex) => {
+      if (CUSTOM_PROP_IDS.has(entry.id)) return;
       for (let unit = 0; unit < entry.n && deployedRows.length < PER_SIDE_CAP; unit++)
         deployedRows.push({ rowIndex, id: entry.id, requestedSquad: entry.squad || 0, ...customSquadTraits(entry.id) });
     });
-    const mobileSuitRows = deployedRows.filter(unit => !SHIP_IDS.has(unit.id) && !suitById(unit.id).air);
+    const mobileSuitRows = deployedRows.filter(unit => !suitById(unit.id).air);
     const squadRows = new Map();
     for (const assignment of assignRequestedSquadIds(mobileSuitRows, faction)){
       if (!squadRows.has(assignment.rowIndex)) squadRows.set(assignment.rowIndex, new Set());
@@ -1066,10 +1073,15 @@ function renderCustom(){
       row.appendChild(badge);
       const sel = document.createElement('select');
       const canonicalShipFaction = team === 'enemy' ? 'ZEON' : 'FED';
-      for (const s of [...SUITS, ...AIRCRAFT, ...SHIPS.filter(ship => ship.faction === canonicalShipFaction)]){
+      for (const s of [
+        ...SUITS, ...AIRCRAFT,
+        ...SHIPS.filter(ship => ship.faction === canonicalShipFaction),
+        ...STATIONARY_BATTERIES.filter(battery => battery.faction === canonicalShipFaction),
+      ]){
         const o = document.createElement('option');
         const shipStats = landshipProfile(s.id);
-        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : ''}`; o.selected = s.id === entry.id;
+        const battery = STATIONARY_BATTERY_IDS.has(s.id);
+        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
       const maxForEntry = () => SHIP_IDS.has(entry.id) ? LANDSHIP_CAP : ENTRY_MAX;
@@ -1082,11 +1094,13 @@ function renderCustom(){
       cnt.type = 'number'; cnt.min = '1'; cnt.max = '' + maxForEntry(); cnt.value = Math.min(entry.n, maxForEntry()); cnt.title = 'count';
       cnt.onchange = () => { entry.n = Math.max(1, Math.min(maxForEntry(), Math.round(+cnt.value || 1))); renderCustom(); };
       row.appendChild(cnt);
-      const suit = SHIP_IDS.has(entry.id) ? null : suitById(entry.id);
+      const suit = CUSTOM_PROP_IDS.has(entry.id) ? null : suitById(entry.id);
       const squadNumbers = [...(squadRows.get(i) || [])].sort((a, b) => a - b);
       const squadPick = document.createElement('select');
       squadPick.className = 'squad-pick';
-      const nonSquad = SHIP_IDS.has(entry.id) ? 'SHIP' : suit?.air ? 'AIR' : !squadNumbers.length ? 'CAP' : null;
+      const nonSquad = SHIP_IDS.has(entry.id) ? 'SHIP'
+        : STATIONARY_BATTERY_IDS.has(entry.id) ? 'BATTERY'
+        : suit?.air ? 'AIR' : !squadNumbers.length ? 'CAP' : null;
       if (nonSquad){
         const option = document.createElement('option'); option.textContent = nonSquad; option.value = '0';
         squadPick.appendChild(option); squadPick.disabled = true;
@@ -1105,6 +1119,7 @@ function renderCustom(){
       squadPick.title = squadNumbers.length
         ? `Assigned to ${faction}-${squadNumbers[0]}${squadNumbers.length > 1 ? ` through ${faction}-${squadNumbers.at(-1)}` : ''}`
         : SHIP_IDS.has(entry.id) ? 'Capital ship — outside the mobile-suit squad net'
+        : STATIONARY_BATTERY_IDS.has(entry.id) ? 'Stationary artillery — position set by its numbered deployment marker'
         : suit?.air ? 'Aircraft flight — outside the ground mobile-suit squad net' : `Outside the ${PER_SIDE_CAP}-unit deployment cap`;
       row.appendChild(squadPick);
       const x = el('span', 'x', '✕');
@@ -1211,10 +1226,10 @@ $('btn-launch-custom').onclick = () => {
   };
   const enemySpecs = custom.army > 0
     ? Array.from({ length: custom.army }, () => ({ suitId: rng.pick(zPool), ace: rng.chance(0.04) }))
-    : enemyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
+    : enemyEx.filter(o => !CUSTOM_PROP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const allySpecs = custom.army > 0
     ? Array.from({ length: custom.army - 1 }, () => ({ suitId: rng.pick(ARMY_FED) }))
-    : allyEx.filter(o => !SHIP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
+    : allyEx.filter(o => !CUSTOM_PROP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const enemies = assignGroundSquads(enemySpecs, 'ZEON');
   const allies = assignGroundSquads(allySpecs, 'FED');
   // Landships retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
@@ -1223,6 +1238,10 @@ $('btn-launch-custom').onclick = () => {
     ...enemyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP).map(o => ({ kind: o.id, team: SHIPS.find(s => s.id === o.id).faction, pos: o.pos })),
     ...allyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP).map(o => ({ kind: o.id, team: SHIPS.find(s => s.id === o.id).faction, pos: o.pos })),
   ];
+  const customBatteries = custom.army > 0 ? [] : [
+    ...enemyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
+    ...allyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
+  ].map(o => ({ team: stationaryBatteryById(o.id).faction, pos: o.pos }));
   runBattle({
     env,
     biome: custom.biome === 'random' ? rng.pick(BIOME_LIST) : custom.biome,
@@ -1232,7 +1251,7 @@ $('btn-launch-custom').onclick = () => {
     hoverCraft: hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
-    mission: { aircraftCore: true, customShips }, // fielded fighters & landships count toward the win
+    mission: { aircraftCore: true, customShips, customBatteries }, // fielded fighters, landships and batteries count toward the win
     objective: custom.army > 0 ? `MASS BATTLE — ${custom.army} HOSTILES`
       : activeMap ? activeMap.mission.summary : 'CUSTOM SORTIE — DESTROY ALL HOSTILES',
   }, () => show('menu-custom'));

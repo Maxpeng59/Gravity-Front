@@ -48,6 +48,7 @@ import {
   HOVER_CRAFT_ACCEL_MULTIPLIER,
   hoverCraftEquipped,
 } from './hovercraft.js';
+import { DEFAULT_GROUND_BATTERIES } from './stationary-batteries.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
@@ -1429,6 +1430,7 @@ export function startBattle(renderer, opts, onEnd){
   const DESTRUCT_KINDS = new Set(['wall', 'gate', 'guntower', 'battery', 'watchtower', 'radar', 'fueltank', 'hangar', 'barracks', 'bunker', 'commandpost', 'base', 'depot', 'cityblock']);
   const SOLID_KINDS = new Set(['churchtower', 'townhouse', 'river', 'rubble', 'treecluster', 'rockcluster']);
   function buildMapStructures(map){
+    const builtProps = [];
     const M = {
       stone:    new THREE.MeshStandardMaterial({ color: 0x8a8378, roughness: 0.95 }),
       dstone:   new THREE.MeshStandardMaterial({ color: 0x5f5a52, roughness: 0.95 }),
@@ -1875,11 +1877,35 @@ export function startBattle(renderer, opts, onEnd){
       if (r.hitBoxes) p.hitBoxes = r.hitBoxes;
       if (r.turrets) p.turrets = r.turrets;
       props.push(p);
+      builtProps.push(p);
     }
+    return builtProps;
   }
   if (activeMap) buildMapStructures(activeMap);
+  else if (!SPACE) buildMapStructures({ structures: DEFAULT_GROUND_BATTERIES });
 
   const missionProps = [];
+  if (!SPACE && mission.customBatteries?.length){
+    const placementCounts = new Map();
+    const placed = mission.customBatteries.map(spec => {
+      const centre = spec.pos || (spec.team === 'ZEON' ? { x: 0, z: 900 } : { x: 0, z: -420 });
+      const key = `${centre.x},${centre.z}`;
+      const index = placementCounts.get(key) || 0;
+      placementCounts.set(key, index + 1);
+      // The first emplacement is exactly on the dragged marker. Additional
+      // batteries sharing the row form a compact ring around that centre.
+      const radius = index ? Math.ceil(index / 6) * 54 : 0;
+      const angle = index ? ((index - 1) % 6) / 6 * Math.PI * 2 : 0;
+      return {
+        kind: 'battery', team: spec.team,
+        x: centre.x + Math.sin(angle) * radius,
+        z: centre.z + Math.cos(angle) * radius,
+        rotY: spec.team === 'ZEON' ? Math.PI : 0,
+        scale: 1,
+      };
+    });
+    missionProps.push(...buildMapStructures({ structures: placed }));
+  }
   if (mission.type === 'defend'){
     for (const [ang, d, kind] of [[150, 70, 'base'], [210, 95, 'depot'], [255, 60, 'base']])
       missionProps.push(spawnProp(kind, 'FED', ringPos(ang, d), 2600));
@@ -6241,8 +6267,10 @@ export function startBattle(renderer, opts, onEnd){
       }
       default: {
         const zShips = missionProps.filter(p => p.isShip && p.team === 'ZEON');
+        const zBatteries = missionProps.filter(p => p.battery && p.team === 'ZEON');
         return `${base} · ${total - left}/${total}`
-          + (zShips.length ? ` · LANDSHIPS ${zShips.filter(p => !p.alive).length}/${zShips.length}` : '');
+          + (zShips.length ? ` · LANDSHIPS ${zShips.filter(p => !p.alive).length}/${zShips.length}` : '')
+          + (zBatteries.length ? ` · BATTERIES ${zBatteries.filter(p => !p.alive).length}/${zBatteries.length}` : '');
       }
     }
   }
@@ -6662,8 +6690,9 @@ export function startBattle(renderer, opts, onEnd){
           break;
         }
         default:
-          // custom sortie: clear every enemy mech AND every fielded enemy landship
-          win = !zCore && !missionProps.some(p => p.isShip && p.team === 'ZEON' && p.alive);
+          // Custom sortie: clear every enemy mech and every fielded enemy
+          // landship or stationary battery chosen in the roster.
+          win = !zCore && !missionProps.some(p => (p.isShip || p.battery) && p.team === 'ZEON' && p.alive);
       }
       if (lose){ outcome = { victory: false }; endT = 3; setMsg(lose, 4); }
       else if (win){
