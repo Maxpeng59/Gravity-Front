@@ -2351,14 +2351,17 @@ export function startBattle(renderer, opts, onEnd){
     }
     return found ? Math.sqrt(bestSq) : Infinity;
   }
-  function hasSolidCoverBetween(from, to){
+  function hasSolidCoverBetween(from, to, ignoredTarget = null){
     LOS_DIR.subVectors(to, from);
     const distance = LOS_DIR.length();
     if (distance <= 0.2) return false;
     LOS_DIR.multiplyScalar(1 / distance);
     const limit = distance - 0.12;
     for (const prop of props){
-      if (!prop.alive) continue;
+      // A prop target is the destination of the ray, not intervening cover.
+      // Without this exclusion every landship hull masks itself and AI refuses
+      // to fire even after selecting and aiming at it.
+      if (!prop.alive || prop === ignoredTarget) continue;
       if (rayColliderHit(prop, from, LOS_DIR, limit, COLLIDER_HIT, 0.08)) return true;
     }
     return rayTerrainHit(from, LOS_DIR, limit, TERRAIN_HIT, 0.08, 5);
@@ -3933,7 +3936,7 @@ export function startBattle(renderer, opts, onEnd){
     if (SPACE || !hfn) return { lineOfSight: true, kneel: false, reposition: false, melee: true, holdRange: false };
     const from = m.root.position.clone(); from.y += weaponHeight(m);
     const to = target.root.position.clone(); to.y += aimHeight(target);
-    const lineOfSight = !hasSolidCoverBetween(from, to);
+    const lineOfSight = !hasSolidCoverBetween(from, to, target);
     const step = 18, x = m.root.position.x, z = m.root.position.z;
     const base = groundY(x, z);
     const localSlope = Math.max(
@@ -4095,11 +4098,16 @@ export function startBattle(renderer, opts, onEnd){
       ai.tThink = 1.2;
       const foes = mechs.filter(o => o.alive && o.team !== m.team);
       const hostileProps = props.filter(p => p.alive && p.team !== m.team && !p.scenery);
+      const hostileLandships = hostileProps.filter(p => p.landProfile);
       if (!foes.length && !hostileProps.length){ ai.target = null; setKneelTarget(m, false); return; }
       const nearest = arr => arr.reduce((a, b) =>
         a.root.position.distanceToSquared(m.root.position) < b.root.position.distanceToSquared(m.root.position) ? a : b);
       const nearestFoe = foes.length ? nearest(foes) : null;
-      const priorityFoe = foes.length ? priorityTarget(foes, m) : null;
+      // Landships are combat units, not scenery objectives. Include them in the
+      // normal high-value threat comparison so MS squads engage them while an
+      // enemy screen still exists instead of waiting until every MS is gone.
+      const priorityCombatTarget = (foes.length || hostileLandships.length)
+        ? priorityTarget([...foes, ...hostileLandships], m) : null;
       const sharedTarget = squad?.target?.alive && squad.target.team !== m.team ? squad.target : null;
       const sharedRangeSq = sharedTarget ? sharedTarget.root.position.distanceToSquared(m.root.position) : Infinity;
       const nearestFoeRangeSq = nearestFoe ? nearestFoe.root.position.distanceToSquared(m.root.position) : Infinity;
@@ -4108,14 +4116,14 @@ export function startBattle(renderer, opts, onEnd){
       // the new shared target and combat resumes immediately.
       const nearerThreat = nearestFoe && nearestFoeRangeSq < sharedRangeSq * 0.42;
       const sharedScore = sharedTarget ? targetPriorityScore(entityValue(sharedTarget), Math.sqrt(sharedRangeSq)) : -Infinity;
-      const priorityScore = priorityFoe
-        ? targetPriorityScore(entityValue(priorityFoe), priorityFoe.root.position.distanceTo(m.root.position)) : -Infinity;
-      const higherValueOpportunity = priorityFoe && priorityFoe !== sharedTarget && priorityScore > sharedScore * 1.3;
+      const priorityScore = priorityCombatTarget
+        ? targetPriorityScore(entityValue(priorityCombatTarget), priorityCombatTarget.root.position.distanceTo(m.root.position)) : -Infinity;
+      const higherValueOpportunity = priorityCombatTarget && priorityCombatTarget !== sharedTarget && priorityScore > sharedScore * 1.3;
       // objective pressure: raiders sometimes ignore mechs and press the structures/convoy
       // (relaxed in grand battles so the landships aren't under permanent all-army siege)
       const propBias = mission.type === 'odessa' ? 0.15 : m.team === 'ZEON' ? 0.45 : 0.3;
       if (nearerThreat || higherValueOpportunity){
-        ai.target = nearerThreat ? nearestFoe : priorityFoe;
+        ai.target = nearerThreat ? nearestFoe : priorityCombatTarget;
       } else if (sharedTarget){
         ai.target = sharedTarget;
       } else if (hostileProps.length && (!foes.length || rng.chance(propBias)) && !(m.suit.aa && foes.some(f => f.air))){
@@ -4126,7 +4134,7 @@ export function startBattle(renderer, opts, onEnd){
         // The squad attacks the most valuable reachable threat first. Proximity
         // remains part of the score, so a cheap unit at knife range is never ignored.
         const airFoes = m.suit.aa ? foes.filter(f => f.air) : null;     // dedicated AA platforms hunt aircraft first
-        let pick = (airFoes && airFoes.length) ? priorityTarget(airFoes, m) : priorityFoe;
+        let pick = (airFoes && airFoes.length) ? priorityTarget(airFoes, m) : priorityCombatTarget;
         // hunt escorts SCREEN their vip: intercept whoever is pressing the boss hardest
         if (mission.type === 'hunt' && m.team === 'ZEON' && !m.vip && (!airFoes || !airFoes.length)){
           const vip = mechs.find(v => v.alive && v.vip);
@@ -4174,6 +4182,8 @@ export function startBattle(renderer, opts, onEnd){
 
     const toT = tmpV.subVectors(t.root.position, m.root.position);
     const d = toT.length(); toT.normalize();
+    const targetSurfaceDistance = t.isProp
+      ? closestColliderPoint(t, m.root.position, CLOSEST_COLLIDER_POINT) : d;
     const w = m.suit.weapons[m.wi];
     const pref = w.pref || PREF_RANGE[w.type];
     // doctrine state shared by the melee and movement blocks: wounded units break off (vips run
@@ -4227,7 +4237,7 @@ export function startBattle(renderer, opts, onEnd){
       && (!protectedAlly || protectionMelee)
       && !hurt && (m.kneelBlend || 0) <= 0.001
       && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
-      && !t.isProp && !t.air && !m.dropping; // never blade-charge an aircraft — the swing can't reach the sky
+      && (!t.isProp || t.isShip) && !t.air && !m.dropping; // landships can be cut at the hull; aircraft remain unreachable
     if (canMelee && !ai.meleeRun && ai.meleeCd <= 0){
       // doctrine-driven blade work: brawlers (heat-hawk Zakus, Goufs) commit from further out and far
       // more often; timid roles (snipers, heavies) barely ever break formation to lunge. The roll is
@@ -4237,7 +4247,7 @@ export function startBattle(renderer, opts, onEnd){
         : ai.squadRole === 'assault' ? 520 : (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
       const chance = protectionMelee ? 1
         : ai.squadRole === 'assault' ? 0.82 : Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
-      if (d < reach && d > 26){
+      if (targetSurfaceDistance < reach && targetSurfaceDistance > 6){
         if (rng.chance(chance)){
           ai.meleeRun = { phase: 'charge', swings: 0, t: 0 };
           m.hopT = m.suit.noJump ? 0 : 0.5; // a hop as it springs onto the enemy (tracked chassis can't hop)
@@ -4262,7 +4272,7 @@ export function startBattle(renderer, opts, onEnd){
       ai.meleeRun.t += dt;
       if (ai.meleeRun.phase === 'charge'){
         m.vel.lerp(tmpV3.copy(toT).multiplyScalar(sp), clamp(5 * dt, 0, 1)); // drive straight in
-        if (d < 22 && m.meleeT <= 0){
+        if (targetSurfaceDistance < 22 && m.meleeT <= 0){
           m.meleeT = 0.6; m.bladeT = 0.45; m.swingT = 0.4; m.swingDir = -(m.swingDir || 1);
           sfx('saber', clamp(300 / m.root.position.distanceTo(player.root.position), 0.04, 0.18));
           queueAIMeleeContact(m, t, m.suit.saber.dmg * 0.6, 30);
@@ -4271,7 +4281,7 @@ export function startBattle(renderer, opts, onEnd){
         if (ai.meleeRun.t > 8 || hurt){ ai.meleeRun = null; ai.meleeCd = rng.range(2, 4); m.hopY = 0; } // bail on timeout, or break off wounded
       } else { // thrust back out to firing range
         m.vel.lerp(tmpV3.copy(toT).multiplyScalar(-sp), clamp(5 * dt, 0, 1));
-        if (ai.meleeRun.t > 0.9 || d > 110){ ai.meleeRun = null; ai.meleeCd = rng.range(3, 6); m.hopY = 0; }
+        if (ai.meleeRun.t > 0.9 || targetSurfaceDistance > 110){ ai.meleeRun = null; ai.meleeCd = rng.range(3, 6); m.hopY = 0; }
       }
       return; // a melee run owns this mech's movement and fire for the frame
     }
@@ -4489,7 +4499,7 @@ export function startBattle(renderer, opts, onEnd){
       : tune.melee > 0 && !squadTethered && (!protectedAlly || protectionMelee)
         && (protectionMelee || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee)));
     const meleeRange = commanderIntent ? commanderIntent.meleeRange : 20;
-    if (meleeAllowed && d < meleeRange && m.meleeT <= 0 && !m.dropping && m.suit.saber && m.suit.saber.dmg > 0){
+    if (meleeAllowed && targetSurfaceDistance < meleeRange && m.meleeT <= 0 && !m.dropping && m.suit.saber && m.suit.saber.dmg > 0){
       m.meleeT = commanderIntent ? 1.3 : 2.4; m.bladeT = 0.4;
       m.swingT = 0.4; m.swingDir = -(m.swingDir || 1);
       sfx('saber', clamp(300 / m.root.position.distanceTo(player.root.position), 0.04, 0.18));

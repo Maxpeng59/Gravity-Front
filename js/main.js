@@ -267,8 +267,10 @@ function modal(title, body, buttons = [{ label: 'OK' }]){
 function runBattle(opts, after){
   show(null);
   music.play('battle');
+  let clearLocalBattleDebug = () => {};
   battleHandle = startBattle(renderer, opts, res => {
     const h = battleHandle; battleHandle = null;
+    clearLocalBattleDebug();
     h.dispose();
     music.play(res.victory ? 'victory' : res.retreat ? 'retreat' : 'defeat');
     const pvpDuel = !!opts.multiplayer;
@@ -286,6 +288,38 @@ function runBattle(opts, after){
     show('result');
     $('btn-result-ok').onclick = () => { music.play('requiem'); show(null); after(res); };
   });
+  // The battle module already exposes deterministic QA hooks. Make them reachable
+  // only on localhost so combat can be verified without browser pointer lock.
+  if (['localhost', '127.0.0.1', '::1'].includes(location.hostname)) {
+    globalThis.__gravityBattle = battleHandle;
+    const unpause = () => battleHandle?._debugUnpause();
+    const publishState = () => {
+      document.documentElement.dataset.gravityBattleState = JSON.stringify(battleHandle?._debugState?.() || null);
+    };
+    const qaUnpause = document.createElement('button');
+    const qaState = document.createElement('button');
+    qaUnpause.id = 'gravity-debug-unpause';
+    qaState.id = 'gravity-debug-state';
+    for (const button of [qaUnpause, qaState]) {
+      button.type = 'button';
+      button.tabIndex = -1;
+      button.setAttribute('aria-hidden', 'true');
+      button.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1';
+      document.body.appendChild(button);
+    }
+    qaUnpause.onclick = unpause;
+    qaState.onclick = publishState;
+    document.addEventListener('gravity-debug-unpause', unpause);
+    document.addEventListener('gravity-debug-state', publishState);
+    clearLocalBattleDebug = () => {
+      document.removeEventListener('gravity-debug-unpause', unpause);
+      document.removeEventListener('gravity-debug-state', publishState);
+      qaUnpause.remove();
+      qaState.remove();
+      delete document.documentElement.dataset.gravityBattleState;
+      delete globalThis.__gravityBattle;
+    };
+  }
 }
 
 // ---------- campaign ----------
