@@ -20,3 +20,17 @@ test('Operation Odessa preset deploys Federation and Zeon combined-arms units', 
   for (const id of ['gm', 'guncannon', 'guntank', 'type61', 'bigtray']) assert.ok(allyIds.has(id), id);
   for (const id of ['zaku2g', 'gouf', 'dom', 'magella', 'weasel', 'dabude']) assert.ok(enemyIds.has(id), id);
 });
+
+test('ground battlefields deploy faction-owned stationary artillery batteries', () => {
+  for (const map of MAPS){
+    const batteries = map.structures.filter(structure => structure.kind === 'battery');
+    assert.ok(batteries.length >= 2, `${map.id} stationary batteries`);
+    for (const battery of batteries){
+      assert.ok(['FED', 'ZEON'].includes(battery.team), `${map.id} battery team`);
+      assert.ok(Number.isFinite(battery.x) && Number.isFinite(battery.z));
+    }
+  }
+  const odessaTeams = new Set(MAP_BY_ID.odessa.structures
+    .filter(structure => structure.kind === 'battery').map(structure => structure.team));
+  assert.deepEqual(odessaTeams, new Set(['FED', 'ZEON']));
+});

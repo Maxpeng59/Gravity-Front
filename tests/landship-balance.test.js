@@ -13,6 +13,7 @@ test('landships are capital-strength combatants rather than structure-grade prop
     assert.ok(profile.mainDamage >= 600);
     assert.ok(profile.mainRange >= 2400);
     assert.ok(profile.shellSpeed * profile.shellLife > profile.mainRange);
+    assert.ok(profile.shellScale >= 1.2);
     assert.ok(profile.speed > 0);
     assert.ok(profile.secondaryDamage > 0);
     assert.equal(profile.secondarySplash, 0);

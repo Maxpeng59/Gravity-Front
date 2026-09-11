@@ -7,7 +7,7 @@
 // STRUCTURES (kind, x, z, rotY, scale, variant and optional dimensions). battle.js reads MAPS when
 // opts.mapId is set: it paints the terrain, drapes the fog/light, then builds
 // each structure — military kinds (wall/gate/guntower/hangar/…) become
-// destructible NEUTRAL props (anyone's fire can level them), landmark kinds
+// destructible props (batteries retain their authored faction), landmark kinds
 // (churchtower/townhouse) become indestructible solid cover. Rubble, tree trunks,
 // rocks and river embankments also carry matching colliders; only flat roads,
 // landing pads and river water remain traversable ground dressing.
@@ -46,6 +46,8 @@ export const MAPS = [
       { kind: 'wall', x: -95, z: 185, rotY: 0, scale: 1.0 },
       { kind: 'guntower', x: -225, z: 195, rotY: 0, scale: 1.0 },
       { kind: 'guntower', x: 225, z: 195, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'ZEON', x: -145, z: 150, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'ZEON', x: 145, z: 150, rotY: 0, scale: 1.0 },
       { kind: 'river', x: -160, z: 310, rotY: 0, scale: 1.8 },       // Someșul Mic, west reach
       { kind: 'river', x: 160, z: 310, rotY: 0, scale: 1.8 },        // east reach — open center forces the bridges
       { kind: 'road', x: -160, z: 310, rotY: 0, scale: 1.0 },        // west stone bridge (crosses the E-W river N-S)
@@ -83,6 +85,8 @@ export const MAPS = [
       { kind: 'wall', x: 180, z: 435, rotY: 0, scale: 1.4 },          // curtain wall, east span
       { kind: 'guntower', x: -275, z: 455, rotY: 0, scale: 1.0 },     // Forkesch gate tower
       { kind: 'guntower', x: 275, z: 455, rotY: 0, scale: 1.0 },      // east gate tower — crossfire
+      { kind: 'battery', team: 'ZEON', x: -205, z: 500, rotY: 3.14159, scale: 1.0 },
+      { kind: 'battery', team: 'ZEON', x: 205, z: 500, rotY: 3.14159, scale: 1.0 },
       { kind: 'townhouse', x: -95, z: 545, rotY: 1.5708, scale: 1.0 }, // Saxon burgher-house street canyon
       { kind: 'townhouse', x: 100, z: 545, rotY: -1.5708, scale: 1.0 },
       { kind: 'townhouse', x: -100, z: 650, rotY: 1.5708, scale: 1.05 },
@@ -116,6 +120,8 @@ export const MAPS = [
       { kind: 'wall', x: 165, z: 285, rotY: 0, scale: 2.0 },          // ring-wall, east
       { kind: 'guntower', x: -255, z: 300, rotY: 0, scale: 1.0 },     // west anti-MS bastion
       { kind: 'guntower', x: 255, z: 300, rotY: 0, scale: 1.0 },      // east bastion — crossfire
+      { kind: 'battery', team: 'FED', x: -170, z: 240, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'FED', x: 170, z: 240, rotY: 0, scale: 1.0 },
       { kind: 'bunker', x: -80, z: 248, rotY: 0, scale: 1.0 },        // gate pillbox
       { kind: 'rubble', x: -40, z: 293, rotY: 0.4, scale: 1.0 },      // pre-collapsed wall gap
       { kind: 'road', x: 0, z: 205, rotY: 0, scale: 2.8 },            // churned approach road
@@ -199,6 +205,10 @@ export const MAPS = [
       // A little battle damage provides low cover without closing either spawn lane.
       { kind: 'rubble', x: -92, z: 680, rotY: 0.35, scale: 0.82 },
       { kind: 'rubble', x: 96, z: 1110, rotY: -0.2, scale: 0.78 },
+      { kind: 'battery', team: 'FED', x: -245, z: -665, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'FED', x: 245, z: -665, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'ZEON', x: -245, z: 1565, rotY: 3.14159, scale: 1.0 },
+      { kind: 'battery', team: 'ZEON', x: 245, z: 1565, rotY: 3.14159, scale: 1.0 },
     ],
   },
 
@@ -243,6 +253,8 @@ export const MAPS = [
       { kind: 'commandpost', x: -360, z: -1220, rotY: 0.2, scale: 1.05 },
       { kind: 'depot', x: 370, z: -1200, rotY: -0.2, scale: 1.15 },
       { kind: 'fueltank', x: 470, z: -1150, rotY: 0, scale: 1.0 },
+      { kind: 'battery', team: 'FED', x: -540, z: -1020, rotY: 0, scale: 1.15 },
+      { kind: 'battery', team: 'FED', x: 540, z: -1020, rotY: 0, scale: 1.15 },
 
       // The open-pit bowl: broken benches and haul roads create cover without
       // closing the long north/south fire lanes.
@@ -277,6 +289,8 @@ export const MAPS = [
       { kind: 'gate', x: 0, z: 1080, rotY: 0, scale: 1.35 },
       { kind: 'guntower', x: -570, z: 1110, rotY: 0, scale: 1.25 },
       { kind: 'guntower', x: 570, z: 1110, rotY: 0, scale: 1.25 },
+      { kind: 'battery', team: 'ZEON', x: -420, z: 1140, rotY: 3.14159, scale: 1.2 },
+      { kind: 'battery', team: 'ZEON', x: 420, z: 1140, rotY: 3.14159, scale: 1.2 },
       { kind: 'bunker', x: -180, z: 1160, rotY: 3.14159, scale: 1.2 },
       { kind: 'bunker', x: 180, z: 1160, rotY: 3.14159, scale: 1.2 },
       { kind: 'base', x: 0, z: 1390, rotY: 3.14159, scale: 1.45 },

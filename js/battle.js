@@ -1426,7 +1426,7 @@ export function startBattle(renderer, opts, onEnd){
   // Military structures and city blocks → destructible NEUTRAL props; historic landmarks,
   // rubble, trunks, rocks and river embankments → indestructible solid cover. Flat roads,
   // pads and water surfaces remain traversable ground dressing.
-  const DESTRUCT_KINDS = new Set(['wall', 'gate', 'guntower', 'watchtower', 'radar', 'fueltank', 'hangar', 'barracks', 'bunker', 'commandpost', 'base', 'depot', 'cityblock']);
+  const DESTRUCT_KINDS = new Set(['wall', 'gate', 'guntower', 'battery', 'watchtower', 'radar', 'fueltank', 'hangar', 'barracks', 'bunker', 'commandpost', 'base', 'depot', 'cityblock']);
   const SOLID_KINDS = new Set(['churchtower', 'townhouse', 'river', 'rubble', 'treecluster', 'rockcluster']);
   function buildMapStructures(map){
     const M = {
@@ -1468,7 +1468,7 @@ export function startBattle(renderer, opts, onEnd){
     // yaw-oriented boxes {x,y,z,hx,hy,hz,rotY?}; hitSpheres remain useful for round forms.
     function build(kind, s, variant, spec = {}){
       const g = new THREE.Group();
-      let radius = 12 * s, hitY = 8 * s, hp = 800, big = false, label = kind.toUpperCase(), hitSpheres = null, hitBoxes = null;
+      let radius = 12 * s, hitY = 8 * s, hp = 800, big = false, label = kind.toUpperCase(), hitSpheres = null, hitBoxes = null, turrets = null;
       switch (kind){
         case 'wall': {
           const L = 42 * s, h = 16 * s, th = 6 * s;
@@ -1505,6 +1505,43 @@ export function startBattle(renderer, opts, onEnd){
           for (const sx of [-1, 1]) g.add(cyl(0.7 * s, 0.7 * s, 12 * s, M.dmetal, sx * 2 * s, h + 4 * s, 6 * s, 6).rotateX(Math.PI / 2)); // twin barrels fwd
           radius = 8 * s; hitY = h * 0.55; hp = 700 * s; label = 'GUN TOWER';
           hitBoxes = [{ x: 0, y: (h + 7 * s) / 2, z: 0, hx: 7 * s, hy: (h + 7 * s) / 2, hz: 7 * s }];
+          break;
+        }
+        case 'battery': {
+          // Low field artillery: the upper carriage traverses while the gun
+          // cradle elevates, using the same turret contract as a landship.
+          const armor = spec.team === 'FED'
+            ? new THREE.MeshStandardMaterial({ color: 0x526d80, roughness: 0.76, metalness: 0.38 })
+            : new THREE.MeshStandardMaterial({ color: 0x655f43, roughness: 0.8, metalness: 0.34 });
+          g.add(box(19 * s, 1.8 * s, 16 * s, M.dmetal, 0, 0.9 * s, 0));
+          for (const [x, z, ry] of [[-11, -7, -0.18], [11, -7, 0.18], [-11, 7, 0.18], [11, 7, -0.18]]){
+            const leg = box(8 * s, 1.1 * s, 2.1 * s, M.dmetal, x * s, 0.55 * s, z * s);
+            leg.rotation.y = ry; g.add(leg);
+            g.add(cyl(1.25 * s, 1.5 * s, 1.3 * s, M.metal, x * s, 0.65 * s, z * s, 10));
+          }
+          g.add(cyl(7.4 * s, 8.4 * s, 2.4 * s, M.metal, 0, 2.4 * s, 0, 16));
+          const yaw = new THREE.Group(); yaw.position.y = 4 * s; g.add(yaw);
+          yaw.add(cyl(6.8 * s, 7.2 * s, 2.3 * s, armor, 0, 0, 0, 16));
+          yaw.add(box(12 * s, 5.5 * s, 9 * s, armor, 0, 2.7 * s, -0.5 * s));
+          yaw.add(box(15 * s, 7.2 * s, 1.1 * s, M.dmetal, 0, 3.5 * s, 3.6 * s));
+          const gun = new THREE.Group(); gun.position.set(0, 4.1 * s, 1.8 * s); gun.rotation.x = -0.06; yaw.add(gun);
+          gun.add(box(4.4 * s, 3.2 * s, 7.2 * s, M.dmetal, 0, 0, 0));
+          for (const sx of [-1, 1]){
+            const sleeve = cyl(0.72 * s, 0.82 * s, 7.8 * s, armor, sx * 1.45 * s, 0, 5.7 * s, 10);
+            sleeve.rotation.x = Math.PI / 2; gun.add(sleeve);
+            const barrel = cyl(0.38 * s, 0.52 * s, 13.5 * s, M.dmetal, sx * 1.45 * s, 0, 16.3 * s, 10);
+            barrel.rotation.x = Math.PI / 2; gun.add(barrel);
+          }
+          const muzzleL = new THREE.Object3D(); muzzleL.position.set(-1.45 * s, 0, 23 * s); gun.add(muzzleL);
+          const muzzleR = new THREE.Object3D(); muzzleR.position.set(1.45 * s, 0, 23 * s); gun.add(muzzleR);
+          turrets = [{ yaw, gun, muzzle: muzzleL, muzzles: [muzzleL, muzzleR], shots: 1,
+            cd: rng.range(0.7, 2.2), restYaw: 0, arc: Math.PI }];
+          radius = 15 * s; hitY = 6.5 * s; hp = 5200 * s;
+          label = `${spec.team === 'FED' ? 'E.F.S.F.' : 'ZEON'} STATIONARY BATTERY`;
+          hitBoxes = [
+            { x: 0, y: 1.6 * s, z: 0, hx: 12 * s, hy: 1.6 * s, hz: 9 * s },
+            { x: 0, y: 5.2 * s, z: -0.5 * s, hx: 7.5 * s, hy: 3.4 * s, hz: 5 * s },
+          ];
           break;
         }
         case 'watchtower': {
@@ -1807,7 +1844,7 @@ export function startBattle(renderer, opts, onEnd){
         }
         default: return { g, mode: 'decor' };
       }
-      return { g, mode: SOLID_KINDS.has(kind) ? 'solid' : DESTRUCT_KINDS.has(kind) ? 'destruct' : 'decor', radius, hitY, hp, big, label, hitSpheres, hitBoxes };
+      return { g, mode: SOLID_KINDS.has(kind) ? 'solid' : DESTRUCT_KINDS.has(kind) ? 'destruct' : 'decor', radius, hitY, hp, big, label, hitSpheres, hitBoxes, turrets };
     }
 
     for (const st of map.structures){
@@ -1820,15 +1857,23 @@ export function startBattle(renderer, opts, onEnd){
       if (r.mode === 'decor') continue;
       const destructible = r.mode === 'destruct';
       const structureHp = buildingHitPoints(st.kind, r.hp);
-      const p = { kind: 'struct', structKind: st.kind, team: 'NEUTRAL', root: r.g, alive: true,
+      const battery = st.kind === 'battery';
+      const p = { kind: battery ? 'battery' : 'struct', structKind: st.kind, team: battery ? (st.team || 'NEUTRAL') : 'NEUTRAL', root: r.g, alive: true,
         // Authored scenery is identical solid cover for both PvP pilots. Keeping it
         // indestructible in a duel prevents one client removing a building that the
         // other client still renders and collides with.
-        isProp: true, isShip: false, scenery: true, indestructible: PVP || !destructible,
+        isProp: true, isShip: false, battery, scenery: !battery, indestructible: PVP || !destructible,
         radius: r.radius, hitY: r.hitY, hp: structureHp, maxHp: structureHp, big: r.big, label: r.label,
+        value: battery ? 9000 : undefined,
+        gunRange: battery ? (st.range || 1850) : 0,
+        gunDmg: battery ? (st.damage || 520) : 0,
+        gunSplash: battery ? 18 : 0,
+        gunRof: battery ? [3.8, 5.4] : [99, 99],
+        shellSpeed: battery ? 590 : 0, shellLife: battery ? 6.2 : 0, shellScale: battery ? 1.12 : 1,
         vel: new THREE.Vector3(), goal: null };
       if (r.hitSpheres) p.hitSpheres = r.hitSpheres;
       if (r.hitBoxes) p.hitBoxes = r.hitBoxes;
+      if (r.turrets) p.turrets = r.turrets;
       props.push(p);
     }
   }
@@ -5825,7 +5870,9 @@ export function startBattle(renderer, opts, onEnd){
       if (d.length() > p.gunRange * (shipShot ? 1.6 : 1)) continue; // hulls trade fire at longer range
       d.normalize();
       d.x += rng.range(-0.03, 0.03); d.y += rng.range(-0.03, 0.03); d.z += rng.range(-0.03, 0.03);
-      const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
+      const mesh = p.landProfile
+        ? makeShell(p.landProfile.shellScale || 1.3, false)
+        : new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
       mesh.position.copy(muzzle);
       mesh.quaternion.setFromUnitVectors(UP, d);
       scene.add(mesh);
@@ -5847,7 +5894,7 @@ export function startBattle(renderer, opts, onEnd){
       let best = null, bd = rangeSq;
       for (const e of mechs){ if (!e.alive || e.team === p.team) continue; const d2 = e.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = e; } }
       for (const q of props){
-        if (!q.alive || q === p || q.team === p.team || !q.isShip) continue;
+        if (!q.alive || q === p || q.team === p.team || (!q.isShip && !q.battery)) continue;
         const d2 = q.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = q; }
       }
       if (!best){ // nothing in range: rest the barrels and slowly return to dead-ahead
@@ -5871,17 +5918,23 @@ export function startBattle(renderer, opts, onEnd){
         t.cd = rng.range(p.gunRof[0], p.gunRof[1]);
         t.yaw.updateMatrixWorld(true);                                          // refresh so the muzzle reflects this frame's aim
         const muzzleNodes = t.muzzles?.length ? t.muzzles : [t.muzzle];
-        const shellSpeed = p.landProfile?.shellSpeed || 420;
-        const shellLife = p.landProfile?.shellLife || 5.5;
+        const shellSpeed = p.landProfile?.shellSpeed || p.shellSpeed || 420;
+        const shellLife = p.landProfile?.shellLife || p.shellLife || 5.5;
+        const shellScale = p.landProfile?.shellScale || p.shellScale || 1.05;
+        const muzzleStart = t.muzzleCursor || 0;
         for (let shot = 0; shot < (t.shots || 1); shot++){
-          const mw = muzzleNodes[shot % muzzleNodes.length].getWorldPosition(new THREE.Vector3());
+          const mw = muzzleNodes[(muzzleStart + shot) % muzzleNodes.length].getWorldPosition(new THREE.Vector3());
           const baseDir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / shellSpeed).sub(mw).normalize(); // lead
           const dir = baseDir.clone();
           dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
-          const mesh = new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat);
+          // Landships and batteries share the articulated, machined HE shell
+          // silhouette already used by the Zaku Tank and Guntank guns.
+          const mesh = makeShell(shellScale, false);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p, weaponName: 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
+          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p,
+            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
         }
+        t.muzzleCursor = (muzzleStart + (t.shots || 1)) % muzzleNodes.length;
         const soundPos = t.muzzle.getWorldPosition(stv1);
         sfx('bazooka', clamp(380 / soundPos.distanceTo(player.root.position), 0.03, 0.18));
       }
@@ -5909,8 +5962,9 @@ export function startBattle(renderer, opts, onEnd){
     const dir = lead.sub(muzzle).normalize();
     dir.x += rng.range(-spread, spread); dir.y += rng.range(-spread, spread); dir.z += rng.range(-spread, spread); dir.normalize();
     const machineGun = style === 'machinegun';
-    const mesh = new THREE.Mesh(machineGun ? mgGeo : bzGeo,
-      machineGun ? mgMat : (p.team === 'FED' ? beamMatF : bzMat));
+    const mesh = machineGun
+      ? new THREE.Mesh(mgGeo, mgMat)
+      : makeShell(p.landProfile?.shellScale || p.shellScale || 1.05, false);
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(machineGun ? FWD : UP, dir);
     scene.add(mesh);
@@ -6035,7 +6089,7 @@ export function startBattle(renderer, opts, onEnd){
     }
     // capital-ship & landship batteries — turreted hulls aim+fire per-turret; the rest volley from the hull
     for (const p of props){
-      if (!p.alive || !p.isShip) continue;
+      if (!p.alive || (!p.isShip && !p.battery) || (PVP && p.battery)) continue;
       if (p.turrets){ updateShipTurrets(p, dt); continue; }
       p.gunT -= dt;
       if (p.gunT <= 0){
