@@ -23,7 +23,11 @@ import {
   kneelState,
   shouldAiKneel,
 } from './combat-posture.js';
-import { BUILDING_KINDS, buildingHitPoints } from './structure-balance.js';
+import {
+  BUILDING_KINDS,
+  buildingHitPoints,
+  campaignObjectiveHitPoints,
+} from './structure-balance.js';
 import { formatKillNotice } from './kill-feed.js';
 import {
   GALCEZON_ATTACK_STRAFE_WEIGHT,
@@ -964,12 +968,14 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- props: destructible mission structures, vehicles & capital ships ----------
   const props = [];
   props.push(...pendingStaticProps);
-  function spawnProp(kind, team, pos, hp){
+  function spawnProp(kind, team, pos, hp, options = {}){
     const isSpaceShip = kind === 'musai' || kind === 'chivvay' || kind === 'salamis' || kind === 'magellan' || kind === 'columbus' || kind === 'solfortress';
     const landProfile = landshipProfile(kind);
     const isLandShip = !!landProfile;
     const isShip = isSpaceShip || isLandShip;
-    hp = landProfile?.hp || buildingHitPoints(kind, hp);
+    hp = landProfile?.hp || (options.missionTarget
+      ? campaignObjectiveHitPoints(hp)
+      : buildingHitPoints(kind, hp));
     // war-production HP buff — applies to every Federation capital ship (opts.fedShipHp is 0 in custom sorties)
     if (team === 'FED' && isShip) hp += (opts.fedShipHp || 0);
     const root = new THREE.Group();
@@ -1211,6 +1217,8 @@ export function startBattle(renderer, opts, onEnd){
     if (isShip) root.rotation.y = team === 'ZEON' ? Math.PI : 0;
     scene.add(root);
     const p = { kind, team, root, vel: new THREE.Vector3(), hp, maxHp: hp, alive: true,
+      missionTarget: !!options.missionTarget,
+      indestructible: false,
       value: Math.round(hp * (isShip ? 2.5 : kind === 'base' || kind === 'depot' ? 1.2 : 0.65)),
       isProp: true, isShip,
       radius: kind === 'truck' ? 8 : kind === 'solfortress' ? 58
@@ -1908,12 +1916,12 @@ export function startBattle(renderer, opts, onEnd){
   }
   if (mission.type === 'defend'){
     for (const [ang, d, kind] of [[150, 70, 'base'], [210, 95, 'depot'], [255, 60, 'base']])
-      missionProps.push(spawnProp(kind, 'FED', ringPos(ang, d), 2600));
+      missionProps.push(spawnProp(kind, 'FED', ringPos(ang, d), 2600, { missionTarget: true }));
   } else if (mission.type === 'assault'){
     const ang = rng.range(-35, 35);
     for (let i = 0; i < 3; i++)
       missionProps.push(spawnProp(i === 1 ? 'base' : 'depot', 'ZEON',
-        ringPos(ang + rng.range(-16, 16), rng.range(700, 920)), 2200));
+        ringPos(ang + rng.range(-16, 16), rng.range(700, 920)), 2200, { missionTarget: true }));
   } else if (mission.type === 'escort'){
     for (let i = 0; i < 3; i++){
       const t = spawnProp('truck', 'FED', ringPos(170 + i * 25, 120 + i * 30), 1100);
@@ -1986,6 +1994,12 @@ export function startBattle(renderer, opts, onEnd){
         : ringPos(rng.range(165, 195), cs.dist ? allyDistBand(cs.dist) : rng.range(160, 300), 60);
       missionProps.push(spawnProp(cs.kind, cs.team, pos, hp));
     }
+  }
+
+  if (['localhost', '127.0.0.1', '::1'].includes(location.hostname)){
+    hud.dataset.debugCampaignTargets = JSON.stringify(missionProps
+      .filter(p => p.missionTarget)
+      .map(p => ({ kind: p.kind, hp: p.hp, maxHp: p.maxHp, indestructible: !!p.indestructible })));
   }
 
   // ---------- infantry: thousands of instanced ground soldiers ----------
@@ -6286,6 +6300,9 @@ export function startBattle(renderer, opts, onEnd){
         hud.dataset.debugBuildingKind = building.structKind || building.kind;
         hud.dataset.debugBuildingMaxHp = String(building.maxHp);
       }
+      hud.dataset.debugCampaignTargets = JSON.stringify(missionProps
+        .filter(p => p.missionTarget)
+        .map(p => ({ kind: p.kind, hp: p.hp, maxHp: p.maxHp, indestructible: !!p.indestructible })));
     }
     const frac = clamp(player.hp / player.maxHp, 0, 1);
     hpBar.style.width = frac * 100 + '%';
@@ -7192,8 +7209,17 @@ export function startBattle(renderer, opts, onEnd){
         acc.spheres += p.hitSpheres?.length || (!p.hitBoxes?.length && p.radius ? 1 : 0);
         return acc;
       }, { props: 0, boxes: 0, spheres: 0 });
+      const campaignTargets = missionProps.filter(p => p.missionTarget).map(p => ({
+        kind: p.kind,
+        team: p.team,
+        hp: p.hp,
+        maxHp: p.maxHp,
+        alive: p.alive,
+        indestructible: !!p.indestructible,
+      }));
       return {
         kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
+        campaignTargets,
         collision: { ...colliderSummary, terrain: hfn ? 'shared-triangle-heightfield' : null },
         pvp: {
           enabled: PVP,
