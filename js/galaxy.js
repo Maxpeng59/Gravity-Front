@@ -6,6 +6,7 @@
 // Star-map intel is a *snapshot*: you see worlds as they were when last
 // observed within your sensor radius, not as they are.
 import { RNG, hashStr, clamp } from './util.js';
+import { pickSecondaries, secondaryPay, evaluateSecondaries } from './mission-objectives.js';
 import {
   SUITS, suitById, SHIP_MODULES, CREW_ROLES, CREW_FIRST, CREW_LAST,
   NAME_A, NAME_B, NAME_C, CANON_WORLDS, TIMELINE, FINAL_DAY,
@@ -190,8 +191,8 @@ export function shipSpeed(S){
 // ---------- materialization: a world only exists while you are there ----------
 const PHASE_POOLS = [
   { until: 300, pool: ['zaku2', 'zaku2', 'zaku2b', 'gouf', 'acguy', 'weasel'] },
-  { until: 340, pool: ['zaku2', 'zaku2b', 'gouf', 'goufnh', 'dom', 'acguy', 'weasel', 'weasel'] },
-  { until: 9999, pool: ['zaku2', 'zaku2b', 'gouf', 'dom', 'dom', 'gelgoog', 'weasel'] },
+  { until: 340, pool: ['zaku2', 'zaku2b', 'gouf', 'goufnh', 'dom', 'acguy', 'weasel', 'weasel', 'lamia'] },
+  { until: 9999, pool: ['zaku2', 'zaku2b', 'gouf', 'dom', 'dom', 'gelgoog', 'weasel', 'lamia', 'varg'] },
 ];
 export const zeonPoolFor = day => PHASE_POOLS.find(p => day < p.until).pool;
 const zeonPool = zeonPoolFor;
@@ -454,6 +455,46 @@ export function materialize(S, w){
       3200, {}, 2, { type: 'escort' }));
   }
 
+  // -- staged special operations --
+  // Drawn from their own seeded stream so the long-standing contract board above is unchanged.
+  const ops = new RNG(`${S.seed}:${w.id}:${bucket}:ops`);
+  const theater = onLand ? 'ground' : w.type === 'colony' ? 'colony' : 'space';
+  const opsEnemies = n => Array.from({ length: n }, () => ({ suitId: ops.pick(pool), ace: ops.chance(0.12) }));
+  if (ctl === 'FED' && ops.chance(0.45)){
+    d.contracts.push(mk('RECON', 'FORWARD RECON — READ THE STAGING AREA',
+      'Signals intelligence puts a Zeon staging area somewhere past the ridge line, but nobody has eyes on it. Fly the survey route, hold over each site long enough for the sensors to resolve it, and bring the data home. A firefight is optional — the pictures are not.',
+      theater, opsEnemies(Math.min(eN, 4)), [],
+      2900 + eN * 500, { fed: 3, zeon: -5 }, 2, { type: 'recon', sites: 3 }));
+  }
+  if (ctl === 'CONTESTED'){
+    if (onLand && ops.chance(0.5)) d.contracts.push(mk('RESCUE', 'PILOT RECOVERY — HOLD THE LANDING ZONE',
+      'A GM pilot punched out behind the line and her beacon is still transmitting. Get to her before the Zeon search teams do, then hold the landing zone for sixty seconds until the recovery craft touches down. Lose the pilot and the contract is void.',
+      'ground', opsEnemies(Math.min(eN, 3)), ['gm'],
+      3600 + eN * 700, { fed: 5, zeon: -6 }, 3, { type: 'extraction' }));
+    if (onLand && ops.chance(0.4)) d.contracts.push(mk('BREAKTHROUGH', 'BREAKTHROUGH — THREE-PHASE ASSAULT',
+      'Phase one: knock out the three anti-air sites covering the valley. Phase two: hold the drop zone while an airborne GM company lands on it. Phase three: the sector commander will come out to meet the drop — kill him and the defence falls apart.',
+      'ground', opsEnemies(Math.min(eN + 1, 5)), ['gm', 'gm'],
+      8600 + eN * 1200, { fed: 14, zeon: -20 }, Math.min(3 + Math.floor(eN / 3), 5), { type: 'breakthrough', aaSites: 3 }));
+  }
+  if (ctl === 'ZEON' && onLand && ops.chance(0.45)){
+    d.contracts.push(mk('SABOTAGE', 'DEMOLITION RAID — SET THE CHARGES',
+      'Three hardened supply buildings are feeding the local garrison, too tough to level with rifle fire. Land beside each one, hold still while the charges are set, then get clear before the fuse runs out. The blast will not care whose side you are on.',
+      'ground', opsEnemies(Math.min(eN, 4)), [],
+      4800 + eN * 900, { fed: 6, zeon: -14 }, 3, { type: 'sabotage', targets: 3 }));
+  }
+  if (ctl === 'ZEON' && !onLand && ops.chance(0.35)){
+    d.contracts.push(mk('DEEPRECON', 'DEEP RECON — SHADOW THE GARRISON',
+      'Fleet command wants current pictures of the garrison anchorage before it commits a task group. Slip in, survey three sites and get back out. Every Zaku on station will be looking for you.',
+      'space', opsEnemies(Math.min(eN + 1, 5)), [],
+      4600 + eN * 700, { fed: 4, zeon: -8 }, 3, { type: 'recon', sites: 3, solo: true }));
+  }
+
+  // optional goals for every contract: each one met adds a share of the pay
+  for (const c of d.contracts){
+    const pick = new RNG(`${c.id}:secondary`);
+    c.secondary = pickSecondaries(c, () => pick.next());
+  }
+
   // -- market --
   if (ctl === 'FED' || ctl === 'NEUTRAL'){
     const markup = ctl === 'NEUTRAL' ? 1.35 : 1;
@@ -500,7 +541,10 @@ const CONQUEST_RESIST = { planet: 3, moon: 3, colony: 2, station: 2, asteroid: 1
 
 export function applyOutcome(S, w, contract, res){
   if (res.victory){
-    S.credits += contract.pay + res.kills * 120;
+    const goals = res.secondary || evaluateSecondaries(contract.secondary || [], res);
+    const bonus = secondaryPay(contract.pay, goals);
+    S.credits += contract.pay + res.kills * 120 + bonus;
+    if (bonus > 0) news(S, `Bonus objectives met (${goals.filter(g => g.met).map(g => g.label).join(' · ')}): +${bonus.toLocaleString()} cr`, 'good');
     S.renown += contract.danger;
     S.kills += res.kills;
     if (contract.shift){

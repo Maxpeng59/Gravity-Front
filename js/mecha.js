@@ -14,6 +14,8 @@ import { buildGalcezon } from './galcezon.js';
 import { buildCanonicalAircraft } from './canonical-aircraft.js';
 import { buildZeonCanonical } from './canonical-zeon.js';
 import { buildFederationCanonical } from './canonical-fed.js';
+import { buildOriginalSuit, isOriginalSuit } from './original-suits.js';
+import { applyAnimeLook } from './anime-render.js';
 
 const mat = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.52, metalness: 0.3 }, extra));
 
@@ -1039,7 +1041,7 @@ function equipCanonicalHumanoid(suit, M, built){
   return { root, parts };
 }
 
-export function buildMech(suit){
+function buildMechRaw(suit){
   const c = suit.colors;
   const zeon = suit.faction === 'ZEON';
   const M = {
@@ -1062,6 +1064,12 @@ export function buildMech(suit){
       canonical.parts.rebuildGun ||= () => {};
       return { root: canonical.root, parts: canonical.parts };
     }
+  }
+
+  // Gravity Front's own mobile suits (original designs) have a dedicated builder module.
+  if (isOriginalSuit(suit)){
+    const original = buildOriginalSuit(suit, M);
+    if (original) return equipCanonicalHumanoid(suit, M, original);
   }
 
   // Requiem for Vengeance's RTX-440-B keeps its dedicated hero builder.
@@ -1588,4 +1596,23 @@ export function poseAim(parts, pitch, k = 1){
   // counter-rotate the gun so the barrel tracks the aim exactly
   const aimGun = parts.aimGun || parts.gun;
   if (aimGun) aimGun.rotation.x = -aimArms[0].rotation.x - pitch;
+}
+
+// Every unit leaves the builder in the anime look: cel-patched materials and inked rigid parts.
+// Weapons built later on demand (switching slots) are inked the moment they first appear.
+export function buildMech(suit){
+  const built = buildMechRaw(suit);
+  if (!built?.root) return built;
+  applyAnimeLook(built.root, { parts: built.parts });
+  const parts = built.parts;
+  if (parts && typeof parts.rebuildGun === 'function' && !parts.rebuildGun.animeWrapped){
+    const rebuild = parts.rebuildGun;
+    parts.rebuildGun = function(...args){
+      const result = rebuild.apply(this, args);
+      if (parts.gun && !parts.gun.userData.animeApplied) applyAnimeLook(parts.gun, { parts });
+      return result;
+    };
+    parts.rebuildGun.animeWrapped = true;
+  }
+  return built;
 }

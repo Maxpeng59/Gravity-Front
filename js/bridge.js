@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { el, ucDate, fmtCr, RNG } from './util.js';
 import { suitById, AIRCRAFT, isAircraft, SHIP_MODULES, CREW_ROLES, TIMELINE } from './data.js';
 import { renderEquipmentPanel } from './equipment-ui.js';
+import { SECONDARY_CATALOG } from './mission-objectives.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import {
   CHALLENGE_RUNS, buildChallengeEnemies, completeChallenge, equipmentNames, readPvpProgress,
@@ -378,6 +379,8 @@ function paneOps(pane){
     grow.appendChild(el('div', 'ttl', c.title));
     grow.appendChild(el('div', 'sub', `${c.desc}`));
     grow.appendChild(el('div', 'sub', `THEATER: ${c.env.toUpperCase()} · HOSTILES: ${c.enemies.length} · ALLIES: ${c.allies.length} · RISK: ${'☠'.repeat(c.danger)}`));
+    if (c.secondary?.length) grow.appendChild(el('div', 'sub bonus-goals',
+      `BONUS: ${c.secondary.map(g => `${g.label} (+${Math.round((SECONDARY_CATALOG[g.id]?.bonus || 0) * 100)}%)${g.id === 'wing' ? ' — needs hangar wingmen' : ''}`).join(' · ')}`));
     card.appendChild(grow);
     card.appendChild(el('div', '', fmtCr(c.pay)));
     const go = el('button', 'accent', 'LAUNCH');
@@ -399,7 +402,8 @@ function confirmLaunch(w, d, c){
   const nWing = solo ? 0 : S.suits.filter(s => s !== suit && s.hp >= 0.2).length;
   ctx.modal(c.title, `Sortie in ${suitById(S.active).name} (${Math.round(suit.hp * 100)}% integrity)?\n`
     + (nWing ? `${nWing} hangar unit${nWing > 1 ? 's' : ''} will launch alongside you.\n` : solo ? 'SOLO SORTIE — no support will launch.\n' : '')
-    + `Reward: ${fmtCr(c.pay)}`,
+    + `Reward: ${fmtCr(c.pay)}`
+    + (c.secondary?.length ? `\nBonus goals: ${c.secondary.map(g => g.label).join(' · ')}` : ''),
     [{ label: 'SORTIE', cls: 'accent', fn: () => {
       if (c.kind === 'INVASION'){ launchInvasion(w, d, c); return; }
       if (c.kind === 'SOLOMON'){ launchSolomon(w, d, c); return; }
@@ -410,6 +414,8 @@ function confirmLaunch(w, d, c){
         terrainSeed: d.terrainSeed,
         objective: c.title.split('·')[0].trim(),
         enemies: c.enemies, allies: c.allies, mission: c.mission,
+        // a wingman goal only applies when hangar wingmen actually launch
+        secondary: (c.secondary || []).filter(g => g.id !== 'wing' || nWing > 0),
         sim: bigOp ? { fed: w.fed, zeon: w.zeon } : null,
         zeonPool: zeonPoolFor(S.day),
         shipSupport: gunner && S.modules.guns > 0 ? S.modules.guns : 0,

@@ -46,6 +46,49 @@ Destructible buildings—including city blocks, hangars, barracks, bunkers,
 command posts, bases, and depots—have **20×** their former integrity. This does
 not change the durability of walls, utility structures, vehicles, or ships.
 
+## Anime render style
+
+Every unit is drawn in a cel-animation look: hard two-tone shading with a crisp specular glint,
+ink outlines on every armour part (line weight thins with distance), and bloom on beams,
+thrusters and sensor eyes. Explosions are hard-edged fireballs that break into two-tone smoke,
+with spark streaks, shock rings and star-cross muzzle flashes. **Main Menu → VISUAL STYLE**
+switches between ANIME CEL and CLASSIC (the choice is remembered on this device).
+
+## Weapon ballistics
+
+- Kinetic rounds fall under local gravity (1 g on Earth and in colonies, lunar gravity on airless
+  bodies, none in space) and lose speed to air drag. The fire-control computer raises the bore so
+  rounds arc onto the crosshair; moving targets still need lead.
+- Penetration depends on calibre and remaining velocity against the target's armour rating.
+  Glancing hits count as thicker armour and can ricochet. Small guns barely scratch heavy suits;
+  tank and heavy MG rounds bite.
+- Mega-particle beams ignore armour penetration but diffuse with range — much faster in
+  atmosphere than in space.
+- Sustained fire and movement widen the dispersion cone (the ring around the crosshair); it
+  settles when you stop, kneel or pause between bursts. One round in three is a tracer.
+
+## Staged operations and bonus goals
+
+New contract types appear on the campaign board and in **Custom Battle → OPERATION**:
+
+- **RECON** — hold inside each survey ring until the scan completes, then reach extraction.
+- **DEMOLITION** — stand still beside each target to set charges, then get 220 m clear before
+  the fuse runs out.
+- **PILOT RESCUE** — reach the downed pilot and hold the landing zone for 60 s; lose the pilot
+  and the contract fails.
+- **BREAKTHROUGH** — destroy three AA sites, hold the drop zone while an allied paradrop lands,
+  then kill the sector commander.
+
+Most campaign contracts also list up to two bonus goals (integrity, wingmen, time limit, enemy
+aces). Each goal met adds 15–20% to the pay; results are shown on the debrief screen.
+
+## Gravity Front original mobile suits
+
+Four machines designed for this game: **GFR-24 Harrow** (Federation heavy support),
+**GFR-31 Kestrel** (Federation marksman), **GFZ-17 Varg** (Zeon assault) and
+**GFZ-22 Lamia** (Zeon raider). They are playable in Custom Battle, sold in Federation markets,
+take part in armament modification, and the Zeon pair joins the enemy rosters mid-war.
+
 ## Campaign Challenge Runs and PvP equipment
 
 The Campaign bridge includes **CHALLENGES**, a sequential set of solo surface

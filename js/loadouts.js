@@ -8,13 +8,15 @@
 const FED_STANDARD = ['rx78', 'gm', 'gmbazooka'];
 const FED_GROUND = ['rx79g', 'ez8', 'gmg_a', 'gmg_b'];
 const FED_GM = ['gm', 'gmbazooka', 'gmg_a', 'gmg_b', 'rgm79sp', 'gmspartan'];
-const FED_MODULAR = [...new Set([...FED_STANDARD, ...FED_GROUND, ...FED_GM])];
+const FED_ORIGINAL = ['harrow', 'kestrel'];
+const FED_MODULAR = [...new Set([...FED_STANDARD, ...FED_GROUND, ...FED_GM, ...FED_ORIGINAL])];
 const ZEON_ZAKU = ['zaku2', 'zaku2g', 'zaku2b', 'zaku2s'];
 const ZEON_GOUF = ['gouf', 'goufnh'];
 const ZEON_DOM = ['dom'];
 const ZEON_GELGOOG = ['gelgoog', 'gelgoogs'];
 
-const ALL_ZEON_HANDS = [...ZEON_ZAKU, ...ZEON_GOUF, ...ZEON_DOM, ...ZEON_GELGOOG];
+const ZEON_ORIGINAL = ['varg', 'lamia'];
+const ALL_ZEON_HANDS = [...ZEON_ZAKU, ...ZEON_GOUF, ...ZEON_DOM, ...ZEON_GELGOOG, ...ZEON_ORIGINAL];
 
 const W = (id, name, mass, slots, suits, stats) => Object.freeze({
   id, name, mass, slots: Object.freeze(slots), suits: Object.freeze(suits),

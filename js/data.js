@@ -409,6 +409,51 @@ export const SUITS = [
     ],
     saber: { name: 'IRON NAIL', dmg: 480 }, cost: 9500,
   },
+  // ---- Gravity Front originals: frontier-sphere machines designed for this game ----
+  {
+    // Federation line-support heavy: a sloped-glacis trench fighter with a shoulder rocket rack
+    id: 'harrow', name: 'GFR-24 Harrow', code: 'GFR-24', faction: 'FED', style: 'original', original: true,
+    hp: 4500, armor: 14, walk: 26, boost: 78, boostFuel: 90, scale: 1.02,
+    colors: { main: 0x7d8468, chest: 0x5b6150, accent: 0xc7b27a, trim: 0xd9722e },
+    weapons: [
+      { name: 'HR-88 110MM BATTLE RIFLE', type: 'mg', dmg: 150, rof: 4, clip: 30, reload: 2.6, speed: 1150, spread: 0.012, pref: 420 },
+      { name: 'SHOULDER 70MM ROCKET RACK', type: 'bazooka', dmg: 240, rof: 1.6, clip: 6, reload: 4.2, speed: 420, spread: 0.02, splash: 9, pref: 450, integrated: true },
+    ],
+    saber: { name: 'HEAT KNIFE', dmg: 380 }, cost: 16500,
+  },
+  {
+    // Federation marksman: long-legged, wing-bindered picket with an asymmetric periscope head
+    id: 'kestrel', name: 'GFR-31 Kestrel', code: 'GFR-31', faction: 'FED', style: 'original', original: true,
+    hp: 3600, armor: 9, walk: 32, boost: 112, boostFuel: 110, scale: 1.0,
+    colors: { main: 0xc9cfd4, chest: 0x2d3b55, accent: 0xe2892f, trim: 0x9aa5ad },
+    weapons: [
+      { name: 'LR-2 BEAM MARKSMAN RIFLE', type: 'beam', dmg: 640, rof: 0.6, clip: 8, reload: 3.0, speed: 2100, spread: 0.0012, pref: 900 },
+      { name: '40MM WRIST AUTOCANNON', type: 'mg', dmg: 20, rof: 14, clip: 160, reload: 2.4, speed: 1300, spread: 0.024, integrated: true },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 480 }, cost: 24000,
+  },
+  {
+    // Zeon assault heavy: hunched, pauldron-armoured breacher with a tri-lens drum head
+    id: 'varg', name: 'GFZ-17 Varg', code: 'GFZ-17', faction: 'ZEON', style: 'original', original: true,
+    hp: 5000, armor: 15, walk: 25, boost: 80, boostFuel: 90, scale: 1.05,
+    colors: { main: 0x5a6674, chest: 0x3a414b, accent: 0x8e2f2a, trim: 0xb9a46a },
+    weapons: [
+      { name: 'ZK-120 120MM ROTARY CANNON', type: 'mg', dmg: 40, rof: 12, clip: 180, reload: 3.2, speed: 900, spread: 0.022, pref: 340 },
+      { name: 'SHOULDER 240MM MORTAR', type: 'bazooka', dmg: 420, rof: 0.6, clip: 4, reload: 3.8, speed: 300, spread: 0.016, splash: 15, pref: 520, integrated: true },
+    ],
+    saber: { name: 'HEAT AXE', dmg: 560 }, cost: 26000,
+  },
+  {
+    // Zeon skirmisher: lean, forward-canted raider with a vertical slit sensor and a tail stabiliser
+    id: 'lamia', name: 'GFZ-22 Lamia', code: 'GFZ-22', faction: 'ZEON', style: 'original', original: true,
+    hp: 3500, armor: 9, walk: 36, boost: 118, boostFuel: 115, scale: 0.98,
+    colors: { main: 0x423c58, chest: 0x5f5482, accent: 0x2fc4ad, trim: 0xd4cde2 },
+    weapons: [
+      { name: 'LB-3 BEAM SMG', type: 'beam', dmg: 120, rof: 4, clip: 30, reload: 2.4, speed: 1300, spread: 0.012, pref: 380 },
+      { name: '90MM SCATTER GUN', type: 'mg', dmg: 30, rof: 1.4, clip: 8, reload: 2.8, speed: 850, spread: 0.06, pellets: 7, life: 1.2, pref: 200 },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 500 }, cost: 24000,
+  },
 ];
 
 // ---------- air forces (One Year War fighters) ----------

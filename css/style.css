@@ -23,6 +23,7 @@ h1{font-size:64px;letter-spacing:.18em;font-weight:800;
 h2{letter-spacing:.25em;color:var(--acc);font-size:20px}
 h3{letter-spacing:.2em;color:var(--dim);font-size:11px;margin:14px 0 6px}
 .menu-buttons{display:flex;flex-direction:column;gap:10px;width:420px}
+.menu-buttons .style-toggle{align-self:center;margin-top:6px;letter-spacing:.14em;opacity:.85}
 .menu-foot{color:var(--dim);font-size:11px;letter-spacing:.12em;margin-top:18px}
 
 button{font-family:var(--mono);background:rgba(13,24,40,.85);border:1px solid var(--line2);
@@ -234,6 +235,7 @@ button.equipment-action.equipped{color:var(--ok);border-color:var(--ok);opacity:
   display:flex;align-items:center;gap:14px;font-size:12px}
 .row-card .grow{flex:1}
 .row-card .ttl{color:#fff} .row-card .sub{color:var(--dim);font-size:10px;margin-top:2px}
+.row-card .sub.bonus-goals{color:#e8c86a;letter-spacing:.06em}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
 
 select{background:#0d1828;color:var(--txt);border:1px solid var(--line2);font-family:var(--mono);

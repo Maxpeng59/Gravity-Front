@@ -4,13 +4,15 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=36a';
+import { startBattle } from './battle.js?v=37a';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
 import { enterBridge, leaveBridge } from './bridge.js';
 import { music } from './music.js';
 import { preloadModels } from './models.js';
+import { ANIME, installAnimePost, setVisualStyle } from './anime-render.js';
+import { formatClock } from './mission-objectives.js';
 import {
   applyWeaponLoadout, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
 } from './loadouts.js';
@@ -40,6 +42,13 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
+installAnimePost(renderer); // anime grade + bloom on every full-screen frame (menu, bridge, battle)
+{
+  const styleButton = $('btn-style');
+  const labelStyle = () => { if (styleButton) styleButton.textContent = `VISUAL STYLE · ${ANIME.enabled ? 'ANIME CEL' : 'CLASSIC'}`; };
+  labelStyle();
+  if (styleButton) styleButton.onclick = () => { setVisualStyle(ANIME.enabled ? 'classic' : 'anime'); labelStyle(); sfx('ui', 0.1); };
+}
 
 const bg = (() => {
   const scene = new THREE.Scene();
@@ -79,6 +88,7 @@ const msPreview = (() => {
       if (o.geometry && !o.geometry.userData?.shared) geometries.add(o.geometry);
       const list = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
       for (const material of list){
+        if (material.userData?.shared) continue;
         materials.add(material);
         for (const key of ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'])
           if (material[key]) textures.add(material[key]);
@@ -287,7 +297,9 @@ function runBattle(opts, after){
       ? `${opts.objective || 'PVP DUEL'}\n\nOPPONENT: ${opts.multiplayer.remoteName}\n` +
         `RESULT: ${res.victory ? 'VICTORY' : res.retreat ? 'CONNECTION ENDED' : 'DEFEAT'}\n` +
         `UNIT INTEGRITY: ${Math.round(res.hpFrac * 100)}%`
-      : `${opts.objective || 'SORTIE'}\n\nCONFIRMED KILLS: ${res.kills}\nUNIT INTEGRITY: ${Math.round(res.hpFrac * 100)}%`;
+      : `${opts.objective || 'SORTIE'}\n\nCONFIRMED KILLS: ${res.kills}\nUNIT INTEGRITY: ${Math.round(res.hpFrac * 100)}%`
+        + `\nMISSION TIME: ${formatClock(res.elapsed || 0)}`
+        + (res.secondary?.length ? '\n\nBONUS OBJECTIVES\n' + res.secondary.map(g => `${g.met ? '✔' : '✘'} ${g.label}`).join('\n') : '');
     show('result');
     $('btn-result-ok').onclick = () => { music.play('requiem'); show(null); after(res); };
   });
@@ -872,7 +884,23 @@ addEventListener('beforeunload', () => pvpSession.room?.close());
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
 const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12, CUSTOM_SQUAD_COUNT = 40; // 12 Big Trays fought at Odessa; capital props have no mech LOD
 const customSquadTraits = id => customSquadTraitsForUnit(suitById(id));
-const custom = { suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
+// localhost-only: ?qa-objectives=fast compresses objective timers for automated walkthroughs
+function localQaTuning(){
+  if (!['localhost', '127.0.0.1', '::1'].includes(location.hostname)) return undefined;
+  if (new URLSearchParams(location.search).get('qa-objectives') !== 'fast') return undefined;
+  return { scanTime: 1, plantTime: 1, fuseTime: 3, lzHoldTime: 10, dropHoldTime: 3 };
+}
+
+// Custom Battle operation types. The staged ones run the same objective rules as campaign contracts.
+const CUSTOM_OPERATIONS = [
+  { id: 'sortie', name: 'SORTIE', brief: 'Destroy every hostile unit, landship and battery on the field.' },
+  { id: 'recon', name: 'RECON', brief: 'Survey three sites (hold inside each ring), then return to the extraction point.' },
+  { id: 'sabotage', name: 'DEMOLITION', groundOnly: true, brief: 'Hold still beside each target to set charges, then clear the blast zone before the fuse runs out.' },
+  { id: 'extraction', name: 'PILOT RESCUE', groundOnly: true, brief: 'Reach the downed pilot and hold the landing zone for 60 s while Zeon closes in.' },
+  { id: 'breakthrough', name: 'BREAKTHROUGH', groundOnly: true, brief: 'Three phases: destroy the AA sites, hold the drop zone, then kill the sector commander.' },
+];
+
+const custom = { op: 'sortie', suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
 // relief you see IS the battlefield (mountains/hills/valleys). Only for random biomes (no authored map) + ground.
@@ -1005,6 +1033,22 @@ function renderCustom(){
     const b = el('button', 'small' + (custom.env === e.id ? ' sel' : ''), e.name);
     b.onclick = () => { custom.env = e.id; renderCustom(); };
     envBox.appendChild(b);
+  }
+  // operation type: a plain sortie or one of the staged objective missions
+  const opBox = $('op-picker');
+  if (opBox){
+    opBox.innerHTML = '';
+    for (const op of CUSTOM_OPERATIONS){
+      const blocked = op.groundOnly && custom.env !== 'ground';
+      const b = el('button', 'small' + (custom.op === op.id ? ' sel' : ''), op.name);
+      b.disabled = blocked || custom.army > 0;
+      b.title = op.brief;
+      b.onclick = () => { custom.op = op.id; renderCustom(); };
+      opBox.appendChild(b);
+    }
+    const current = CUSTOM_OPERATIONS.find(op => op.id === custom.op) || CUSTOM_OPERATIONS[0];
+    if ((current.groundOnly && custom.env !== 'ground') || custom.army > 0) custom.op = 'sortie';
+    const sub = $('op-sub'); if (sub) sub.textContent = (CUSTOM_OPERATIONS.find(op => op.id === custom.op) || current).brief;
   }
   const hordeBox = $('horde-picker');
   if (hordeBox){
@@ -1242,6 +1286,8 @@ $('btn-launch-custom').onclick = () => {
     ...enemyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
     ...allyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
   ].map(o => ({ team: stationaryBatteryById(o.id).faction, pos: o.pos }));
+  const stagedOp = CUSTOM_OPERATIONS.find(op => op.id === custom.op && op.id !== 'sortie');
+  const staged = stagedOp && custom.army === 0 && !(stagedOp.groundOnly && env !== 'ground') ? stagedOp : null;
   runBattle({
     env,
     biome: custom.biome === 'random' ? rng.pick(BIOME_LIST) : custom.biome,
@@ -1251,8 +1297,11 @@ $('btn-launch-custom').onclick = () => {
     hoverCraft: hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
-    mission: { aircraftCore: true, customShips, customBatteries }, // fielded fighters, landships and batteries count toward the win
-    objective: custom.army > 0 ? `MASS BATTLE — ${custom.army} HOSTILES`
+    mission: staged
+      ? { type: staged.id, customShips, customBatteries, tuning: localQaTuning() }
+      : { aircraftCore: true, customShips, customBatteries }, // fielded fighters, landships and batteries count toward the win
+    objective: staged ? `CUSTOM OPERATION — ${staged.name}`
+      : custom.army > 0 ? `MASS BATTLE — ${custom.army} HOSTILES`
       : activeMap ? activeMap.mission.summary : 'CUSTOM SORTIE — DESTROY ALL HOSTILES',
   }, () => show('menu-custom'));
 };

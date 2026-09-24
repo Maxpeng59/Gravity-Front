@@ -12,6 +12,15 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
+import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
+import {
+  HEAT_COOL_RATE, armorThickness, ballisticProfile, environmentPhysics, impactMultiplier,
+  spreadBloom, stepBallistic, superelevation, timeOfFlight,
+} from './ballistics.js';
+import { createAnimeFx } from './anime-fx.js';
+import {
+  OBJECTIVE_TUNING, advanceHold, evaluateSecondaries, isStagedMission, missionStages, stageLabel,
+} from './mission-objectives.js';
 import {
   applyWeaponLoadout, canAimWeapon, isSniperWeapon, weaponAimCoefficient, weaponAimProfile, weaponRecoilImpulse,
 } from './loadouts.js';
@@ -398,7 +407,7 @@ export function startBattle(renderer, opts, onEnd){
     // the EXACT same weapon mesh the suit holds in third person, mounted in the cockpit:
     // buildWeaponMesh is shared with buildMech, so inside and outside always match (colors included).
     // Weapon-local +z (barrel) is turned to face camera-forward (-z).
-    const gun = buildWeaponMesh(player.suit, w);
+    const gun = applyAnimeLook(buildWeaponMesh(player.suit, w));
     gun.rotation.y = Math.PI;
     gun.scale.setScalar(0.2);
     gun.position.set(0, -0.05, 0.5);
@@ -685,6 +694,10 @@ export function startBattle(renderer, opts, onEnd){
 
   const groundY = (x, z) => hfn ? hfn(x, z) : -Infinity;
   const SPACE = env === 'space';
+  // cel-animated effects: fireballs, smoke, sparks, shock rings, muzzle flashes, beam/tracer bolts
+  const fx = createAnimeFx(scene, { space: SPACE });
+  // local ballistics: gravity and air for this battlefield (vacuum, airless moon, or atmosphere)
+  const PHYS = environmentPhysics(env, { airless: !!biome.airless });
 
   // ---------- mechs ----------
   const mechs = [];
@@ -701,6 +714,7 @@ export function startBattle(renderer, opts, onEnd){
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     mesh.frustumCulled = false; mesh.count = 0;
     mesh.setColorAt(0, new THREE.Color(0xffffff)); // allocate per-instance colour buffer
+    inkInstancedMesh(mesh);                         // far silhouettes keep the cel shade + ink line
     scene.add(mesh); return [key, mesh];
   }));
   const detailPool = new Map(); // suitId -> reusable [{root, parts}] so near/far churn never rebuilds
@@ -712,6 +726,7 @@ export function startBattle(renderer, opts, onEnd){
       if (o.geometry && !o.geometry.userData?.shared) geometries.add(o.geometry);
       const list = Array.isArray(o.material) ? o.material : o.material ? [o.material] : [];
       for (const material of list){
+        if (material.userData?.shared) continue;   // module-level (ink outline) materials outlive any one unit
         materials.add(material);
         for (const key of ['map','normalMap','roughnessMap','metalnessMap','emissiveMap','alphaMap'])
           if (material[key]) textures.add(material[key]);
@@ -1308,6 +1323,9 @@ export function startBattle(renderer, opts, onEnd){
     };
     if (SHIP_WEAK[kind]) p.weakPoints = SHIP_WEAK[kind];
     if (shipTurrets.length) p.turrets = shipTurrets;
+    // Ships and vehicles are drawn as cel-animated machines with ink lines; bases and depots stay
+    // part of the painted background.
+    if (isShip || kind === 'truck' || kind === 'battery') applyAnimeLook(root, { parts: { turrets: shipTurrets } });
     props.push(p);
     return p;
   }
@@ -1983,6 +2001,219 @@ export function startBattle(renderer, opts, onEnd){
       spawnMech({ suitId: rng.chance(0.5) ? 'gattle' : 'dopp' }, 'ZEON', ringPos(((i % 9) - 4) * 8, 920 + Math.floor(i / 9) * 45, 240), {});
   }
 
+  // ---------- staged objectives: recon · sabotage · extraction · breakthrough ----------
+  // Each has a list of stages; beacons mark every live objective in the world, on the HUD and radar.
+  // mission.tuning lets a contract (or a localhost QA run) shorten or lengthen the objective timings
+  const OT = { ...OBJECTIVE_TUNING, ...(mission.tuning || {}) };
+  const staged = isStagedMission(mission.type)
+    ? { type: mission.type, stages: missionStages(mission.type), index: 0, complete: false, failed: null, sites: [], t: 0 }
+    : null;
+  const markerGroup = new THREE.Group(); markerGroup.name = 'objective-markers'; scene.add(markerGroup);
+  const MARK_COLORS = { pending: 0x4de8ff, done: 0x6dff8a, hostile: 0xff7a3a, friendly: 0x8fd0ff };
+  function makeMarker(pos, radius, color){
+    const g = new THREE.Group();
+    const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.14, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide });
+    const beam = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.4, 220, 10, 1, true), mat);
+    beam.position.y = 110; g.add(beam);
+    const ring = new THREE.Mesh(new THREE.RingGeometry(radius * 0.96, radius, 64), mat.clone());
+    ring.material.opacity = 0.55;
+    ring.rotation.x = -Math.PI / 2; ring.position.y = 1.5; g.add(ring);
+    g.position.copy(pos);
+    if (!SPACE) g.position.y = groundY(pos.x, pos.z);
+    markerGroup.add(g);
+    const marker = {
+      group: g, radius,
+      setColor(c){ beam.material.color.setHex(c); ring.material.color.setHex(c); },
+      hide(){ g.visible = false; },
+      // the light column thins out as the pilot closes in so it never blinds the cockpit view
+      fade(distance){ beam.material.opacity = 0.14 * clamp((distance - radius * 0.4) / (radius * 1.6), 0.12, 1); },
+    };
+    markers.push(marker);
+    return marker;
+  }
+  const markers = [];
+  const stagedStage = () => staged ? staged.stages[staged.index] : null;
+  const planarDistance = (a, b) => SPACE ? a.distanceTo(b) : Math.hypot(a.x - b.x, a.z - b.z);
+  function spawnWaveAround(center, count, { minR = 650, maxR = 900, pool = zeonPool, specs = null } = {}){
+    const ang = rng.range(0, Math.PI * 2);
+    for (let i = 0; i < count; i++){
+      const a = ang + (i - count / 2) * 0.16, r = rng.range(minR, maxR);
+      const pos = new THREE.Vector3(center.x + Math.sin(a) * r, SPACE ? center.y + rng.range(-120, 120) : 0, center.z + Math.cos(a) * r);
+      spawnMech(specs ? specs[i] : { suitId: pool[rng.int(0, pool.length - 1)] }, 'ZEON', pos, { core: true });
+    }
+  }
+  if (staged){
+    const zeonCore = () => mechs.filter(m => m.alive && m.core && m.team === 'ZEON' && !m.isPlayer);
+    if (staged.type === 'recon'){
+      const count = mission.sites || 3;
+      for (let i = 0; i < count; i++){
+        const pos = ringPos(-55 + (110 / Math.max(1, count - 1)) * i + rng.range(-10, 10), rng.range(620, 1150), 140);
+        staged.sites.push({ pos, progress: 0, done: false, marker: makeMarker(pos, OT.scanRadius, MARK_COLORS.pending), label: `SITE ${String.fromCharCode(65 + i)}` });
+      }
+      staged.exfil = ringPos(rng.range(160, 200), 180, 20);
+      // garrison patrols sit on the survey sites instead of charging the insertion point
+      zeonCore().forEach((m, i) => {
+        const site = staged.sites[i % staged.sites.length].pos;
+        m.root.position.set(site.x + rng.range(-160, 160), SPACE ? site.y + rng.range(-60, 60) : m.root.position.y, site.z + rng.range(-160, 160));
+        m.anchorPoint = site.clone();
+      });
+    } else if (staged.type === 'sabotage'){
+      const ang = rng.range(-30, 30);
+      ['depot', 'base', 'depot'].slice(0, mission.targets || 3).forEach((kind, i) => {
+        const pos = ringPos(ang + (i - 1) * 18 + rng.range(-5, 5), rng.range(760, 980));
+        const prop = spawnProp(kind, 'ZEON', pos, 2600, { missionTarget: true });
+        missionProps.push(prop);
+        staged.sites.push({ prop, pos: prop.root.position, progress: 0, done: false, marker: makeMarker(prop.root.position, OT.plantRadius, MARK_COLORS.hostile), label: `TARGET ${i + 1}` });
+      });
+      zeonCore().forEach((m, i) => { m.anchorPoint = staged.sites[i % staged.sites.length].pos.clone(); });
+    } else if (staged.type === 'extraction'){
+      const pos = ringPos(rng.range(-30, 30), rng.range(760, 940));
+      const pilot = spawnProp('truck', 'FED', pos, 3400);
+      pilot.label = 'DOWNED PILOT'; pilot.speed = 0; pilot.goal = null;
+      missionProps.push(pilot);
+      staged.pilot = pilot;
+      staged.sites.push({ pos: pilot.root.position, done: false, marker: makeMarker(pilot.root.position, OT.pilotRadius, MARK_COLORS.friendly), label: 'DOWNED PILOT' });
+      staged.nextWave = 0;
+    } else if (staged.type === 'breakthrough'){
+      const aa = [];
+      for (let i = 0; i < (mission.aaSites || 3); i++){
+        const pos = ringPos(-40 + i * 40 + rng.range(-8, 8), rng.range(700, 900));
+        aa.push({ kind: 'battery', team: 'ZEON', x: pos.x, z: pos.z, rotY: Math.PI, scale: 1 });
+      }
+      staged.aa = buildMapStructures({ structures: aa });
+      missionProps.push(...staged.aa);
+      staged.aa.forEach((p, i) => staged.sites.push({ prop: p, pos: p.root.position, done: false, marker: makeMarker(p.root.position, 60, MARK_COLORS.hostile), label: `AA SITE ${i + 1}` }));
+      staged.dropZone = ringPos(0, 520);
+      staged.dropProgress = 0;
+      zeonCore().forEach((m, i) => { m.anchorPoint = staged.sites[i % staged.sites.length].pos.clone(); });
+    }
+  }
+  function enterStage(next){
+    staged.index = staged.stages.indexOf(next);
+    staged.t = 0;
+    setMsg(stageLabel(next), 3.2);
+  }
+  function updateStaged(dt){
+    for (const mk of markers) if (mk.group.visible) mk.fade(planarDistance(player.root.position, mk.group.position));
+    if (!staged || staged.complete || staged.failed) return;
+    staged.t += dt;
+    const stage = stagedStage();
+    const pp = player.root.position;
+    if (staged.type === 'recon'){
+      if (stage === 'survey'){
+        for (const site of staged.sites){
+          if (site.done) continue;
+          site.progress = advanceHold(site.progress, { inside: player.alive && planarDistance(pp, site.pos) < OT.scanRadius, dt, duration: OT.scanTime });
+          if (site.progress >= 1){
+            site.done = true; site.marker.setColor(MARK_COLORS.done);
+            const left = staged.sites.filter(x => !x.done).length;
+            setMsg(`${site.label} SURVEYED${left ? ` — ${left} REMAINING` : ''}`, 2.6);
+          }
+        }
+        if (staged.sites.every(x => x.done)){
+          staged.exfilMarker = makeMarker(staged.exfil, OT.extractRadius, MARK_COLORS.friendly);
+          enterStage('exfil');
+        }
+      } else if (stage === 'exfil' && planarDistance(pp, staged.exfil) < OT.extractRadius){
+        staged.complete = true;
+      }
+    } else if (staged.type === 'sabotage'){
+      if (stage === 'plant'){
+        const speed = Math.hypot(player.vel.x, player.vel.z);
+        for (const site of staged.sites){
+          if (site.done) continue;
+          if (!site.prop.alive){ site.done = true; site.marker.hide(); continue; }  // levelled by fire works too
+          const reach = OT.plantRadius + (site.prop.radius || 12);
+          site.progress = advanceHold(site.progress, {
+            inside: player.alive && planarDistance(pp, site.pos) < reach && speed < OT.plantMaxSpeed, dt, duration: OT.plantTime,
+          });
+          if (site.progress >= 1){
+            site.done = true; site.marker.setColor(MARK_COLORS.done);
+            setMsg(`CHARGES SET — ${site.label} (${staged.sites.filter(x => x.done).length}/${staged.sites.length})`, 2.4);
+          }
+        }
+        if (staged.sites.every(x => x.done)){ staged.fuse = OT.fuseTime; enterStage('fuse'); }
+      } else if (stage === 'fuse'){
+        staged.fuse -= dt;
+        if (staged.fuse <= 0){
+          for (const site of staged.sites){
+            if (site.prop.alive) damageProp(site.prop, site.prop.hp + 1, site.prop.root.position, player, 'DEMOLITION CHARGE');
+            explosion(site.prop.root.position.clone().add(tmpV.set(0, 8, 0)), 34, 0.42);
+            site.marker.hide();
+            const d = planarDistance(pp, site.pos);
+            if (player.alive && d < OT.blastSafeDistance)
+              damage(player, 2200 * (1 - d / OT.blastSafeDistance), site.pos, null, false, 'DEMOLITION CHARGE');
+          }
+          camShake = Math.min(1.6, camShake + 0.9);
+          staged.complete = player.alive;
+        }
+      }
+    } else if (staged.type === 'extraction'){
+      const pilot = staged.pilot;
+      if (!pilot.alive){ staged.failed = 'THE DOWNED PILOT IS LOST — RESCUE FAILED'; return; }
+      if (stage === 'reach' && planarDistance(pp, pilot.root.position) < OT.pilotRadius){
+        enterStage('hold');
+        setMsg(`LANDING ZONE SECURE — RESCUE CRAFT ${OT.lzHoldTime}s OUT`, 3.2);
+        staged.nextWave = 2;
+      } else if (stage === 'hold'){
+        staged.nextWave -= dt;
+        if (staged.nextWave <= 0 && staged.t < OT.lzHoldTime - 10){
+          staged.nextWave = 15;
+          spawnWaveAround(pilot.root.position, rng.int(2, 3));
+          setMsg('HOSTILES CLOSING ON THE LANDING ZONE', 2.2);
+        }
+        if (staged.t >= OT.lzHoldTime){ staged.complete = true; staged.sites[0].marker.setColor(MARK_COLORS.done); }
+      }
+    } else if (staged.type === 'breakthrough'){
+      if (stage === 'aa'){
+        for (const site of staged.sites) if (!site.done && !site.prop.alive){ site.done = true; site.marker.hide(); }
+        if (staged.sites.every(x => x.done)){
+          staged.dropMarker = makeMarker(staged.dropZone, OT.dropRadius, MARK_COLORS.pending);
+          enterStage('drop');
+          // the air corridor is open: an allied paradrop lands on the zone as Zeon counterattacks it
+          for (let i = 0; i < 4; i++){
+            const pos = staged.dropZone.clone().add(new THREE.Vector3(rng.range(-80, 80), SPACE ? 0 : 0, rng.range(-80, 80)));
+            spawnMech({ suitId: rng.chance(0.3) ? 'guncannon' : 'gm' }, 'FED', pos, { core: false });
+          }
+          spawnWaveAround(staged.dropZone, 4, { minR: 700, maxR: 950 });
+        }
+      } else if (stage === 'drop'){
+        staged.dropProgress = advanceHold(staged.dropProgress, {
+          inside: player.alive && planarDistance(pp, staged.dropZone) < OT.dropRadius, dt, duration: OT.dropHoldTime,
+        });
+        if (staged.dropProgress >= 1){
+          staged.dropMarker.setColor(MARK_COLORS.done);
+          enterStage('commander');
+          const combatSuits = zeonPool.filter(id => { const s = suitById(id); return s && !s.vehicle && !s.air && !['tank', 'apc', 'fighter'].includes(s.style); });
+          const boss = combatSuits[combatSuits.length - 1] || 'gouf';
+          const specs = [{ suitId: boss, ace: true, vip: true, name: 'SECTOR COMMANDER' }, { suitId: boss, ace: true }, { suitId: zeonPool[0] || 'zaku2' }];
+          spawnWaveAround(staged.dropZone, specs.length, { minR: 900, maxR: 1100, specs });
+          staged.commander = mechs.find(m => m.vip && m.alive) || null;
+        }
+      } else if (stage === 'commander'){
+        if (!staged.commander || !staged.commander.alive) staged.complete = true;
+      }
+    }
+  }
+  // world-space points the HUD should mark right now
+  function objectiveMarkers(){
+    if (!staged || staged.complete) return [];
+    const stage = stagedStage(), out = [];
+    if (staged.type === 'recon'){
+      if (stage === 'survey') for (const s of staged.sites) if (!s.done) out.push({ pos: s.pos, label: s.label, progress: s.progress, color: '#4de8ff' });
+      if (stage === 'exfil') out.push({ pos: staged.exfil, label: 'EXTRACTION', color: '#9fe8ff' });
+    } else if (staged.type === 'sabotage'){
+      if (stage === 'plant') for (const s of staged.sites) if (!s.done) out.push({ pos: s.pos, label: s.label, progress: s.progress, color: '#ff9a4a' });
+    } else if (staged.type === 'extraction'){
+      out.push({ pos: staged.pilot.root.position, label: stage === 'hold' ? `LZ · ${Math.max(0, Math.ceil(OT.lzHoldTime - staged.t))}s` : 'DOWNED PILOT', color: '#8fd0ff' });
+    } else if (staged.type === 'breakthrough'){
+      if (stage === 'aa') for (const s of staged.sites) if (!s.done) out.push({ pos: s.pos, label: s.label, color: '#ff9a4a' });
+      if (stage === 'drop') out.push({ pos: staged.dropZone, label: 'DROP ZONE', progress: staged.dropProgress, color: '#4de8ff' });
+      if (stage === 'commander' && staged.commander?.alive) out.push({ pos: staged.commander.root.position, label: 'COMMANDER', color: '#ff4a4a' });
+    }
+    return out;
+  }
+
   // custom sortie: landships fielded from the loadout screen fight as full combatants
   // (enemy → ZEON ahead of the line, ally → FED at the player's back)
   if (mission.customShips){
@@ -2216,15 +2447,15 @@ export function startBattle(renderer, opts, onEnd){
   // shapes are slim and velocity-aligned so what you see is the actual hit line
   const projectiles = [], particles = [];
   const FWD = new THREE.Vector3(0, 0, 1);
-  const beamGeo = new THREE.BoxGeometry(0.24, 0.24, 12);   // beam bolt
-  const mgGeo = new THREE.BoxGeometry(0.16, 0.16, 2.6);    // tracer round
   const bzGeo = new THREE.ConeGeometry(0.5, 2.6, 8);       // finned shell (apex forward)
   const missileGeo = new THREE.ConeGeometry(0.32, 3.4, 8); // guided missile (apex forward)
-  const beamMatF = new THREE.MeshBasicMaterial({ color: 0xff9ae0 });
-  const beamMatZ = new THREE.MeshBasicMaterial({ color: 0xffe066 });
-  const mgMat = new THREE.MeshBasicMaterial({ color: 0xffd070 });
+  const beamMatF = new THREE.MeshBasicMaterial({ color: 0xff9ae0 });   // FED ship shells keep their pink tint
   const bzMat = new THREE.MeshBasicMaterial({ color: 0xff8844 });
   const missileMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
+  // beam bolts and tracers are glowing cel effects (white core + faction halo); rockets stay physical
+  const projectileMesh = (type, faction) => type === 'beam' ? fx.beamMesh(faction)
+    : type === 'mg' || type === 'tracer' ? fx.tracerMesh() : type === 'ball' ? fx.ballMesh()
+    : new THREE.Mesh(bzGeo, bzMat);
   // a literal bomb: cylindrical body + cone nose (+Y) + crossed tail fins (-Y), so it falls nose-first
   const bombBodyGeo = new THREE.CylinderGeometry(0.34, 0.34, 1.7, 8);
   const bombNoseGeo = new THREE.ConeGeometry(0.34, 0.7, 8);
@@ -2265,9 +2496,6 @@ export function startBattle(renderer, opts, onEnd){
       life: projectile.life,
     })) pvpShotsSent++;
   }
-  const boomGeo = new THREE.SphereGeometry(1, 10, 8);
-  const boomMat = new THREE.MeshBasicMaterial({ color: 0xff9a30, transparent: true, opacity: 0.85 });
-  const critMat = new THREE.MeshBasicMaterial({ color: 0xffe14a, transparent: true, opacity: 0.95 }); // bright weak-point spark
   // Short faceted streaks remain readable against snow/desert without becoming opaque exhaust beams.
   const hoverJetGeo = new THREE.CylinderGeometry(0.07, 0.26, 1.35, 6, 1, true);
   hoverJetGeo.userData.shared = true;
@@ -2690,25 +2918,40 @@ export function startBattle(renderer, opts, onEnd){
       : approximateMuzzle(m, w);
     m.lastMuzzleWorld = muzzle.clone();
     if (m.isPlayer) applyPlayerWeaponRecoil(w);
-    // converge on the crosshair point when one is provided (player fire)
-    const base = aimPoint ? aimPoint.clone().sub(muzzle).normalize() : dir.clone();
-    const geo = w.type === 'beam' ? beamGeo : w.type === 'mg' ? mgGeo : bzGeo;
-    const mat = w.type === 'beam' ? (m.suit.faction === 'FED' ? beamMatF : beamMatZ) : w.type === 'mg' ? mgMat : bzMat;
+    // converge on the crosshair point when one is provided (player fire). The fire-control computer
+    // lays the bore above that point by the round's drop over the range, so it arcs back onto it.
+    const ballistic = ballisticProfile(w);
+    let laid = aimPoint;
+    if (aimPoint && ballistic && ballistic.gravityScale > 0 && PHYS.gravity > 0){
+      laid = aimPoint.clone();
+      laid.y += superelevation(ballistic, w.speed, muzzle.distanceTo(aimPoint), PHYS);
+    }
+    const base = laid ? laid.clone().sub(muzzle).normalize() : dir.clone();
+    // recoil heat and movement bloom the cone; it settles between bursts (see mechUpdate)
+    const speedFrac = clamp(Math.hypot(m.vel.x, m.vel.z) / Math.max(20, m.suit.walk * 2.2), 0, 1);
+    const bloom = spreadBloom({ heat: m.fireHeat || 0, speedFrac, boosting: !!m.boosting, beam: ballistic?.kind === 'beam' });
+    m.fireHeat = Math.min(1, (m.fireHeat || 0) + (ballistic?.heatPerShot || 0.1));
+    m.roundCount = (m.roundCount || 0) + 1;
+    fx.muzzleFlash(muzzle, base, w.shell ? 'bazooka' : w.type, m.suit.faction, (m.suit.scale || 1) * (w.pellets ? 1.2 : 1));
     // w.pellets sub-shots leave in one pull (each with its own spread); w.life shortens range (spray gun)
     for (let s = 0; s < (w.pellets || 1); s++){
       const d = base.clone();
-      const spread = w.spread * kneelSpreadMultiplier(m.kneelBlend)
+      const spread = w.spread * kneelSpreadMultiplier(m.kneelBlend) * bloom
         * (m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1);
       d.x += (rng.next() - 0.5) * 2 * spread;
       d.y += (rng.next() - 0.5) * 2 * spread;
       d.z += (rng.next() - 0.5) * 2 * spread;
       d.normalize();
-      const mesh = w.shell ? makeShell(w.shellScale || 1.05, w.ap) : new THREE.Mesh(geo, mat);
+      // kinetic guns: every third round is a tracer, the rest are dim ball rounds
+      const visual = ballistic?.kind === 'kinetic' && w.type !== 'bazooka' && !w.shell
+        ? (m.roundCount % 3 === 0 || w.rof < 3 ? 'tracer' : 'ball') : w.type;
+      const mesh = w.shell ? makeShell(w.shellScale || 1.05, w.ap) : projectileMesh(visual, m.suit.faction);
       mesh.position.copy(muzzle);
       if (w.type === 'bazooka' || w.shell) mesh.quaternion.setFromUnitVectors(UP, d); // shell/cone nose forward
       else mesh.quaternion.setFromUnitVectors(FWD, d);
       scene.add(mesh);
-      const projectile = { pos: muzzle.clone(), vel: d.multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 4, mesh };
+      const projectile = { pos: muzzle.clone(), vel: d.multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 4, mesh,
+        ballistic, muzzleSpeed: w.speed, traveled: 0 };
       projectiles.push(projectile);
       sendPvpShot(m, projectile, 'direct');
     }
@@ -2777,27 +3020,19 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function explosion(pos, r, vol = 0.3){
-    const mesh = new THREE.Mesh(boomGeo, boomMat.clone());
-    mesh.position.copy(pos); scene.add(mesh);
-    particles.push({ mesh, life: 0.55, maxLife: 0.55, r });
+    fx.explosion(pos, r, { ground: SPACE ? null : groundY(pos.x, pos.z) });
     sfx('boom', vol);
   }
   // weak-point hit feedback: a quick bright spark at the hit + a brief on-screen CRITICAL marker (player only)
   let critFlash = null;
   function critSpark(pos, isPlayerHit){
-    const mesh = new THREE.Mesh(boomGeo, critMat.clone());
-    mesh.position.copy(pos); scene.add(mesh);
-    particles.push({ mesh, life: 0.3, maxLife: 0.3, r: 4 });
+    fx.spark(pos, true);
     sfx('hit', clamp(420 / pos.distanceTo(player.root.position), 0.1, 0.4));
     if (isPlayerHit) critFlash = { pos: pos.clone(), t: 0.55 };
   }
 
-  const dustMat = new THREE.MeshBasicMaterial({ color: 0x9a917e, transparent: true, opacity: 0.5 });
   function dust(pos, r){
-    const mesh = new THREE.Mesh(boomGeo, dustMat.clone());
-    mesh.position.copy(pos); mesh.position.y += 1;
-    scene.add(mesh);
-    particles.push({ mesh, life: 0.8, maxLife: 0.8, r });
+    fx.dust(pos, r);
   }
 
   // E-hover leg exhaust: emit from a sole point attached to each animated leg.
@@ -3003,9 +3238,7 @@ export function startBattle(renderer, opts, onEnd){
     } else if (kind === 'missile'){
       mesh = new THREE.Mesh(missileGeo, missileMat);
     } else {
-      const geo = w.type === 'beam' ? beamGeo : w.type === 'mg' ? mgGeo : bzGeo;
-      const mat = w.type === 'beam' ? (m.suit.faction === 'FED' ? beamMatF : beamMatZ) : w.type === 'mg' ? mgMat : bzMat;
-      mesh = w.shell ? makeShell(w.shellScale || 1.05, w.ap) : new THREE.Mesh(geo, mat);
+      mesh = w.shell ? makeShell(w.shellScale || 1.05, w.ap) : projectileMesh(w.type, m.suit.faction);
     }
     mesh.position.copy(position);
     mesh.quaternion.setFromUnitVectors((kind === 'direct' && w.type !== 'bazooka' && !w.shell) ? FWD : UP, velocity.clone().normalize());
@@ -3017,6 +3250,7 @@ export function startBattle(renderer, opts, onEnd){
       team: m.team, owner: m, weaponName: w.name, life, mesh,
       homing: kind === 'missile' ? player : null, turn: w.turn || 2.4,
       bomb: kind === 'bomb', arc: kind === 'artillery', networkGhost: true,
+      ballistic: kind === 'direct' ? ballisticProfile(w) : null, muzzleSpeed: w.speed, traveled: 0,
     });
     m.lastMuzzleWorld = position.clone();
     m.shotsFired = (m.shotsFired || 0) + 1;
@@ -4116,6 +4350,12 @@ export function startBattle(renderer, opts, onEnd){
     // the player's own hangar wingmen / air wing follow the player, and blip-materialized ambient
     // units must not march back out of the observation bubble — only true garrison units leash
     if (m.wingId !== undefined || m.airId !== undefined || m.fromBlip) return null;
+    // staged objectives: site garrisons hold their ground; allies on a rescue stay near the pilot
+    if (staged && !staged.complete){
+      if (m.team === 'ZEON' && m.anchorPoint && staged.index === 0) return { x: m.anchorPoint.x, z: m.anchorPoint.z, leash: 380 };
+      if (m.team === 'FED' && staged.type === 'extraction' && staged.pilot?.alive)
+        return { x: staged.pilot.root.position.x, z: staged.pilot.root.position.z, leash: 260 };
+    }
     let list = null, leash = 0;
     if (mission.type === 'defend' && m.team === 'FED') { list = missionProps.filter(p => p.alive); leash = 420; }
     else if (mission.type === 'assault' && m.team === 'ZEON') { list = missionProps.filter(p => p.alive); leash = 500; }
@@ -4524,7 +4764,7 @@ export function startBattle(renderer, opts, onEnd){
     if (rangedAllowed && groundTactic.lineOfSight !== false
       && (m.suit.vehicle || Math.abs(dy) < fireCone) && d < pref * 2.4 && !(w.arc && d < 140)){ // artillery holds fire inside its own splash
       // lead the target, with skill-scaled error; aim point scales with target size
-      const lead = tmpV2.copy(t.root.position).addScaledVector(t.vel, d / w.speed);
+      const lead = tmpV2.copy(t.root.position).addScaledVector(t.vel, Math.min(6, timeOfFlight(ballisticProfile(w), w.speed, d, PHYS.air)));
       lead.y += aimHeight(t);
       const dir = lead.clone().sub(m.root.position).normalize();
       const err = (ai.err * (1 + m.sensorDmg * 2)) / ai.skill
@@ -4960,8 +5200,11 @@ export function startBattle(renderer, opts, onEnd){
     const S = predMuzzle ? predMuzzle.getWorldPosition(new THREE.Vector3()) : player.root.position.clone();
     const Tx = target.root.position.x, Ty = target.root.position.y + aimHeight(target), Tz = target.root.position.z;
     const Vt = target.vel || { x: 0, y: 0, z: 0 };
-    let t = Math.hypot(Tx - S.x, Ty - S.y, Tz - S.z) / spd;
-    for (let k = 0; k < 4; k++) t = Math.hypot(Tx + Vt.x * t - S.x, Ty + Vt.y * t - S.y, Tz + Vt.z * t - S.z) / spd;
+    // time of flight includes drag for kinetic rounds (the FCS handles drop separately)
+    const profile = ballisticProfile(player.suit.weapons[player.wi]);
+    const tof = d => Math.min(6, timeOfFlight(profile, spd, d, PHYS.air));
+    let t = tof(Math.hypot(Tx - S.x, Ty - S.y, Tz - S.z));
+    for (let k = 0; k < 4; k++) t = tof(Math.hypot(Tx + Vt.x * t - S.x, Ty + Vt.y * t - S.y, Tz + Vt.z * t - S.z));
     return new THREE.Vector3(Tx + Vt.x * t, Ty + Vt.y * t, Tz + Vt.z * t);
   }
   function updatePrediction(dt){
@@ -4991,8 +5234,55 @@ export function startBattle(renderer, opts, onEnd){
     else if (aw && aw.arc && !player.air) drawArtillery(); // artillery mode owns the aiming overlay (trajectory + impact)
     else if (assistOn) drawPredict();                 // whole aim system (prediction overlay) toggles with P
     if (aim && aim.id !== 'precision') drawWeaponAimSight(aim, aw);
+    else if (!aim && aw && !aw.arc && !player.air && aw.type !== 'lockmissile' && aw.type !== 'bomb') drawBloomRing(aw);
     drawReticle();
     drawCritFlash();
+    drawObjectiveMarkers();
+  }
+  // objective beacons on the HUD: diamond + label + range, pinned to the screen edge when off-view
+  function drawObjectiveMarkers(){
+    const marks = objectiveMarkers();
+    if (!marks.length || sniperMode) return;
+    loCtx.save();
+    loCtx.font = 'bold 12px monospace'; loCtx.textAlign = 'center'; loCtx.lineWidth = 2;
+    for (const mk of marks){
+      const wp = tmpV.copy(mk.pos); if (!SPACE) wp.y = Math.max(wp.y, groundY(wp.x, wp.z)) + 20;
+      wp.project(camera);
+      let x = (wp.x * 0.5 + 0.5) * innerWidth, y = (-wp.y * 0.5 + 0.5) * innerHeight;
+      const behind = wp.z > 1;
+      if (behind){ x = innerWidth - x; y = innerHeight - 40; }
+      const pad = 36, off = behind || x < pad || x > innerWidth - pad || y < pad || y > innerHeight - pad;
+      x = clamp(x, pad, innerWidth - pad); y = clamp(y, pad, innerHeight - pad);
+      loCtx.strokeStyle = mk.color; loCtx.fillStyle = mk.color;
+      loCtx.beginPath(); loCtx.moveTo(x, y - 9); loCtx.lineTo(x + 9, y); loCtx.lineTo(x, y + 9); loCtx.lineTo(x - 9, y); loCtx.closePath(); loCtx.stroke();
+      if (mk.progress > 0){
+        loCtx.beginPath(); loCtx.arc(x, y, 14, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * mk.progress); loCtx.stroke();
+      }
+      const dist = Math.round(player.root.position.distanceTo(mk.pos));
+      const text = `${mk.label} · ${dist} m`, half = loCtx.measureText(text).width / 2 + 6;
+      loCtx.globalAlpha = off ? 0.75 : 1;
+      loCtx.fillText(text, clamp(x, half, innerWidth - half), y - 16);
+      loCtx.globalAlpha = 1;
+    }
+    loCtx.restore();
+  }
+  // live dispersion cone around the crosshair: widens with recoil heat and movement, settles when
+  // the pilot stops, kneels or pauses between bursts
+  function drawBloomRing(w){
+    const ballistic = ballisticProfile(w);
+    const speedFrac = clamp(Math.hypot(player.vel.x, player.vel.z) / Math.max(20, player.suit.walk * 2.2), 0, 1);
+    const bloom = spreadBloom({ heat: player.fireHeat || 0, speedFrac, boosting: !!player.boosting, beam: ballistic?.kind === 'beam' });
+    const cone = w.spread * kneelSpreadMultiplier(player.kneelBlend) * bloom * 1.6;   // ≈ radius holding most rounds
+    const r = clamp(cone / Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2) * innerHeight * 0.5, 7, innerHeight * 0.3);
+    const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
+    loCtx.save();
+    loCtx.strokeStyle = bloom > 1.4 ? 'rgba(255,190,90,0.75)' : 'rgba(210,235,255,0.55)';
+    loCtx.lineWidth = 1.5;
+    for (let i = 0; i < 4; i++){
+      const a0 = i * Math.PI / 2 + 0.28, a1 = (i + 1) * Math.PI / 2 - 0.28;
+      loCtx.beginPath(); loCtx.arc(cx, cy, r, a0, a1); loCtx.stroke();
+    }
+    loCtx.restore();
   }
   function drawSniperScope(){
     const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
@@ -5258,7 +5548,7 @@ export function startBattle(renderer, opts, onEnd){
         t.cd = TURRET_ROF;
         const mw = t.muzzle.getWorldPosition(new THREE.Vector3());
         const dir = tw.clone().addScaledVector(best.vel, mw.distanceTo(tw) / 1400).sub(mw).normalize(); // lead
-        const mesh = new THREE.Mesh(mgGeo, mgMat);
+        const mesh = fx.tracerMesh();
         mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(FWD, dir);
         scene.add(mesh);
         projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(1400), dmg: 34, splash: 0, team: m.team, owner: m, weaponName: 'AIRCRAFT TURRET', life: 2.2, mesh });
@@ -5536,6 +5826,7 @@ export function startBattle(renderer, opts, onEnd){
       }
       return;
     }
+    if (m.fireHeat > 0) m.fireHeat = Math.max(0, m.fireHeat - HEAT_COOL_RATE * dt * (m.kneelBlend > 0.5 ? 1.4 : 1));
     updateKneelTransition(m, dt);
     updatePendingMelee(m, dt);
     // GAW carrier: periodically drops a Zaku that descends slowly and can only shoot (no moving)
@@ -5785,7 +6076,8 @@ export function startBattle(renderer, opts, onEnd){
           p.vel.copy(cur).multiplyScalar(spd);
         }
       }
-      if (!SPACE && p.splash) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
+      if (p.ballistic && !p.arc && !p.bomb && !p.homing) stepBallistic(p.vel, p.ballistic, PHYS, dt); // local gravity + air drag
+      else if (!SPACE && p.splash) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
       const stepLen = p.vel.length() * dt;
       const dirN = tmpV.copy(p.vel).normalize();
       let hit = false, hitKind = null, hitTarget = null, bestT = stepLen;
@@ -5815,20 +6107,33 @@ export function startBattle(renderer, opts, onEnd){
           explosion(p.pos, p.splash, clamp(380 / p.pos.distanceTo(player.root.position), 0.04, 0.3));
           if (!p.networkGhost) splashDamage(p.pos, p.splash, p.dmg, p.owner, p.weaponName);
         } else if (!p.networkGhost && hitKind === 'mech'){
-          damage(hitTarget, p.dmg, p.pos, p.owner, false, p.weaponName);
+          // penetration vs armour (calibre, remaining velocity, impact angle) — or beam diffusion
+          const cosImpact = Math.abs(dirN.x * COLLIDER_HIT.nx + dirN.y * COLLIDER_HIT.ny + dirN.z * COLLIDER_HIT.nz) || 1;
+          const impact = impactMultiplier({
+            profile: p.ballistic, impactSpeed: p.vel.length(), muzzleSpeed: p.muzzleSpeed,
+            cosImpact, armorMM: armorThickness(hitTarget.suit), distance: (p.traveled || 0) + bestT, air: PHYS.air, roll: rng.next(),
+          });
+          if (impact.ricochet){
+            fx.spark(p.pos, false);
+            if (p.owner?.isPlayer || hitTarget.isPlayer) sfx('hit', 0.08);
+          }
+          damage(hitTarget, p.dmg * impact.mult, p.pos, p.owner, false, p.weaponName);
         } else if (!p.networkGhost && hitKind === 'prop' && hitTarget.team !== p.team){
-          damageProp(hitTarget, p.dmg, p.pos, p.owner, p.weaponName);
+          const falloff = p.ballistic?.kind === 'beam'
+            ? impactMultiplier({ profile: p.ballistic, distance: (p.traveled || 0) + bestT, air: PHYS.air }).mult : 1;
+          damageProp(hitTarget, p.dmg * falloff, p.pos, p.owner, p.weaponName);
         }
         if (!p.networkGhost && hitKind === 'terrain') killSoldiersNear(p.pos, p.splash ? p.splash * 1.6 : 3);
         hit = true;
       }
-      if (!hit) p.pos.addScaledVector(p.vel, dt);
+      if (!hit){ p.pos.addScaledVector(p.vel, dt); p.traveled = (p.traveled || 0) + stepLen; }
       if (hit || p.life <= 0){
         scene.remove(p.mesh);
         projectiles.splice(i, 1);
       } else {
         p.mesh.position.copy(p.pos);
         if ((p.splash && !SPACE) || p.homing) p.mesh.quaternion.setFromUnitVectors(UP, tmpV.copy(p.vel).normalize()); // shells/missiles nose over toward travel
+        else if (p.ballistic?.gravityScale && !SPACE) p.mesh.quaternion.setFromUnitVectors(FWD, tmpV.copy(p.vel).normalize()); // tracers follow the arc
       }
     }
   }
@@ -5836,6 +6141,7 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- particles ----------
   function particlesUpdate(dt){
     if (critFlash){ critFlash.t -= dt; if (critFlash.t <= 0) critFlash = null; }
+    fx.update(dt, camera);
     for (let i = particles.length - 1; i >= 0; i--){
       const pt = particles[i];
       pt.life -= dt;
@@ -6013,7 +6319,7 @@ export function startBattle(renderer, opts, onEnd){
     dir.x += rng.range(-spread, spread); dir.y += rng.range(-spread, spread); dir.z += rng.range(-spread, spread); dir.normalize();
     const machineGun = style === 'machinegun';
     const mesh = machineGun
-      ? new THREE.Mesh(mgGeo, mgMat)
+      ? fx.tracerMesh()
       : makeShell(p.landProfile?.shellScale || p.shellScale || 1.05, false);
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(machineGun ? FWD : UP, dir);
@@ -6082,6 +6388,7 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function missionUpdate(dt){
+    if (staged && outcome === null) updateStaged(dt);
     // delayed attack waves (defend)
     for (let i = waves.length - 1; i >= 0; i--){
       waves[i].t -= dt;
@@ -6260,6 +6567,31 @@ export function startBattle(renderer, opts, onEnd){
         return `${base} · ENEMY ARMOR ${total - liveZ}/${total} · ${shipName} ${landZ.filter(p => p.alive).length}/2`
           + ` · TROOPS ${infantry.aliveF} vs ${infantry.aliveZ}`;
       }
+      case 'recon': {
+        if (stagedStage() === 'survey'){
+          const done = staged.sites.filter(x => x.done).length;
+          const active = staged.sites.find(x => !x.done && x.progress > 0 && x.progress < 1);
+          return `${base} · SURVEYED ${done}/${staged.sites.length}` + (active ? ` · SCANNING ${active.label} ${Math.round(active.progress * 100)}%` : '');
+        }
+        return `${base} · ${stageLabel('exfil')} · ${Math.round(planarDistance(player.root.position, staged.exfil))} m`;
+      }
+      case 'sabotage': {
+        if (stagedStage() === 'fuse') return `${base} · DETONATION IN ${Math.max(0, Math.ceil(staged.fuse))}s — CLEAR ${OT.blastSafeDistance} m`;
+        const done = staged.sites.filter(x => x.done).length;
+        const active = staged.sites.find(x => !x.done && x.progress > 0);
+        return `${base} · CHARGES ${done}/${staged.sites.length}` + (active ? ` · SETTING ${active.label} ${Math.round(active.progress * 100)}%` : ' · HOLD STILL BESIDE A TARGET');
+      }
+      case 'extraction': {
+        const hull = `PILOT ${Math.max(0, Math.round(staged.pilot.hp / staged.pilot.maxHp * 100))}%`;
+        if (stagedStage() === 'reach') return `${base} · ${stageLabel('reach')} · ${Math.round(planarDistance(player.root.position, staged.pilot.root.position))} m · ${hull}`;
+        return `${base} · RESCUE CRAFT ${Math.max(0, Math.ceil(OT.lzHoldTime - staged.t))}s · ${hull}`;
+      }
+      case 'breakthrough': {
+        const stage = stagedStage(), n = staged.stages.indexOf(stage) + 1;
+        if (stage === 'aa') return `${base} · PHASE ${n}/3 · AA SITES ${staged.sites.filter(x => x.done).length}/${staged.sites.length}`;
+        if (stage === 'drop') return `${base} · PHASE ${n}/3 · DROP ZONE ${Math.round(staged.dropProgress * 100)}%`;
+        return `${base} · PHASE ${n}/3 · ${stageLabel('commander')}`;
+      }
       case 'pvp': {
         const alive = mechs.filter(m => m.alive && (m.isPlayer || m.networkRemote)).length;
         return `${base} · ${alive} PILOT${alive === 1 ? '' : 'S'} REMAIN`;
@@ -6406,6 +6738,7 @@ export function startBattle(renderer, opts, onEnd){
       put(p.root.position, p.team === 'ZEON' ? '#ffb14a' : '#4affc8', p.kind === 'truck' ? 4 : p.isShip ? 9 : 6);
     }
     if (mission.goal) put(mission.goal, '#ffffff', 3);
+    for (const mk of objectiveMarkers()) put(mk.pos, mk.color, 7);
     rctx.fillStyle = '#fff';
     rctx.beginPath();
     rctx.moveTo(R, R - 6); rctx.lineTo(R - 4, R + 5); rctx.lineTo(R + 4, R + 5);
@@ -6627,7 +6960,7 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // ---------- end conditions ----------
-  let endT = -1, ended = false, outcome = null;
+  let endT = -1, ended = false, outcome = null, battleClock = 0;
   function checkEnd(dt){
     if (ended) return;
     if (outcome === null){
@@ -6692,6 +7025,19 @@ export function startBattle(renderer, opts, onEnd){
           win = !zCore;
           winMsg = 'LAST MOBILE SUIT STANDING — PVP VICTORY';
           break;
+        case 'recon':
+          win = staged.complete; winMsg = 'SURVEY DATA DELIVERED — RECON COMPLETE';
+          break;
+        case 'sabotage':
+          win = staged.complete; winMsg = 'TARGETS DEMOLISHED — WITHDRAW';
+          break;
+        case 'extraction':
+          if (staged.failed) lose = staged.failed;
+          win = staged.complete; winMsg = 'PILOT RECOVERED — RESCUE CRAFT AWAY';
+          break;
+        case 'breakthrough':
+          win = staged.complete; winMsg = 'COMMANDER DOWN — THE LINE IS BROKEN';
+          break;
         case 'fleet': {
           // a BROKEN fleet fails the assault — not just a fully-annihilated one. mission.fleetLoseFrac
           // is the survival fraction at/below which the line has collapsed (default 0 = only when all gone)
@@ -6749,6 +7095,16 @@ export function startBattle(renderer, opts, onEnd){
         .concat(fedReserve.map(spec => ({ suitId: spec.suitId, alive: true, hpFrac: spec.hpFrac ?? 1 }))),
       // surviving allied capital ships by kind — multi-phase fleet ops sail them into the next battle
       allyFleet: fleetF.filter(p => p.alive).reduce((m, p) => { m[p.kind] = (m[p.kind] || 0) + 1; return m; }, {}),
+      // optional contract goals (bonus pay) judged on this sortie
+      elapsed: battleClock,
+      secondary: evaluateSecondaries(opts.secondary || [], {
+        victory: !!res.victory,
+        hpFrac: clamp(player.hp / player.maxHp, 0, 1),
+        wingLost: mechs.filter(m => m.wingId !== undefined && !m.alive).length,
+        elapsed: battleClock,
+        acesTotal: mechs.filter(m => m.team === 'ZEON' && m.ace && !m.vip).length,
+        acesDown: mechs.filter(m => m.team === 'ZEON' && m.ace && !m.vip && !m.alive).length,
+      }),
     });
   }
 
@@ -7174,6 +7530,34 @@ export function startBattle(renderer, opts, onEnd){
       }
       return true;
     },
+    // objectives bench: resolve a staged objective directly (AA sites / commander) for walkthroughs
+    _debugKillObjectives(kind){
+      if (!staged) return false;
+      if (kind === 'aa') for (const site of staged.sites) if (site.prop?.alive) damageProp(site.prop, site.prop.hp + 1, site.prop.root.position, player, 'QA');
+      if (kind === 'commander' && staged.commander?.alive) damage(staged.commander, staged.commander.hp * 10 + 1e5, staged.commander.root.position, player, false, 'QA');
+      return true;
+    },
+    // effects bench: spawn a cel effect in front of the player and/or advance the effect clock
+    _debugFx({ kind = null, offset = [0, 9, 60], r = 16, advance = 0, view = null, look = null } = {}){
+      const p = player.root.position;
+      const at = new THREE.Vector3(p.x + offset[0], p.y + offset[1], p.z + offset[2]);
+      if (kind === 'explosion') explosion(at, r, 0);
+      else if (kind === 'spark') critSpark(at, false);
+      else if (kind === 'dust') dust(at, r);
+      else if (kind === 'muzzle') fx.muzzleFlash(at, new THREE.Vector3(0, 0, -1), 'mg', player.suit.faction, 1);
+      else if (kind === 'beam'){
+        const mesh = fx.beamMesh(player.suit.faction); mesh.position.copy(at);
+        mesh.quaternion.setFromUnitVectors(FWD, new THREE.Vector3(1, 0, 0.2).normalize()); scene.add(mesh);
+      }
+      for (let t = 0; t < advance; t += 1 / 60) fx.update(1 / 60, camera);
+      if (view){
+        camera.position.set(p.x + view[0], p.y + view[1], p.z + view[2]);
+        camera.lookAt(p.x + (look?.[0] || 0), p.y + (look?.[1] ?? 9), p.z + (look?.[2] || 0));
+        camera.fov = 50; camera.updateProjectionMatrix();
+        renderer.render(scene, camera);
+      }
+      return fx.activeCount;
+    },
     // static framed orbit view of the player suit for screenshots — runs no sim
     _debugView(theta = 0, dist = 26, h = 14){
       const p = player.root.position;
@@ -7348,7 +7732,7 @@ export function startBattle(renderer, opts, onEnd){
         viewShieldPosition: viewShield.position.toArray(),
         viewShieldRotation: viewShield.rotation.toArray().slice(0, 3),
         killFeed: Array.from(killFeedEl.children, row => row.textContent),
-        particleCount: particles.length,
+        particleCount: particles.length + fx.activeCount,
         player: player.root.position.toArray(),
         enemies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'ZEON')
           .map((m, index) => {
@@ -7407,6 +7791,15 @@ export function startBattle(renderer, opts, onEnd){
           mainTurrets: p.turrets?.length || 0, fixedGuns: p.fixedMuzzles?.length || 0,
           secondaryStations: p.secondaryMuzzles?.length || 0 })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,
+        staged: staged ? {
+          type: staged.type, stage: stagedStage(), complete: staged.complete, failed: staged.failed, t: staged.t,
+          sites: staged.sites.map(x => ({ label: x.label, pos: x.pos.toArray(), progress: x.progress || 0, done: x.done })),
+          exfil: staged.exfil?.toArray() || null, dropZone: staged.dropZone?.toArray() || null,
+          dropProgress: staged.dropProgress || 0, fuse: staged.fuse ?? null,
+          pilot: staged.pilot ? { alive: staged.pilot.alive, hp: staged.pilot.hp } : null,
+          commander: staged.commander ? { alive: staged.commander.alive, p: staged.commander.root.position.toArray() } : null,
+        } : null,
+        battleClock,
         nFed: mechs.filter(m => m.alive && m.team === 'FED' && !m.isPlayer).length,
         nFedTanks: mechs.filter(m => m.alive && m.team === 'FED' && (m.suit.style === 'tank' || m.suit.style === 'apc')).length,
         nZeonTanks: mechs.filter(m => m.alive && m.team === 'ZEON' && (m.suit.style === 'tank' || m.suit.style === 'apc')).length,
@@ -7433,6 +7826,7 @@ export function startBattle(renderer, opts, onEnd){
           if (!m._collisionPrev) m._collisionPrev = new THREE.Vector3();
           m._collisionPrev.copy(m.root.position);
         }
+        if (outcome === null) battleClock += dt;
         updatePrediction(dt); // P aim-assist: maintain the 0.5s lock before the player fires
         playerUpdate(dt);
         updatePlayerHoverCraft();
@@ -7472,10 +7866,11 @@ export function startBattle(renderer, opts, onEnd){
       scene.traverse(o => {
         if (o.geometry && !o.geometry.userData.shared) o.geometry.dispose(); // never free the shared lite-mech geo
         if (o.material){
-          for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
+          for (const m of Array.isArray(o.material) ? o.material : [o.material]) if (!m.userData?.shared) m.dispose();
         }
       });
       hoverJetGeo.dispose(); hoverJetMatF.dispose(); hoverJetMatZ.dispose();
+      fx.dispose();
     },
   };
 }
