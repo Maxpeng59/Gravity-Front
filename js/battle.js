@@ -2856,10 +2856,8 @@ export function startBattle(renderer, opts, onEnd){
   const flightRollQ = new THREE.Quaternion();
   const LOCAL_FORWARD = new THREE.Vector3(0, 0, 1);
   function applyMechOrientation(m){
-    const floor = COLONY && !m.air ? groundY(m.root.position.x, m.root.position.z) : -Infinity;
     const surfaceBound = COLONY && !m.air && !m.dropping && !m.colonyFreeFlight
-      && !m.colonyFlightLaunching && !m.carrierRide?.carrier?.alive
-      && m.root.position.y <= floor + (m.suit.hover ? 7 : 4);
+      && !m.colonyFlightLaunching && !m.carrierRide?.carrier?.alive;
     if (surfaceBound){
       const normal = colonySurfaceNormal(m.root.position.x);
       surfaceUp.set(normal.x, normal.y, normal.z);
@@ -5181,8 +5179,10 @@ export function startBattle(renderer, opts, onEnd){
   // Where an artillery shell should land: the point under the crosshair — an enemy/prop if the ray strikes one,
   // else the ground intersection, else a default range ahead on the ground (when the crosshair is on open sky).
   function artilleryTarget(){
-    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
-    const dir = new THREE.Vector3(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
+    // Use the rendered camera ray. In the colony the camera inherits the mobile
+    // suit's curved-surface attitude and free-flight roll, so a world-up yaw /
+    // pitch reconstruction would no longer pass through the visible reticle.
+    const dir = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const origin = camera.position;
     // Pure manual aim (NO lock-on / NO centre-of-mass snap): the shell lands where the crosshair ray FIRST
     // meets a surface — the actual ray-hit point on an enemy/prop hull, or the ground. You aim; it lands there.
@@ -5198,7 +5198,7 @@ export function startBattle(renderer, opts, onEnd){
     const terrainLimit = best === Infinity ? 4000 : best;
     if (rayTerrainHit(origin, dir, terrainLimit, TERRAIN_HIT, 10, 18)) best = TERRAIN_HIT.t;
     if (best === Infinity){ // aiming at open sky with no terrain underneath: drop it on the ground ahead
-      const gd = 900, fx = origin.x + Math.sin(camYaw) * gd, fz = origin.z + Math.cos(camYaw) * gd;
+      const gd = 900, fx = origin.x + dir.x * gd, fz = origin.z + dir.z * gd;
       return new THREE.Vector3(fx, hfn ? groundY(fx, fz) : 0, fz);
     }
     return origin.clone().addScaledVector(dir, best);
@@ -5233,8 +5233,7 @@ export function startBattle(renderer, opts, onEnd){
   // The exact world point under the crosshair: cast the camera's center ray
     // against exact enemy/prop collider primitives and the terrain; fall back to a far point.
   function crosshairPoint(){
-    const cp = Math.cos(camPitch), sp = Math.sin(camPitch);
-    const dir = new THREE.Vector3(Math.sin(camYaw) * cp, sp, Math.cos(camYaw) * cp);
+    const dir = camera.getWorldDirection(new THREE.Vector3()).normalize();
     const origin = camera.position;
     let best = 2000;
     for (const m of mechs){
@@ -6885,6 +6884,13 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // ---------- camera ----------
+  const cameraFrameUp = new THREE.Vector3(0, 1, 0);
+  const cameraFrameForward = new THREE.Vector3(0, 0, 1);
+  const cameraFrameRight = new THREE.Vector3(1, 0, 0);
+  const cameraAimFlat = new THREE.Vector3(0, 0, 1);
+  const cameraAimDirection = new THREE.Vector3(0, 0, 1);
+  const cameraChaseDirection = new THREE.Vector3(0, 0, 1);
+  const cameraFocusPoint = new THREE.Vector3();
   function cameraUpdate(dt){
     const p = player.root.position;
     const motion = player.vel.length();
@@ -6918,7 +6924,31 @@ export function startBattle(renderer, opts, onEnd){
     const aimYaw = camYaw + sniperSwayYaw * sniperZoom;
     const aimPitch = clamp(camPitch + sniperSwayPitch * sniperZoom, -1.15, 1.15);
     const cp = Math.cos(aimPitch), sp = Math.sin(aimPitch);
-    const fwd = tmpV.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp);
+    const bodyLinkedCamera = COLONY && !player.air;
+    if (bodyLinkedCamera){
+      // The colony has no universal visual "up": on the shell the suit stands
+      // perpendicular to the curved deck, and in free flight Q/E rolls the suit.
+      // Derive the view frame from the actual rendered body so turning or rolling
+      // the Gundam carries the camera with it.
+      cameraFrameUp.copy(UP).applyQuaternion(player.root.quaternion).normalize();
+      cameraFrameForward.copy(LOCAL_FORWARD).applyQuaternion(player.root.quaternion).normalize();
+      cameraFrameRight.set(1, 0, 0).applyQuaternion(player.root.quaternion).normalize();
+      const yawOffset = wrapAngle(aimYaw - player.yaw);
+      cameraAimFlat.copy(cameraFrameForward).multiplyScalar(Math.cos(yawOffset))
+        .addScaledVector(cameraFrameRight, Math.sin(yawOffset)).normalize();
+      cameraAimDirection.copy(cameraAimFlat).multiplyScalar(cp)
+        .addScaledVector(cameraFrameUp, sp).normalize();
+      cameraChaseDirection.copy(cameraFrameForward).multiplyScalar(cp)
+        .addScaledVector(cameraFrameUp, sp).normalize();
+    } else {
+      cameraFrameUp.copy(UP);
+      cameraFrameForward.set(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+      cameraFrameRight.set(Math.cos(player.yaw), 0, -Math.sin(player.yaw));
+      cameraAimDirection.set(Math.sin(aimYaw) * cp, sp, Math.cos(aimYaw) * cp);
+      cameraChaseDirection.copy(cameraAimDirection);
+    }
+    const fwd = cameraAimDirection;
+    camera.up.copy(cameraFrameUp);
     let lookOverride = null; // branches that don't look straight along the aim set this
     hud.classList.toggle('sniper-mode', sniperMode);
     hud.classList.toggle('aim-mode', sniperMode);
@@ -6994,8 +7024,15 @@ export function startBattle(renderer, opts, onEnd){
       // silhouette remains visible instead of dropping beneath the screen edge.
       const kneelView = clamp(player.kneelBlend || 0, 0, 1);
       const desired = tmpV3.copy(p)
-        .addScaledVector(fwd, -(23 + kneelView * 8));
-      desired.y += 21 - sp * 5 - kneelView * 1.5;
+        .addScaledVector(bodyLinkedCamera ? cameraChaseDirection : fwd, -(23 + kneelView * 8));
+      if (bodyLinkedCamera){
+        desired.addScaledVector(cameraFrameUp, 21 - sp * 5 - kneelView * 1.5);
+        // Keep the upper body as the stable composition anchor while allowing
+        // enough forward lead for the reticle and targets to remain readable.
+        lookOverride = cameraFocusPoint.copy(p)
+          .addScaledVector(cameraFrameUp, 9 * (player.suit.scale || 1))
+          .addScaledVector(fwd, 16);
+      } else desired.y += 21 - sp * 5 - kneelView * 1.5;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 2.5);
       camera.position.lerp(desired, started ? Math.min(1, 11 * dt) : 1);
     }
@@ -7005,7 +7042,9 @@ export function startBattle(renderer, opts, onEnd){
     // block while the mobile suit itself remains correctly blocked outside.
     if (!firstPerson && player.alive){
       cameraRayOrigin.copy(p);
-      cameraRayOrigin.y += player.air ? aimHeight(player) : player.suit.vehicle ? 1.8 : 11 * (player.suit.scale || 1);
+      const cameraOriginHeight = player.air ? aimHeight(player) : player.suit.vehicle ? 1.8 : 11 * (player.suit.scale || 1);
+      if (bodyLinkedCamera) cameraRayOrigin.addScaledVector(cameraFrameUp, cameraOriginHeight);
+      else cameraRayOrigin.y += cameraOriginHeight;
       cameraRayDir.subVectors(camera.position, cameraRayOrigin);
       const cameraDistance = cameraRayDir.length();
       if (cameraDistance > 0.1){
@@ -7081,8 +7120,8 @@ export function startBattle(renderer, opts, onEnd){
     } else viewShield.visible = false;
 
     if (camShake > 0){
-      camera.position.x += (rng.next() - 0.5) * camShake;
-      camera.position.y += (rng.next() - 0.5) * camShake;
+      camera.position.addScaledVector(cameraFrameRight, (rng.next() - 0.5) * camShake);
+      camera.position.addScaledVector(cameraFrameUp, (rng.next() - 0.5) * camShake);
       camShake = Math.max(0, camShake - 4 * dt);
     }
     if (lookOverride){
@@ -7751,6 +7790,11 @@ export function startBattle(renderer, opts, onEnd){
         alive: p.alive,
         indestructible: !!p.indestructible,
       }));
+      const cameraForwardDbg = camera.getWorldDirection(new THREE.Vector3()).normalize();
+      const playerUpDbg = UP.clone().applyQuaternion(player.root.quaternion).normalize();
+      const playerFocusNdc = player.root.position.clone()
+        .addScaledVector(playerUpDbg, 9 * (player.suit.scale || 1))
+        .project(camera);
       return {
         kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
         colony: COLONY ? {
@@ -7763,7 +7807,11 @@ export function startBattle(renderer, opts, onEnd){
           altitude: player.root.position.y - groundY(player.root.position.x, player.root.position.z),
           roll: player.flightRoll || 0,
           surfaceNormal: colonySurfaceNormal(player.root.position.x),
-          playerUp: UP.clone().applyQuaternion(player.root.quaternion).toArray(),
+          playerUp: playerUpDbg.toArray(),
+          cameraUp: camera.up.toArray(),
+          cameraForward: cameraForwardDbg.toArray(),
+          cameraPlayerUpDot: camera.up.dot(playerUpDbg),
+          playerFocusNdc: playerFocusNdc.toArray(),
           airborneAllies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'FED'
             && (m.colonyFreeFlight || m.colonyFlightLaunching)).length,
           airborneEnemies: mechs.filter(m => m.alive && m.team === 'ZEON'
