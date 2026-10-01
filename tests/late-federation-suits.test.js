@@ -35,10 +35,14 @@ test('late Federation suits retain their intended stock combat roles', () => {
 
 test('each late Federation suit is routed to a dedicated canonical model builder', () => {
   const source = readFileSync(new URL('../js/canonical-fed.js', import.meta.url), 'utf8');
+  const modelKit = readFileSync(new URL('../js/model-kit.js', import.meta.url), 'utf8');
   assert.match(source, /case 'gmii': return buildGMII/);
   assert.match(source, /case 'gmiii': return buildGMIII/);
   assert.match(source, /case 'jegan': return buildJegan/);
   assert.ok((source.match(/facetedHull\(/g) || []).length >= 18);
+  assert.match(source, /geometry\.setAttribute\('uv', new THREE\.Float32BufferAttribute\(uvs, 2\)\)/);
+  assert.match(modelKit, /if \(!geo\.getAttribute\('uv'\)\)/);
+  assert.match(modelKit, /name !== 'position' && name !== 'normal' && name !== 'uv'/);
   assert.match(source, /frontSkirts: false/);
   assert.match(source, /shoulderIndex.*MEDIUM MISSILE/);
   assert.match(source, /waistIndex.*WAIST MISSILE/);

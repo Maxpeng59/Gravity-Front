@@ -278,9 +278,15 @@ function frontPlate(points, depth, material, x = 0, y = 0, z = 0){
 // front-z, back-z]; adjacent rings are triangulated into explicit faces.  This
 // keeps late-UC armor readable as sloped mechanical plates instead of cuboids.
 function facetedHull(sections, material, x = 0, y = 0, z = 0){
-  const positions = [], indices = [];
-  for (const [sy, hw, front, back] of sections){
+  const positions = [], uvs = [], indices = [];
+  // compactGroup merges these hulls with ordinary Box/ExtrudeGeometry armor.
+  // Those geometries carry UVs, so the authored hull must expose the same
+  // attribute set or BufferGeometryUtils rejects the whole material bucket.
+  for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++){
+    const [sy, hw, front, back] = sections[sectionIndex];
     positions.push(-hw, sy, front, hw, sy, front, hw, sy, back, -hw, sy, back);
+    const v = sections.length === 1 ? 0 : sectionIndex / (sections.length - 1);
+    uvs.push(0, v, 1, v, 1, v, 0, v);
   }
   for (let ring = 0; ring < sections.length - 1; ring++){
     const a = ring * 4, b = (ring + 1) * 4;
@@ -294,6 +300,7 @@ function facetedHull(sections, material, x = 0, y = 0, z = 0){
   indices.push(top, top + 1, top + 2, top, top + 2, top + 3);
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
   geometry.setIndex(indices); geometry.computeVertexNormals(); geometry.computeBoundingSphere();
   const mesh = new THREE.Mesh(geometry, material); mesh.position.set(x, y, z); return mesh;
 }

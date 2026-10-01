@@ -104,6 +104,18 @@ export function compactGroup(group){
     let geo = object.geometry.clone();
     if (geo.index) geo = geo.toNonIndexed();
     geo.applyMatrix4(relative);
+    // BufferGeometryUtils rejects an entire material bucket when one authored
+    // mesh exposes a different optional attribute set.  Static armour only
+    // needs these three attributes, so normalize every primitive before it is
+    // merged rather than silently dropping helmets, panels, or missile pods.
+    for (const name of Object.keys(geo.attributes)){
+      if (name !== 'position' && name !== 'normal' && name !== 'uv') geo.deleteAttribute(name);
+    }
+    if (!geo.getAttribute('normal')) geo.computeVertexNormals();
+    if (!geo.getAttribute('uv')){
+      const vertexCount = geo.getAttribute('position').count;
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(vertexCount * 2), 2));
+    }
     let bucket = buckets.get(object.material.uuid);
     if (!bucket){ bucket = { material: object.material, geometries: [] }; buckets.set(object.material.uuid, bucket); }
     bucket.geometries.push(geo); originals.push(object);
