@@ -62,8 +62,9 @@ import {
   hoverCraftEquipped,
 } from './hovercraft.js';
 import {
-  COLONY_FLIGHT_ENTER_HEIGHT, COLONY_GRAVITY_SCALE, COLONY_RADIUS, COLONY_SURFACE_FALL_ACCEL,
-  colonyFloorHeight, colonyFreeFlightState,
+  COLONY_AI_FLIGHT_CRUISE_HEIGHT, COLONY_FLIGHT_ENTER_HEIGHT, COLONY_GRAVITY_SCALE,
+  COLONY_RADIUS, COLONY_SURFACE_FALL_ACCEL, advanceColonyFlightRoll,
+  colonyFloorHeight, colonyFreeFlightState, colonySurfaceNormal,
 } from './colony-physics.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
@@ -435,13 +436,14 @@ export function startBattle(renderer, opts, onEnd){
   const hintGroundManeuver = env === 'ground' && hintSuit && !hintSuit.air && !hintSuit.vehicle && !hintSuit.noJump
     && !['tank','guntank','zakutank','crane','apc','fighter'].includes(hintSuit.style);
   const hintHoverProfile = hintSuit?.landType ? 'E AUTO-HOVER 3× · 80% ENERGY' : 'E AUTO-HOVER 2×';
+  const freeFlightWeaponHint = COLONY ? 'TAB/1-4 WEAPON · FREE-FLIGHT Q/E ROLL' : 'Q/TAB/1-4 WEAPON';
   const baseHint = hintSuit && hintSuit.air
     ? `MOUSE STEER · LMB FIRE · RMB HOLD AIM · N LATCH AIM · SHIFT BOOST · S BRAKE · V VIEW · R RELOAD · Q/TAB/1-${hintSuit.weapons.length} WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE`
     : hintSuit && hintSuit.vehicle
     ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · RMB HOLD AIM · N LATCH AIM · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM ASSIST · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
-    : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE';
+    : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · ${freeFlightWeaponHint} · P AIM ASSIST · M MUTE ALL · ESC PAUSE`;
   hintEl.textContent = baseHint
     + (COLONY ? ` · COLONY 0.20G · BOOST ABOVE ${COLONY_FLIGHT_ENTER_HEIGHT}m FOR FREE-FLIGHT` : '')
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
@@ -811,6 +813,7 @@ export function startBattle(renderer, opts, onEnd){
   // reinforcement APCs use this hook to dismount their own passenger squads too.
   let deployCarrierPassengers = null;
   let nextMechUid = 1;
+  const colonyFlightAssignments = { FED: 0, ZEON: 0 };
   function spawnMech(spec, team, pos, { isPlayer = false, core = true, fromBlip = false, hpFrac = 1 } = {}){
     const specObject = typeof spec === 'object' ? spec : null;
     let suit = suitById(typeof spec === 'string' ? spec : spec.suitId);
@@ -828,6 +831,9 @@ export function startBattle(renderer, opts, onEnd){
     const maxFuel = suit.boostFuel * (suit.faction === 'FED' ? 2 : 1); // Federation suits carry double thruster reserve
     const hasShield = !air && SHIELDED_IDS.has(suit.id);
     const shieldCap = hasShield ? clamp(Math.round(maxHp * 0.45), 1200, 2600) : 0;
+    const colonyFlightCapable = COLONY && !isPlayer && !isNetworkRemote && !air
+      && !suit.vehicle && !suit.noJump && suit.style !== 'galcezon';
+    const colonyFlightSlot = colonyFlightCapable ? colonyFlightAssignments[team]++ : Infinity;
     const m = {
       uid: nextMechUid++,
       suit, team, root, parts: null, detail: null, lodNear: false, alwaysFull: isPlayer || isNetworkRemote,
@@ -838,6 +844,8 @@ export function startBattle(renderer, opts, onEnd){
       vip: typeof spec === 'object' && !!spec.vip,
       name: (typeof spec === 'object' && spec.name) || suit.name,
       vel: new THREE.Vector3(), yaw: isPlayer ? 0 : Math.PI, walkPhase: 0, pitch: 0, bank: 0,
+      flightRoll: 0, colonyFreeFlight: false, colonyFlightLaunching: false,
+      colonyFlightCapable,
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
       wi: 0, clip: suit.weapons[0].clip, reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
       muzzleCursors: [],
@@ -858,6 +866,8 @@ export function startBattle(renderer, opts, onEnd){
         strafe: rng.chance(0.5) ? 1 : -1, tThink: 0, tStrafe: rng.range(1, 3),
         tDodge: rng.range(1, 3), target: null, meleeRun: null, meleeCd: rng.range(0, 3),
         squadId: specObject?.squadId || null,
+        colonyFlightOrder: colonyFlightSlot < 2,
+        colonyLaunchDelay: rng.range(0.8, 2.4),
       },
       assignedSquadId: specObject?.squadId || null,
     };
@@ -1425,7 +1435,8 @@ export function startBattle(renderer, opts, onEnd){
     const craft = playerHoverCraft;
     if (!craft?.alive || player.hoverCraft !== craft) return;
     craft.root.position.copy(player.root.position).add(tmpV.set(0, -1.8, 0));
-    craft.root.rotation.y = player.yaw;
+    if (COLONY) craft.root.quaternion.copy(player.root.quaternion);
+    else craft.root.rotation.y = player.yaw;
     const active = player.thrusting || player.boosting || player.vel.lengthSq() > 20;
     const pulse = active ? 0.8 + Math.sin(performance.now() * 0.018) * 0.12 : 0.18;
     for (const flame of craft.thrusters) flame.scale.y = lerp(flame.scale.y, pulse, 0.18);
@@ -2839,6 +2850,30 @@ export function startBattle(renderer, opts, onEnd){
     while (a < -Math.PI) a += Math.PI * 2;
     return a;
   }
+  const surfaceUp = new THREE.Vector3();
+  const surfaceAlignQ = new THREE.Quaternion();
+  const surfaceYawQ = new THREE.Quaternion();
+  const flightRollQ = new THREE.Quaternion();
+  const LOCAL_FORWARD = new THREE.Vector3(0, 0, 1);
+  function applyMechOrientation(m){
+    const floor = COLONY && !m.air ? groundY(m.root.position.x, m.root.position.z) : -Infinity;
+    const surfaceBound = COLONY && !m.air && !m.dropping && !m.colonyFreeFlight
+      && !m.colonyFlightLaunching && !m.carrierRide?.carrier?.alive
+      && m.root.position.y <= floor + (m.suit.hover ? 7 : 4);
+    if (surfaceBound){
+      const normal = colonySurfaceNormal(m.root.position.x);
+      surfaceUp.set(normal.x, normal.y, normal.z);
+      surfaceAlignQ.setFromUnitVectors(UP, surfaceUp);
+      surfaceYawQ.setFromAxisAngle(UP, m.yaw);
+      m.root.quaternion.copy(surfaceAlignQ).multiply(surfaceYawQ);
+      return;
+    }
+    surfaceYawQ.setFromAxisAngle(UP, m.yaw);
+    if (COLONY && m.colonyFreeFlight){
+      flightRollQ.setFromAxisAngle(LOCAL_FORWARD, m.flightRoll || 0);
+      m.root.quaternion.copy(surfaceYawQ).multiply(flightRollQ);
+    } else m.root.quaternion.copy(surfaceYawQ);
+  }
   function syncTurretYaw(m, worldYaw, k = 1){
     if (!m.parts?.turretYaw || !Number.isFinite(worldYaw)) return;
     const target = wrapAngle(worldYaw - m.yaw);
@@ -2850,7 +2885,7 @@ export function startBattle(renderer, opts, onEnd){
   // Synchronize the current root and attack pose here so a first shot after a
   // turn/switch uses the arm and muzzle the player actually sees this frame.
   function syncMuzzlePose(m, dir, aimPoint){
-    m.root.rotation.y = m.yaw;
+    applyMechOrientation(m);
     if (!m.parts) return;
     if (m.air){
       if (m.parts.body){ m.parts.body.rotation.z = m.bank; m.parts.body.rotation.x = -m.pitch; }
@@ -3550,7 +3585,8 @@ export function startBattle(renderer, opts, onEnd){
   }
   const NON_KNEEL_STYLES = new Set(['tank', 'guntank', 'zakutank', 'crane', 'apc', 'fighter']);
   function kneelEligible(m = player){
-    return !m.air && !m.suit.vehicle && !NON_KNEEL_STYLES.has(m.suit.style);
+    return !m.air && !m.suit.vehicle && !m.colonyFreeFlight && !m.colonyFlightLaunching
+      && !NON_KNEEL_STYLES.has(m.suit.style);
   }
   function setKneelTarget(m, target){
     if (!kneelEligible(m)) return false;
@@ -3612,7 +3648,8 @@ export function startBattle(renderer, opts, onEnd){
       if (!e.repeat) cyclePlayerWeapon();
     }
     if (k === 'q' && !e.repeat){
-      if (groundManeuverEligible()) trySandKick();
+      if (COLONY && player.colonyFreeFlight) { /* held Q rolls left in free-flight */ }
+      else if (groundManeuverEligible()) trySandKick();
       else cyclePlayerWeapon();
     }
     if (k >= '1' && k <= '4'){
@@ -4241,7 +4278,8 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function sampleGroundTactics(m, target, preferredRange){
-    if (SPACE || !hfn) return { lineOfSight: true, kneel: false, reposition: false, melee: true, holdRange: false };
+    if (SPACE || m.colonyFreeFlight || m.colonyFlightLaunching || !hfn)
+      return { lineOfSight: true, kneel: false, reposition: false, melee: true, holdRange: false };
     const from = m.root.position.clone(); from.y += weaponHeight(m);
     const to = target.root.position.clone(); to.y += aimHeight(target);
     const lineOfSight = !hasSolidCoverBetween(from, to, target);
@@ -4473,6 +4511,10 @@ export function startBattle(renderer, opts, onEnd){
         ai.target = pick;
         ai.grudge = null;
       }
+      if (COLONY && m.colonyFlightCapable && (ai.colonyFlightOrder || m.colonyFreeFlight || m.colonyFlightLaunching)){
+        const flyingFoes = foes.filter(o => o.air || o.colonyFreeFlight || o.colonyFlightLaunching);
+        if (flyingFoes.length) ai.target = nearest(flyingFoes);
+      }
       if (squad && ai.target?.alive && ai.target.team !== m.team){
         if (squad.target !== ai.target) squad.route = null;
         squad.target = ai.target;
@@ -4494,6 +4536,18 @@ export function startBattle(renderer, opts, onEnd){
     const t = ai.target;
     if (!t || !t.alive){ ai.meleeRun = null; ai.pass = null; m.hopY = 0; setKneelTarget(m, false); return; }
 
+    const targetColonyFlying = COLONY && !!(t.air || t.colonyFreeFlight || t.colonyFlightLaunching);
+    if (COLONY && m.colonyFlightCapable && !m.colonyFreeFlight && !m.colonyFlightLaunching){
+      ai.colonyLaunchDelay -= dt;
+      if (targetColonyFlying || (ai.colonyFlightOrder && ai.colonyLaunchDelay <= 0)){
+        m.colonyFlightLaunching = true;
+        m.kneelTarget = false;
+        ai.groundTactic = { lineOfSight: true, kneel: false, reposition: false, melee: true, holdRange: false };
+      }
+    }
+    const colonyFlightCombat = COLONY && (m.colonyFreeFlight || m.colonyFlightLaunching);
+    const fullSpaceCombat = SPACE || colonyFlightCombat;
+
     const toT = tmpV.subVectors(t.root.position, m.root.position);
     const d = toT.length(); toT.normalize();
     const targetSurfaceDistance = t.isProp
@@ -4506,18 +4560,18 @@ export function startBattle(renderer, opts, onEnd){
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
     const hurt = !m.suit.carrierSfs && !relentless && m.hp < m.maxHp * retreatAt;
     const groundTactic = ai.groundTactic || sampleGroundTactics(m, t, pref);
-    const formation = !commanderSpace && !m.suit.carrierSfs ? squadFormationPoint(m, t) : null;
+    const formation = !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadFormationPoint(m, t) : null;
     const formationDistance = formation
       ? Math.hypot(formation.x - m.root.position.x, formation.z - m.root.position.z) : 0;
-    const protectedAlly = protectionAssignment(m, squad);
+    const protectedAlly = fullSpaceCombat ? null : protectionAssignment(m, squad);
     const protectDistance = protectedAlly ? m.root.position.distanceTo(protectedAlly.root.position) : 0;
     const guardPoint = protectedAlly ? protectionPoint(m, protectedAlly, t) : null;
-    const supportCenter = ai.squadRole === 'assault' && !m.suit.carrierSfs ? squadSupportCenter(squad) : null;
+    const supportCenter = !fullSpaceCombat && ai.squadRole === 'assault' && !m.suit.carrierSfs ? squadSupportCenter(squad) : null;
     const supportDistance = supportCenter
       ? Math.hypot(supportCenter.x - m.root.position.x, supportCenter.z - m.root.position.z) : 0;
     const squadTethered = !!supportCenter && supportDistance > ASSAULT_SUPPORT_TETHER;
     const protectionMelee = !!protectedAlly && d <= PROTECTION_MELEE_RANGE;
-    const routePoint = !commanderSpace && !m.suit.carrierSfs ? squadRoutePoint(m, t) : null;
+    const routePoint = !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadRoutePoint(m, t) : null;
     ai.protectTarget = protectedAlly;
     ai.protectDistance = protectDistance;
     ai.squadTethered = squadTethered;
@@ -4547,7 +4601,7 @@ export function startBattle(renderer, opts, onEnd){
     ai.meleeCd -= dt;
     const meleeDoctrineAllows = protectionMelee
       || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee));
-    const canMelee = !SPACE && tune.melee > 0 && meleeDoctrineAllows && !squadTethered
+    const canMelee = !fullSpaceCombat && tune.melee > 0 && meleeDoctrineAllows && !squadTethered
       && (!protectedAlly || protectionMelee)
       && !hurt && (m.kneelBlend || 0) <= 0.001
       && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
@@ -4630,7 +4684,7 @@ export function startBattle(renderer, opts, onEnd){
       speed = commanderIntent.speed;
       accel = commanderIntent.accel;
     } else {
-      calm = !SPACE && !m.suit.hover;
+      calm = !fullSpaceCombat && !m.suit.hover;
       ai.tStrafe -= dt;
       if (ai.tStrafe <= 0){ ai.strafe *= -1; ai.tStrafe = (calm ? rng.range(3.5, 7) : rng.range(1.5, 4)) / Math.max(0.5, tune.strafe); }
       tangent = tmpV2.crossVectors(UP, toT).multiplyScalar(ai.strafe);
@@ -4659,7 +4713,21 @@ export function startBattle(renderer, opts, onEnd){
       if (calm && !boost && !hurt && d >= pref * tune.near && d < pref * tune.far) speed *= tune.plant; // in-band: plant by doctrine
       const strafeWeight = m.suit.carrierSfs ? GALCEZON_ATTACK_STRAFE_WEIGHT : (calm ? 0.3 : 0.75);
       desired.copy(toT).multiplyScalar(radial).addScaledVector(tangent, strafeWeight * tune.strafe);
-      if (SPACE || m.suit.hover) desired.y += clamp((t.root.position.y - m.root.position.y) / Math.max(d, 1), -0.5, 0.5);
+      if (colonyFlightCombat){
+        const ownGround = groundY(m.root.position.x, m.root.position.z);
+        const targetGround = groundY(t.root.position.x, t.root.position.z);
+        const targetAltitude = Math.max(0, t.root.position.y - targetGround);
+        const desiredAltitude = targetColonyFlying
+          ? Math.max(COLONY_AI_FLIGHT_CRUISE_HEIGHT, targetAltitude)
+          : COLONY_AI_FLIGHT_CRUISE_HEIGHT;
+        desired.y = clamp((desiredAltitude - (m.root.position.y - ownGround)) / Math.max(d, 60), -0.55, 0.72);
+      } else if (SPACE || m.suit.hover){
+        desired.y += clamp((t.root.position.y - m.root.position.y) / Math.max(d, 1), -0.5, 0.5);
+      }
+      if (m.colonyFlightLaunching && m.fuel > 0){
+        boost = true;
+        speed = Math.max(speed, m.suit.boost * 0.85);
+      }
       desired.normalize().multiplyScalar(speed);
       accel = m.suit.aiAccel || 3;
       // objective leash: units bound to a base/convoy fall back toward it instead of chasing over the horizon
@@ -4770,7 +4838,7 @@ export function startBattle(renderer, opts, onEnd){
     }
     if (postureLocked){
       m.vel.x = 0; m.vel.z = 0;
-      if (SPACE) m.vel.y = 0;
+      if (fullSpaceCombat) m.vel.y = 0;
     }
 
     // dodge impulse — rare and small on the ground, sharp in space
@@ -4783,7 +4851,7 @@ export function startBattle(renderer, opts, onEnd){
         tmpV3.set(Math.sin(m.yaw), 0, Math.cos(m.yaw));
         m.vel.addScaledVector(tmpV3, (m.suit.agile ? 20 : 12) * ai.skill);
       } else m.vel.addScaledVector(tangent, (calm ? (m.suit.agile ? 20 : 12) : 34) * ai.skill);
-      if (SPACE) m.vel.y += rng.range(-20, 20);
+      if (fullSpaceCombat) m.vel.y += rng.range(-20, 20);
     }
 
     // face + fire
@@ -4902,11 +4970,16 @@ export function startBattle(renderer, opts, onEnd){
       ? colonyFreeFlightState(wasColonyFreeFlight, colonyAltitude, m.vel.y)
       : false;
     if (m.colonyFreeFlight !== wasColonyFreeFlight){
+      if (m.colonyFreeFlight) setKneelTarget(m, false);
       setMsg(m.colonyFreeFlight
-        ? 'ROTATIONAL GRAVITY LOST — FREE-FLIGHT · SPACE/C VERTICAL'
+        ? 'ROTATIONAL GRAVITY LOST — FREE-FLIGHT · SPACE/C VERTICAL · Q/E ROLL'
         : 'ROTATIONAL GRAVITY REACQUIRED — SURFACE MODE', 3.2);
     }
     const fullFlight = SPACE || m.colonyFreeFlight;
+    if (COLONY && m.colonyFreeFlight){
+      const rollInput = (keys.has('e') ? 1 : 0) - (keys.has('q') ? 1 : 0);
+      m.flightRoll = advanceColonyFlightRoll(m.flightRoll || 0, rollInput, dt);
+    } else m.flightRoll = lerp(m.flightRoll || 0, 0, Math.min(1, 5 * dt));
     // In space and above the colony's rotational-gravity release line, thrust follows the full
     // look direction. Near the inhabited shell, ordinary movement stays tangent to the surface.
     const fwd = fullFlight && !mountedCraft
@@ -5919,14 +5992,27 @@ export function startBattle(renderer, opts, onEnd){
         m.root.position.addScaledVector(m.vel, dt);
         if (!SPACE){
           const g = groundY(m.root.position.x, m.root.position.z);
-          const target = m.suit.carrierSfs ? galcezonCruiseY(m)
-            : (m.suit.hover ? g + 3.5 + Math.sin(performance.now() * 0.002 + m.yaw) * 0.8 : g) + (m.hopY || 0);
-          m.root.position.y = m.suit.vehicle ? (m.suit.hover ? target : g) : lerp(m.root.position.y, target, Math.min(1, (m.hopY ? 13 : 6) * dt));
-          if (m.suit.vehicle) m.vel.y = 0;
+          if (COLONY && (m.colonyFlightLaunching || m.colonyFreeFlight)){
+            const wasFree = !!m.colonyFreeFlight;
+            const altitude = m.root.position.y - g;
+            m.colonyFreeFlight = colonyFreeFlightState(wasFree, altitude, m.vel.y);
+            if (m.colonyFreeFlight) m.colonyFlightLaunching = false;
+            if (m.root.position.y < g){ m.root.position.y = g; if (m.vel.y < 0) m.vel.y = 0; }
+          } else {
+            const target = m.suit.carrierSfs ? galcezonCruiseY(m)
+              : (m.suit.hover ? g + 3.5 + Math.sin(performance.now() * 0.002 + m.yaw) * 0.8 : g) + (m.hopY || 0);
+            m.root.position.y = m.suit.vehicle ? (m.suit.hover ? target : g) : lerp(m.root.position.y, target, Math.min(1, (m.hopY ? 13 : 6) * dt));
+            if (m.suit.vehicle) m.vel.y = 0;
+          }
         }
       }
     }
-    m.root.rotation.y = m.yaw;
+    if (COLONY && m.ai && m.colonyFreeFlight){
+      const lateral = -m.vel.x * Math.cos(m.yaw) + m.vel.z * Math.sin(m.yaw);
+      const autoRoll = clamp(-lateral / Math.max(1, m.suit.boost), -1, 1) * 0.55;
+      m.flightRoll = lerp(m.flightRoll || 0, autoRoll, Math.min(1, 3 * dt));
+    }
+    applyMechOrientation(m);
     if (!m.parts) return; // far-LOD mech: no detailed model to pose/animate this frame
     if (m.parts.turretYaw){
       let turretWorldYaw = m.yaw;
@@ -5968,8 +6054,8 @@ export function startBattle(renderer, opts, onEnd){
             m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, 0.22, k);
           }
           if (m.parts.armL) m.parts.armL.rotation.x = lerp(m.parts.armL.rotation.x, -0.75, k);
-          m.root.rotation.x = lerp(m.root.rotation.x, -0.12, 4 * dt);
-          m.root.rotation.z = lerp(m.root.rotation.z, 0, 4 * dt);
+          m.detail.rotation.x = lerp(m.detail.rotation.x, -0.12, 4 * dt);
+          m.detail.rotation.z = lerp(m.detail.rotation.z, 0, 4 * dt);
         } else {
           // boost/flight: legs straight, swept back and together, free arm tucked, leaning into the thrust
           if (m.parts.legL){
@@ -5979,8 +6065,8 @@ export function startBattle(renderer, opts, onEnd){
             m.parts.legR.rotation.z = lerp(m.parts.legR.rotation.z || 0, -0.04, k);
           }
           if (m.parts.armL) m.parts.armL.rotation.x = lerp(m.parts.armL.rotation.x, -0.32, k);
-          m.root.rotation.x = lerp(m.root.rotation.x, 0.3, 4 * dt);
-          m.root.rotation.z = lerp(m.root.rotation.z, 0, 4 * dt);
+          m.detail.rotation.x = lerp(m.detail.rotation.x, 0.3, 4 * dt);
+          m.detail.rotation.z = lerp(m.detail.rotation.z, 0, 4 * dt);
         }
         // the weapon arm still tracks the aim so the suit can keep firing while airborne / dropping
         if (m.isPlayer) poseAim(m.parts, camPitch, k);
@@ -6076,13 +6162,13 @@ export function startBattle(renderer, opts, onEnd){
     if (m.sandKickT > 0){
       const p = clamp(1 - m.sandKickT / Math.max(0.001, m.sandKickDuration || 0.42), 0, 1);
       const sweep = Math.sin(p * Math.PI);
-      m.root.rotation.x = lerp(m.root.rotation.x, 0.3 * sweep, 8 * dt);
-      m.root.rotation.z = lerp(m.root.rotation.z, -0.19 * (m.sandKickSide || 1) * sweep, 8 * dt);
+      m.detail.rotation.x = lerp(m.detail.rotation.x, 0.3 * sweep, 8 * dt);
+      m.detail.rotation.z = lerp(m.detail.rotation.z, -0.19 * (m.sandKickSide || 1) * sweep, 8 * dt);
     } else {
       const hover = clamp(m.groundHoverBlend || 0, 0, 1);
       const travelLean = clamp(fSpd / m.suit.boost, -1, 1) * 0.2;
-      m.root.rotation.x = lerp(m.root.rotation.x, lerp(travelLean, 0.3, hover), 4 * dt);
-      m.root.rotation.z = lerp(m.root.rotation.z, clamp(-lSpd / m.suit.boost, -1, 1) * 0.16, 4 * dt);
+      m.detail.rotation.x = lerp(m.detail.rotation.x, lerp(travelLean, 0.3, hover), 4 * dt);
+      m.detail.rotation.z = lerp(m.detail.rotation.z, clamp(-lSpd / m.suit.boost, -1, 1) * 0.16, 4 * dt);
     }
     updateHoverLegJets(m, dt); // after the flight-style hover pose and root lean are final
     // thruster flames: light on boost or vernier input
@@ -6716,7 +6802,7 @@ export function startBattle(renderer, opts, onEnd){
     }
     if (COLONY){
       const altitude = Math.max(0, player.root.position.y - groundY(player.root.position.x, player.root.position.z));
-      wHtml += `<br>COLONY GRAVITY <span class="ammo" style="color:${player.colonyFreeFlight ? 'var(--ok)' : 'var(--acc)'}">${COLONY_GRAVITY_SCALE.toFixed(2)}G · ${player.colonyFreeFlight ? 'FREE-FLIGHT · C TO RETURN' : `SURFACE · RELEASE ${COLONY_FLIGHT_ENTER_HEIGHT}m`} · ALT ${Math.round(altitude)}m</span>`;
+      wHtml += `<br>COLONY GRAVITY <span class="ammo" style="color:${player.colonyFreeFlight ? 'var(--ok)' : 'var(--acc)'}">${COLONY_GRAVITY_SCALE.toFixed(2)}G · ${player.colonyFreeFlight ? 'FREE-FLIGHT · Q/E ROLL · C RETURN' : `SURFACE · RELEASE ${COLONY_FLIGHT_ENTER_HEIGHT}m`} · ALT ${Math.round(altitude)}m</span>`;
     }
     if (playerHoverCraft){
       const alive = playerHoverCraft.alive && player.hoverCraft === playerHoverCraft;
@@ -7198,7 +7284,7 @@ export function startBattle(renderer, opts, onEnd){
       if (!m.alive || m.lodNear || m.alwaysFull) continue;
       const key = liteKind(m.suit), farMesh = farMeshes.get(key), fi = counts.get(key);
       if (fi >= MAX_FAR) continue;
-      lodQ.setFromAxisAngle(UP, m.yaw);
+      lodQ.copy(m.root.quaternion);
       lodS.setScalar(m.suit.scale || 1);
       lodMat.compose(m.root.position, lodQ, lodS);
       farMesh.setMatrixAt(fi, lodMat);
@@ -7265,7 +7351,7 @@ export function startBattle(renderer, opts, onEnd){
     cancelInto(m, hit.nx, threeD ? (hit.ny || 0) : 0, hit.nz);
   }
   function enforceTerrainSlope(m){
-    if (SPACE || !hfn || m.air || m.suit.carrierSfs || !m._collisionPrev) return;
+    if (SPACE || m.colonyFreeFlight || m.colonyFlightLaunching || !hfn || m.air || m.suit.carrierSfs || !m._collisionPrev) return;
     const start = m._collisionPrev, end = m.root.position;
     const dx = end.x - start.x, dz = end.z - start.z, distance = Math.hypot(dx, dz);
     if (distance < 0.001) return;
@@ -7436,7 +7522,8 @@ export function startBattle(renderer, opts, onEnd){
             } else if (a.isPlayer){ wa = 0.25; wb = 0.75; }
             else if (b.isPlayer){ wa = 0.75; wb = 0.25; }
             let nx, ny = 0, nz, overlap;
-            if (SPACE){
+            if (SPACE || a.air || b.air || a.colonyFreeFlight || b.colonyFreeFlight
+              || a.colonyFlightLaunching || b.colonyFlightLaunching){
               const d = Math.sqrt(dx * dx + dy * dy + dz * dz) || 0.001;
               nx = dx / d; ny = dy / d; nz = dz / d; overlap = minD - d;
             } else {
@@ -7493,6 +7580,16 @@ export function startBattle(renderer, opts, onEnd){
     // test hooks: run the sim without pointer lock, drive aim/fire, read state
     _debugUnpause(){ paused = false; started = true; setMsg('', 0); },
     _debugPause(value = true){ paused = !!value; },
+    _debugColonySurface(x = 1200){
+      if (!COLONY) return false;
+      player.root.position.x = x;
+      player.root.position.y = groundY(player.root.position.x, player.root.position.z);
+      player.vel.set(0, 0, 0);
+      player.colonyFreeFlight = false;
+      player.flightRoll = 0;
+      applyMechOrientation(player);
+      return true;
+    },
     _debugInput(o){
       if ('yaw' in o) camYaw = o.yaw;
       if ('bodyYaw' in o) player.yaw = o.bodyYaw;
@@ -7664,6 +7761,13 @@ export function startBattle(renderer, opts, onEnd){
           releaseHeight: COLONY_FLIGHT_ENTER_HEIGHT,
           freeFlight: !!player.colonyFreeFlight,
           altitude: player.root.position.y - groundY(player.root.position.x, player.root.position.z),
+          roll: player.flightRoll || 0,
+          surfaceNormal: colonySurfaceNormal(player.root.position.x),
+          playerUp: UP.clone().applyQuaternion(player.root.quaternion).toArray(),
+          airborneAllies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'FED'
+            && (m.colonyFreeFlight || m.colonyFlightLaunching)).length,
+          airborneEnemies: mechs.filter(m => m.alive && m.team === 'ZEON'
+            && (m.colonyFreeFlight || m.colonyFlightLaunching)).length,
         } : null,
         campaignTargets,
         collision: { ...colliderSummary, terrain: hfn ? 'shared-triangle-heightfield' : null },
@@ -7813,6 +7917,11 @@ export function startBattle(renderer, opts, onEnd){
               doctrine: m.suit.spaceDoctrine || null,
               p: m.root.position.toArray(), v: m.vel.toArray(), yaw: m.yaw,
               hp: m.hp, vip: m.vip, fuel: m.fuel, boosting: m.boosting,
+              colonyFlightCapable: !!m.colonyFlightCapable,
+              colonyFlightOrdered: !!m.ai?.colonyFlightOrder,
+              colonyFlightLaunching: !!m.colonyFlightLaunching,
+              colonyFreeFlight: !!m.colonyFreeFlight,
+              colonyAltitude: COLONY ? m.root.position.y - groundY(m.root.position.x, m.root.position.z) : null,
               kneelTarget: !!m.kneelTarget, kneelBlend: m.kneelBlend || 0, kneelState: m.kneelState || 'standing',
               squadId: m.ai?.squadId || null, squadRole: m.ai?.squadRole || null,
               squadSlot: m.ai?.squadSlot ?? null, squadSize: m.ai?.squadSize || 0,
@@ -7834,6 +7943,19 @@ export function startBattle(renderer, opts, onEnd){
               targetRange, radialSpeed, targetingPlayer: target === player,
             };
           }),
+        allies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'FED').map(m => ({
+          id: m.suit.id,
+          p: m.root.position.toArray(),
+          v: m.vel.toArray(),
+          hp: m.hp,
+          shotsFired: m.shotsFired || 0,
+          targetingEnemy: !!(m.ai?.target?.alive && m.ai.target.team === 'ZEON'),
+          colonyFlightCapable: !!m.colonyFlightCapable,
+          colonyFlightOrdered: !!m.ai?.colonyFlightOrder,
+          colonyFlightLaunching: !!m.colonyFlightLaunching,
+          colonyFreeFlight: !!m.colonyFreeFlight,
+          colonyAltitude: COLONY ? m.root.position.y - groundY(m.root.position.x, m.root.position.z) : null,
+        })),
         squads: [...combatSquads.values()].map(squad => ({
           id: squad.id, team: squad.team, size: squad.members.filter(unit => unit.alive).length,
           assault: squad.members.filter(unit => unit.alive && unit.ai.squadRole === 'assault').length,
