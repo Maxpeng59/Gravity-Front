@@ -84,8 +84,10 @@ function makeBiped(P, style, options = {}){
   waist.add(chamferBox(3.2 * C.chest, 1.2, 2.45, P.frame, 0, C.hipY + 0.35, 0, 0.16));
   waist.add(chamferBox(1.7, 1.2, 2.6, P.accent, 0, C.hipY + 0.55, 0.25, 0.14));
   for (const sx of [-1, 1]){
-    const front = chamferBox(1.45 * C.chest, 2.35, 0.6, P.main, sx * 0.82 * C.chest, C.hipY - 0.15, 1.35, 0.12);
-    front.rotation.z = -sx * 0.07; waist.add(front);
+    if (options.frontSkirts !== false){
+      const front = chamferBox(1.45 * C.chest, 2.35, 0.6, P.main, sx * 0.82 * C.chest, C.hipY - 0.15, 1.35, 0.12);
+      front.rotation.z = -sx * 0.07; waist.add(front);
+    }
     waist.add(chamferBox(1.3 * C.chest, 2.05, 0.55, P.main, sx * 1.72 * C.chest, C.hipY + 0.15, 0, 0.12));
     waist.add(chamferBox(1.35 * C.chest, 1.9, 0.5, P.main, sx * 0.78 * C.chest, C.hipY + 0.05, -1.25, 0.1));
   }
@@ -272,6 +274,30 @@ function frontPlate(points, depth, material, x = 0, y = 0, z = 0){
   const mesh = new THREE.Mesh(geo, material); mesh.position.set(x, y, z); return mesh;
 }
 
+// A hand-authored multi-section hull.  Every section is [y, half-width,
+// front-z, back-z]; adjacent rings are triangulated into explicit faces.  This
+// keeps late-UC armor readable as sloped mechanical plates instead of cuboids.
+function facetedHull(sections, material, x = 0, y = 0, z = 0){
+  const positions = [], indices = [];
+  for (const [sy, hw, front, back] of sections){
+    positions.push(-hw, sy, front, hw, sy, front, hw, sy, back, -hw, sy, back);
+  }
+  for (let ring = 0; ring < sections.length - 1; ring++){
+    const a = ring * 4, b = (ring + 1) * 4;
+    for (let side = 0; side < 4; side++){
+      const n = (side + 1) % 4;
+      indices.push(a + side, a + n, b + n, a + side, b + n, b + side);
+    }
+  }
+  indices.push(0, 3, 2, 0, 2, 1);
+  const top = (sections.length - 1) * 4;
+  indices.push(top, top + 1, top + 2, top, top + 2, top + 3);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setIndex(indices); geometry.computeVertexNormals(); geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geometry, material); mesh.position.set(x, y, z); return mesh;
+}
+
 function gmVisorMaterial(P, color = 0x58cbb0, emissive = 0x35d6ad){
   const material = P.eye.clone();
   material.color.setHex(color); material.emissive.setHex(emissive);
@@ -317,29 +343,55 @@ function addClassicGMHead(rig, P){
 // distinguish the GM II, missile-heavy GM III and slim Jegan at combat range.
 function addLateGMHead(rig, P, variant){
   const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.18, 0);
-  const geom = new THREE.Group();
-  const jegan = variant === 'jegan', gmiii = variant === 'gmiii';
-  const visor = gmVisorMaterial(P, jegan ? 0x54d4c4 : 0x58ccb0, jegan ? 0x32ead8 : 0x35d8ad);
-  geom.add(chamferBox(jegan ? 1.92 : 2.08, 1.45, 1.78, P.main, 0, 0.02, -0.08, 0.19));
-  geom.add(chamferBox(jegan ? 1.52 : 1.72, 0.72, 1.52, P.main, 0, 0.86, -0.14, 0.13));
-  geom.add(frontPlate([[-0.88, 0.29], [-0.65, 0.53], [0.65, 0.53], [0.88, 0.29], [0.7, -0.29], [-0.7, -0.29]], 0.22, P.dark, 0, 0.12, 0.97));
-  geom.add(frontPlate([[-0.72, 0.2], [-0.54, 0.36], [0.54, 0.36], [0.72, 0.2], [0.58, -0.15], [-0.58, -0.15]], 0.13, visor, 0, 0.13, 1.13));
-  geom.add(chamferBox(jegan ? 0.5 : 0.62, 0.83, 0.58, gmiii ? P.accent : P.main, 0, -0.48, 1.06, 0.09));
+  const geom = new THREE.Group(), jegan = variant === 'jegan', gmiii = variant === 'gmiii';
+  const visor = gmVisorMaterial(P, jegan ? 0x6fe1cf : 0x58ccb0, jegan ? 0x36f2da : 0x35d8ad);
+
+  // Stepped helmet shell: narrow jaw ring, broad visor brow, then a tapered
+  // crown.  The sloped faces catch the cel light from every camera angle.
+  geom.add(facetedHull([
+    [-0.74, jegan ? 0.67 : 0.76, 0.58, -0.54],
+    [-0.28, jegan ? 0.94 : 1.04, 0.87, -0.78],
+    [0.48, jegan ? 1.03 : 1.12, 0.78, -0.86],
+    [1.02, jegan ? 0.72 : 0.82, 0.45, -0.62],
+  ], P.main));
+  // Deep black optical recess and a separate eight-sided visor lens.
+  geom.add(frontPlate([[-0.98, 0.44], [-0.74, 0.66], [0.7, 0.66], [0.98, 0.4], [0.78, -0.36], [0.42, -0.5], [-0.46, -0.5], [-0.8, -0.31]], 0.18, P.dark, 0, 0.08, 0.88));
+  geom.add(frontPlate([[-0.82, 0.3], [-0.64, 0.47], [0.57, 0.47], [0.81, 0.27], [0.65, -0.2], [0.35, -0.31], [-0.38, -0.31], [-0.66, -0.18]], 0.1, visor, 0, 0.1, 1.02));
+
+  // Independent cheek planes, jaw and ear drums create a proper face instead
+  // of a visor pasted onto a box.
   for (const sx of [-1, 1]){
-    geom.add(chamferBox(0.48, 0.68, 0.58, P.main, sx * 0.7, -0.48, 0.76, 0.09));
-    geom.add(cyl(0.4, 0.4, 0.22, P.chest, sx * 1.02, 0, -0.12, 14).rotateZ(PI / 2));
-    geom.add(cyl(0.25, 0.25, 0.25, P.dark, sx * 1.04, 0, -0.12, 12).rotateZ(PI / 2));
+    const cheek = frontPlate([[-0.34, 0.34], [0.25, 0.48], [0.38, -0.28], [-0.12, -0.58], [-0.42, -0.23]], 0.34, jegan ? P.chest : P.main, sx * 0.61, -0.42, 0.77);
+    cheek.rotation.y = -sx * 0.11; geom.add(cheek);
+    geom.add(cyl(0.43, 0.43, 0.23, jegan ? P.main : P.chest, sx * 1.04, 0.03, -0.17, 16).rotateZ(PI / 2));
+    geom.add(cyl(0.27, 0.27, 0.27, P.dark, sx * 1.06, 0.03, -0.17, 12).rotateZ(PI / 2));
   }
-  geom.add(chamferBox(0.5, gmiii ? 0.9 : 0.72, 0.62, P.chest, 0, 1.15, -0.02, 0.1));
-  geom.add(chamferBox(0.3, 0.22, 0.13, visor, 0, 1.22, 0.36, 0.04));
-  if (gmiii){
-    const antenna = cyl(0.04, 0.06, 2.25, P.frame, 0.7, 1.62, -0.25, 8);
-    antenna.rotation.z = -0.08; geom.add(antenna);
-  } else if (jegan){
-    geom.add(chamferBox(0.22, 1.45, 0.25, P.chest, -0.62, 1.38, -0.22, 0.05));
-    geom.add(chamferBox(0.55, 0.24, 0.32, P.chest, 0.52, 0.91, 0.53, 0.05));
+  geom.add(facetedHull([[-0.78, 0.34, 1.03, 0.48], [-0.2, 0.45, 1.16, 0.5], [0.05, 0.35, 1.18, 0.55]], gmiii ? P.accent : P.main));
+
+  if (variant === 'gmii'){
+    // GM II retains the RGM-79 family cap and raised rectangular main camera.
+    geom.add(facetedHull([[0.75, 0.44, 0.35, -0.38], [1.43, 0.31, 0.3, -0.31]], P.chest));
+    geom.add(chamferBox(0.34, 0.24, 0.16, visor, 0, 1.26, 0.42, 0.04));
+    const antenna = cyl(0.035, 0.055, 1.85, P.frame, 0.73, 1.55, -0.18, 8); antenna.rotation.z = -0.12; geom.add(antenna);
+    for (const sx of [-1, 1]) geom.add(box(0.3, 0.1, 0.14, P.dark, sx * 0.58, 0.72, 0.68));
+  } else if (gmiii){
+    // GM III's tall red sensor block and offset aerial are inherited from the
+    // Mk-II technology package, while the chin stays visibly GM-derived.
+    geom.add(facetedHull([[0.72, 0.48, 0.34, -0.42], [1.58, 0.27, 0.28, -0.3]], P.chest));
+    geom.add(chamferBox(0.3, 0.25, 0.14, visor, 0, 1.34, 0.39, 0.04));
+    const antenna = cyl(0.04, 0.06, 2.45, P.frame, 0.76, 1.76, -0.25, 8); antenna.rotation.z = -0.11; geom.add(antenna);
+    for (const sx of [-1, 1]) geom.add(cyl(0.11, 0.11, 0.3, P.dark, sx * 0.57, 0.67, 0.72, 9).rotateX(PI / 2));
+  } else {
+    // Jegan: offset vulcan pod and long-range forehead sensor, with the rear
+    // helmet swept back around its panoramic mono-sensor assembly.
+    geom.add(facetedHull([[0.68, 0.48, 0.28, -0.58], [1.42, 0.24, 0.18, -0.48]], P.chest, -0.18));
+    geom.add(chamferBox(0.26, 0.46, 0.13, visor, -0.18, 1.23, 0.34, 0.04));
+    const pod = new THREE.Group(); pod.position.set(-1.02, 0.3, 0.03);
+    pod.add(facetedHull([[-0.46, 0.24, 0.5, -0.42], [0.52, 0.3, 0.42, -0.48]], P.chest));
+    pod.add(cyl(0.12, 0.12, 0.34, P.dark, 0, 0.05, 0.62, 9).rotateX(PI / 2)); geom.add(pod);
+    geom.add(profile([[-0.58, -0.45], [-0.8, 0.48], [-0.46, 0.88], [0.12, 0.75], [0.25, -0.25]], [], 0.38, P.main, 0, 0.08, -0.73));
   }
-  return finishGMHead(rig, P, head, geom, new THREE.Vector3(0, 0.14, 1.43), visor);
+  return finishGMHead(rig, P, head, geom, new THREE.Vector3(0, 0.12, 1.32), visor);
 }
 
 // RGM-79[G]: the Requiem/08th MS Team ground head is much more angular.  Its
@@ -458,13 +510,39 @@ function mountShield(rig, shield, x = 1.32, y = -3.45, z = 0.2){
 }
 
 function makeJeganShield(P, missileMuzzles){
-  const shield = makeArmShield(P, 'gm', true);
-  shield.children[1].material = P.chest;
+  const shield = new THREE.Group();
+  const outline = [[-1.18, 2.75], [0.82, 2.9], [1.32, 2.1], [1.16, -1.85], [0.3, -3.05], [-0.72, -2.55], [-1.3, -1.25]];
+  shield.add(profile(outline, [], 0.52, P.main));
+  shield.add(profile(outline.map(([z, y]) => [z * 0.81, y * 0.87]), [], 0.58, P.chest, -0.05));
+  // Raised Federation cross and a recessed missile bank along the outer edge.
+  shield.add(box(0.18, 3.15, 0.3, P.trim, -0.34, 0.35, -0.12));
+  shield.add(box(0.18, 0.38, 1.45, P.trim, -0.34, 1.08, -0.12));
+  shield.add(facetedHull([[-1.48, 0.42, 0.78, -0.64], [1.35, 0.36, 0.7, -0.58]], P.dark, -0.36, 0.72, -0.74));
   for (let i = 0; i < 4; i++){
-    const x = i < 2 ? -0.62 : 0.62, y = i % 2 ? -0.72 : 0.72;
-    shield.add(cyl(0.22, 0.27, 0.5, P.dark, -0.24, y, x, 10).rotateZ(PI / 2));
-    const muzzle = new THREE.Object3D(); muzzle.position.set(-0.52, y, x); shield.add(muzzle); missileMuzzles.push(muzzle);
+    const y = 1.55 - i * 0.58;
+    shield.add(cyl(0.18, 0.23, 0.54, P.frame, -0.62, y, -0.69, 10).rotateZ(PI / 2));
+    shield.add(cyl(0.12, 0.12, 0.1, P.dark, -0.92, y, -0.69, 9).rotateZ(PI / 2));
+    const muzzle = new THREE.Object3D(); muzzle.position.set(-1.02, y, -0.69); shield.add(muzzle); missileMuzzles.push(muzzle);
   }
+  shield.add(box(0.34, 3.55, 0.42, P.frame, 0.38, 0.05, 0));
+  shield.add(box(0.42, 0.62, 1.35, P.dark, 0.46, 0.95, 0));
+  shield.add(box(0.42, 0.62, 1.35, P.dark, 0.46, -0.95, 0));
+  return shield;
+}
+
+function makeLateGMShield(P, variant){
+  const shield = new THREE.Group(), gmiii = variant === 'gmiii';
+  const outline = gmiii
+    ? [[-1.45, 2.9], [1.35, 2.9], [1.65, 1.85], [1.22, -2.35], [0, -3.15], [-1.22, -2.35], [-1.65, 1.85]]
+    : [[-1.5, 2.75], [1.5, 2.75], [1.72, 1.9], [1.28, -2.15], [0, -3.0], [-1.28, -2.15], [-1.72, 1.9]];
+  shield.add(profile(outline, [], 0.5, P.main));
+  shield.add(profile(outline.map(([z, y]) => [z * 0.82, y * 0.86]), [], 0.56, P.chest, -0.05));
+  shield.add(box(0.2, 3.3, 0.32, P.main, -0.34, 0.38, -0.12));
+  shield.add(box(0.2, 0.42, 1.6, P.main, -0.34, 1.15, -0.12));
+  shield.add(chamferBox(0.22, 0.55, 0.8, P.trim, -0.36, 2.05, -0.12, 0.04));
+  shield.add(box(0.38, 3.8, 0.38, P.frame, 0.4, 0.02, 0));
+  shield.add(box(0.46, 0.65, 1.42, P.dark, 0.48, 0.95, 0));
+  shield.add(box(0.46, 0.65, 1.42, P.dark, 0.48, -0.95, 0));
   return shield;
 }
 
@@ -749,16 +827,107 @@ function buildGM(suit, M){
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
 }
 
+function addLateFrameArmor(rig, P, variant){
+  const gmii = variant === 'gmii', gmiii = variant === 'gmiii', jegan = variant === 'jegan';
+  // Multi-plane chest shells define three different generations of frame.
+  if (gmii){
+    rig.torso.add(facetedHull([[10.55, 1.62, 1.26, -1.02], [12.0, 2.28, 1.48, -1.2], [13.65, 2.62, 1.22, -1.14], [14.48, 2.05, 0.72, -0.9]], P.chest));
+    rig.torso.add(frontPlate([[-1.02, 0.58], [1.02, 0.58], [0.72, -0.67], [-0.72, -0.67]], 0.26, P.main, 0, 11.88, 1.57));
+    for (const sx of [-1, 1]) rig.torso.add(frontPlate([[-0.58, 0.42], [0.5, 0.5], [0.58, -0.4], [-0.42, -0.54]], 0.2, P.trim, sx * 1.28, 12.75, 1.47));
+    rig.torso.add(facetedHull([[14.05, 1.85, 0.82, -0.9], [14.78, 1.22, 0.48, -0.72]], P.main));
+  } else if (gmiii){
+    rig.torso.add(facetedHull([[10.55, 1.68, 1.25, -1.08], [11.95, 2.3, 1.5, -1.25], [13.55, 2.68, 1.28, -1.22], [14.5, 2.12, 0.72, -0.95]], P.chest));
+    rig.torso.add(frontPlate([[-1.0, 0.7], [1.0, 0.7], [0.78, -0.75], [-0.78, -0.75]], 0.27, P.accent, 0, 11.9, 1.6));
+    for (const sx of [-1, 1]){
+      rig.torso.add(frontPlate([[-0.62, 0.48], [0.54, 0.55], [0.64, -0.44], [-0.48, -0.58]], 0.21, P.trim, sx * 1.3, 12.82, 1.48));
+      const collar = facetedHull([[13.68, 0.64, 1.05, -1.1], [14.82, 0.46, 0.65, -0.82]], P.main, sx * 1.7);
+      collar.rotation.z = -sx * 0.13; rig.torso.add(collar);
+    }
+  } else {
+    rig.torso.add(facetedHull([[10.6, 1.42, 1.12, -0.98], [11.75, 2.05, 1.38, -1.18], [13.35, 2.48, 1.24, -1.2], [14.45, 1.85, 0.65, -0.9]], P.main));
+    rig.torso.add(frontPlate([[-1.03, 0.62], [1.03, 0.62], [0.72, -0.75], [-0.72, -0.75]], 0.28, P.chest, 0, 11.9, 1.52));
+    rig.torso.add(frontPlate([[-1.78, 0.42], [-0.18, 0.62], [0.08, -0.52], [-1.55, -0.66]], 0.22, P.chest, -0.15, 13.1, 1.47));
+    rig.torso.add(frontPlate([[0.18, 0.62], [1.78, 0.42], [1.55, -0.66], [-0.08, -0.52]], 0.22, P.chest, 0.15, 13.1, 1.47));
+    rig.torso.add(facetedHull([[13.85, 1.72, 0.78, -0.98], [14.72, 1.05, 0.42, -0.72]], P.main));
+    // The Jegan deliberately has no front skirt plates; expose the hip frame
+    // and add only the compact rear/side armor seen in the animation design.
+    rig.waist.add(facetedHull([[7.75, 0.82, 1.18, -1.16], [9.55, 1.02, 1.28, -1.28]], P.chest));
+  }
+
+  for (const [key, sx] of [['armL', 1], ['armR', -1]]){
+    const arm = rig.parts[key];
+    const shoulder = jegan
+      ? [[-1.28, -0.82], [-1.45, 0.35], [-0.72, 1.35], [0.28, 1.55], [1.28, 0.72], [1.36, -0.72]]
+      : gmiii
+      ? [[-1.4, -0.82], [-1.55, 0.52], [-0.78, 1.42], [0.72, 1.42], [1.55, 0.52], [1.38, -0.82]]
+      : [[-1.35, -0.8], [-1.5, 0.4], [-0.72, 1.28], [0.7, 1.28], [1.48, 0.42], [1.34, -0.8]];
+    arm.add(profile(shoulder, [], jegan ? 2.5 : 2.72, P.main, 0, 0.05, 0));
+    arm.add(frontPlate([[-0.72, 0.62], [0.68, 0.62], [0.82, -0.5], [-0.62, -0.72]], 0.18, gmii ? P.chest : P.dark, 0, 0.08, 1.42));
+    arm.add(facetedHull([[-5.95, 0.68, 1.05, -0.82], [-4.8, 0.94, 1.18, -1.0], [-3.55, 0.72, 0.85, -0.82]], P.main));
+    if (jegan){
+      arm.add(cyl(0.18, 0.24, 0.42, P.dark, sx * 1.38, 0.5, 0.65, 9).rotateZ(PI / 2));
+      arm.add(chamferBox(0.34, 0.75, 0.45, P.chest, sx * 1.38, -0.2, -0.8, 0.06));
+    } else if (gmiii){
+      arm.add(chamferBox(0.34, 1.05, 0.46, P.accent, sx * 1.42, 0.05, 0.72, 0.06));
+    }
+  }
+
+  for (const [key, sx] of [['legL', -1], ['legR', 1]]){
+    const leg = rig.parts[key];
+    leg.add(profile([[-1.35, -7.25], [-1.58, -5.55], [-0.92, -3.86], [0.76, -3.82], [1.34, -5.05], [1.12, -7.15]], [], 2.05, P.main, 0, 0, 0));
+    leg.add(frontPlate([[-0.72, 0.82], [0.7, 0.82], [0.86, -0.82], [-0.72, -1.05]], 0.2, gmiii ? P.accent : P.chest, 0, -5.45, 1.38));
+    if (jegan){
+      leg.add(facetedHull([[-6.55, 0.33, 0.72, -0.55], [-4.35, 0.48, 0.82, -0.7]], P.chest, sx * 1.12));
+      leg.add(cyl(0.24, 0.34, 0.52, P.dark, sx * 1.42, -5.55, -0.38, 10).rotateZ(PI / 2));
+    } else if (gmii){
+      leg.add(chamferBox(0.34, 1.65, 0.46, P.chest, sx * 1.12, -5.55, 0.76, 0.06));
+    } else {
+      leg.add(cyl(0.22, 0.31, 0.48, P.dark, sx * 1.35, -5.45, -0.42, 10).rotateZ(PI / 2));
+    }
+  }
+}
+
+function addGMIIBackpack(rig, P){
+  rig.backpackBody.add(facetedHull([[10.85, 1.7, -1.05, -2.72], [12.7, 2.02, -0.95, -2.95], [15.05, 1.7, -1.1, -2.72]], P.dark));
+  rig.backpackBody.add(frontPlate([[-1.35, 0.75], [1.35, 0.75], [1.08, -0.8], [-1.08, -0.8]], 0.28, P.main, 0, 13.3, -3.02));
+  for (const sx of [-1, 1]){
+    rig.backpackBody.add(cyl(0.18, 0.22, 2.2, P.frame, sx * 1.05, 15.7, -1.85, 10));
+    for (const y of [11.35, 13.0]) addThruster(rig.backpack, rig.parts, P.dark, P.flame, sx * 0.92, y, -3.05, 0.38, 1.8, 'rear');
+  }
+}
+
+function addGMIIIBackpack(rig, P){
+  rig.backpackBody.add(facetedHull([[10.7, 1.72, -1.0, -2.82], [12.8, 2.12, -0.92, -3.15], [15.25, 1.75, -1.08, -2.92]], P.accent));
+  rig.backpackBody.add(facetedHull([[12.3, 0.78, -2.55, -3.78], [15.35, 0.62, -2.4, -3.62]], P.main, -1.75));
+  rig.backpackBody.add(facetedHull([[12.3, 0.78, -2.55, -3.78], [15.35, 0.62, -2.4, -3.62]], P.main, 1.75));
+  for (const sx of [-1, 1]){
+    rig.backpackBody.add(cyl(0.2, 0.24, 2.35, P.frame, sx * 1.0, 16.0, -2.0, 10));
+    addThruster(rig.backpack, rig.parts, P.dark, P.flame, sx * 1.62, 11.55, -3.72, 0.58, 2.6, 'rear');
+    addThruster(rig.backpack, rig.parts, P.dark, P.flame, sx * 0.58, 11.15, -3.18, 0.42, 2.0, 'rear');
+  }
+}
+
+function addJeganBackpack(rig, P){
+  rig.backpackBody.add(facetedHull([[10.8, 1.62, -1.0, -2.75], [12.75, 1.92, -0.92, -3.2], [15.1, 1.48, -1.08, -2.9]], P.chest));
+  rig.backpackBody.add(frontPlate([[-1.2, 0.65], [1.2, 0.65], [0.86, -0.78], [-0.86, -0.78]], 0.26, P.main, 0, 13.35, -3.25));
+  // Two articulated upper vernier booms and a three-nozzle main cluster.
+  for (const sx of [-1, 1]){
+    const boom = new THREE.Group(); boom.position.set(sx * 1.72, 14.0, -2.65); boom.rotation.z = -sx * 0.18;
+    boom.add(facetedHull([[-0.8, 0.42, 0.62, -0.62], [1.25, 0.58, 0.72, -0.72]], P.main));
+    boom.add(cyl(0.36, 0.48, 0.55, P.dark, 0, 1.12, -0.72, 11).rotateX(PI / 2)); rig.backpack.add(boom);
+    addThruster(rig.backpack, rig.parts, P.dark, P.flame, sx * 1.95, 14.95, -3.62, 0.43, 2.05, 'rear');
+    addThruster(rig.backpack, rig.parts, P.dark, P.flame, sx * 0.82, 11.35, -3.18, 0.38, 1.9, 'rear');
+  }
+  addThruster(rig.backpack, rig.parts, P.dark, P.flame, 0, 11.05, -3.35, 0.68, 2.8, 'rear');
+}
+
 function buildGMII(suit, M){
   const P = palette('gmii', M);
-  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main });
+  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main, shoulderMat: P.main });
   addLateGMHead(rig, P, 'gmii');
-  addChestVents(rig, P, 12.48, 1.48, 0.74);
-  rig.torso.add(chamferBox(1.0, 1.25, 0.46, P.main, 0, 11.76, 1.56, 0.08));
-  rig.torso.add(chamferBox(5.0, 0.48, 2.66, P.main, 0, 14.16, 0, 0.09));
-  for (const sx of [-1, 1]) rig.waist.add(chamferBox(0.42, 1.2, 0.25, P.chest, sx * 1.76, 8.65, 1.32, 0.06));
-  addStandardBackpack(rig, P, { width: 3.7, height: 3.75, depth: 1.55, thruster: 0.48 });
-  mountShield(rig, makeArmShield(P, 'gm'));
+  addLateFrameArmor(rig, P, 'gmii');
+  addGMIIBackpack(rig, P);
+  mountShield(rig, makeLateGMShield(P, 'gmii'));
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
 }
 
@@ -766,49 +935,55 @@ function buildGMIII(suit, M){
   const P = palette('gmiii', M);
   const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main, shoulderMat: P.main });
   addLateGMHead(rig, P, 'gmiii');
-  addChestVents(rig, P, 12.48, 1.5, 0.76);
-  rig.torso.add(chamferBox(1.05, 1.35, 0.48, P.accent, 0, 11.72, 1.58, 0.09));
-  rig.torso.add(chamferBox(5.35, 0.58, 2.8, P.main, 0, 14.2, -0.02, 0.1));
-  addStandardBackpack(rig, P, { width: 4.15, height: 4.0, depth: 1.75, thruster: 0.54 });
-  mountShield(rig, makeArmShield(P, 'gm'));
+  addLateFrameArmor(rig, P, 'gmiii');
+  addGMIIIBackpack(rig, P);
+  mountShield(rig, makeLateGMShield(P, 'gmiii'));
 
   const shoulderMuzzles = [], waistMuzzles = [];
   for (const sx of [-1, 1]){
-    const shoulderPod = new THREE.Group(); shoulderPod.position.set(sx * 3.25, 14.8, -0.1);
-    shoulderPod.add(chamferBox(1.3, 1.55, 2.35, P.chest, 0, 0, 0, 0.12));
+    const shoulderPod = new THREE.Group(); shoulderPod.position.set(sx * 3.35, 15.0, -0.18); shoulderPod.rotation.z = -sx * 0.08;
+    shoulderPod.add(facetedHull([[-0.78, 0.76, 1.25, -1.12], [0.8, 0.62, 1.12, -0.96]], P.chest));
+    shoulderPod.add(frontPlate([[-0.62, 0.62], [0.62, 0.62], [0.55, -0.62], [-0.55, -0.62]], 0.13, P.dark, 0, 0, 1.3));
     for (const ox of [-0.28, 0.28]) for (const oy of [-0.35, 0.35]){
-      shoulderPod.add(cyl(0.16, 0.2, 0.5, P.dark, ox, oy, 1.3, 9).rotateX(PI / 2));
-      const muzzle = new THREE.Object3D(); muzzle.position.set(ox, oy, 1.58); shoulderPod.add(muzzle); shoulderMuzzles.push(muzzle);
+      shoulderPod.add(cyl(0.15, 0.21, 0.48, P.frame, ox, oy, 1.5, 10).rotateX(PI / 2));
+      shoulderPod.add(cyl(0.1, 0.1, 0.1, P.dark, ox, oy, 1.77, 9).rotateX(PI / 2));
+      const muzzle = new THREE.Object3D(); muzzle.position.set(ox, oy, 1.88); shoulderPod.add(muzzle); shoulderMuzzles.push(muzzle);
     }
     rig.root.add(shoulderPod);
-    const waistPod = new THREE.Group(); waistPod.position.set(sx * 2.2, 9.15, 0.8);
-    waistPod.add(chamferBox(0.9, 2.0, 1.3, P.chest, 0, 0, 0, 0.1));
+    const waistPod = new THREE.Group(); waistPod.position.set(sx * 2.28, 9.0, 0.72); waistPod.rotation.z = -sx * 0.08;
+    waistPod.add(facetedHull([[-1.05, 0.52, 0.72, -0.62], [1.02, 0.4, 0.64, -0.54]], P.chest));
+    waistPod.add(frontPlate([[-0.36, 0.78], [0.36, 0.78], [0.42, -0.78], [-0.42, -0.78]], 0.12, P.dark, 0, 0, 0.8));
     for (const oy of [-0.42, 0.42]){
-      waistPod.add(cyl(0.2, 0.24, 0.42, P.dark, 0, oy, 0.76, 10).rotateX(PI / 2));
-      const muzzle = new THREE.Object3D(); muzzle.position.set(0, oy, 1.0); waistPod.add(muzzle); waistMuzzles.push(muzzle);
+      waistPod.add(cyl(0.22, 0.28, 0.5, P.frame, 0, oy, 0.92, 10).rotateX(PI / 2));
+      waistPod.add(cyl(0.14, 0.14, 0.1, P.dark, 0, oy, 1.21, 9).rotateX(PI / 2));
+      const muzzle = new THREE.Object3D(); muzzle.position.set(0, oy, 1.34); waistPod.add(muzzle); waistMuzzles.push(muzzle);
     }
     rig.root.add(waistPod);
   }
-  rig.parts.weaponMuzzles = []; rig.parts.weaponMuzzles[1] = shoulderMuzzles; rig.parts.weaponMuzzles[2] = waistMuzzles;
+  // Resolve by weapon identity so custom loadouts cannot detach an integrated
+  // launcher from the physical pod that fires it.
+  rig.parts.weaponMuzzles = [];
+  const shoulderIndex = suit.weapons.findIndex(weapon => /MEDIUM MISSILE|4-TUBE/.test(weapon.name));
+  const waistIndex = suit.weapons.findIndex(weapon => /WAIST MISSILE/.test(weapon.name));
+  if (shoulderIndex >= 0) rig.parts.weaponMuzzles[shoulderIndex] = shoulderMuzzles;
+  if (waistIndex >= 0) rig.parts.weaponMuzzles[waistIndex] = waistMuzzles;
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
 }
 
 function buildJegan(suit, M){
   const P = palette('jegan', M);
-  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main, shoulderMat: P.main });
+  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.main, kneeMat: P.main, shoulderMat: P.main, frontSkirts: false });
   addLateGMHead(rig, P, 'jegan');
-  rig.torso.add(chamferBox(1.0, 1.45, 0.48, P.main, 0, 11.72, 1.58, 0.09));
-  rig.torso.add(chamferBox(5.05, 0.5, 2.72, P.main, 0, 14.18, 0, 0.09));
-  for (const sx of [-1, 1]){
-    rig.torso.add(chamferBox(0.78, 1.45, 0.36, P.main, sx * 1.65, 12.62, 1.55, 0.07));
-    rig.waist.add(chamferBox(0.45, 1.35, 0.27, P.chest, sx * 1.78, 8.7, 1.32, 0.06));
-  }
-  addStandardBackpack(rig, P, { width: 4.05, height: 4.2, depth: 1.7, material: P.chest, thruster: 0.58, sabers: false });
-  for (const sx of [-1, 1]) rig.backpackBody.add(chamferBox(0.72, 3.4, 0.95, P.main, sx * 1.75, 13.0, -2.2, 0.12));
+  addLateFrameArmor(rig, P, 'jegan');
+  addJeganBackpack(rig, P);
   const missileMuzzles = [];
-  mountShield(rig, makeJeganShield(P, missileMuzzles), 1.3, -3.35, 0.2);
-  rig.parts.weaponMuzzles = []; rig.parts.weaponMuzzles[2] = missileMuzzles;
-  rig.parts.integratedAimArms = []; rig.parts.integratedAimArms[2] = [rig.parts.armL];
+  mountShield(rig, makeJeganShield(P, missileMuzzles), 1.3, -3.25, 0.12);
+  rig.parts.weaponMuzzles = []; rig.parts.integratedAimArms = [];
+  const missileIndex = suit.weapons.findIndex(weapon => /SHIELD MISSILE/.test(weapon.name));
+  if (missileIndex >= 0){
+    rig.parts.weaponMuzzles[missileIndex] = missileMuzzles;
+    rig.parts.integratedAimArms[missileIndex] = [rig.parts.armL];
+  }
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
 }
 

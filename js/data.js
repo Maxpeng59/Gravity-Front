@@ -113,35 +113,43 @@ export const SUITS = [
   },
   {
     id: 'gmii', name: 'RMS-179 GM II', code: 'RMS-179', faction: 'FED', style: 'gm',
-    hp: 3900, armor: 10, walk: 31, boost: 94, boostFuel: 95, scale: 1.0,
+    // A 1,518 kW, 1.06 G modernization rather than a new-generation frame.
+    hp: 3700, armor: 9, walk: 29, boost: 90, boostFuel: 90, scale: 1.0,
     colors: { main: 0xd9e5d7, chest: 0xb9272e, accent: 0x303947, trim: 0xe0c34b },
     weapons: [
-      { name: 'GM II BEAM RIFLE', type: 'beam', dmg: 340, rof: 1.65, clip: 18, reload: 2.5, speed: 1500, spread: 0.005, pref: 480 },
+      // BR-S-85-C2: the same 1.9 MW class as the RX-78 rifle, but with simpler sights.
+      { name: 'BOWA BR-S-85-C2 BEAM RIFLE', type: 'beam', dmg: 420, rof: 1.25, clip: 24, reload: 2.9, speed: 1500, spread: 0.006, pref: 470 },
       { name: 'HEAD VULCAN GUNS', type: 'mg', dmg: 14, rof: 20, clip: 200, reload: 2.6, speed: 1500, spread: 0.022, head: true },
     ],
-    saber: { name: 'BEAM SABER', dmg: 480 }, cost: 19000,
+    saber: { name: 'THI BSjG01 BEAM SABER', dmg: 470 }, cost: 18500,
   },
   {
     id: 'gmiii', name: 'RGM-86R GM III', code: 'RGM-86R', faction: 'FED', style: 'gm',
-    hp: 4500, armor: 12, walk: 30, boost: 101, boostFuel: 105, scale: 1.01,
+    // Gundarium-reinforced frame, Mk-II-derived backpack and 1.45 G acceleration.
+    hp: 4700, armor: 13, walk: 31, boost: 110, boostFuel: 102, scale: 1.01,
     colors: { main: 0xd8e5d9, chest: 0xb62b32, accent: 0x27374d, trim: 0xd9c65a },
     weapons: [
-      { name: 'GM III BEAM RIFLE', type: 'beam', dmg: 380, rof: 1.55, clip: 16, reload: 2.6, speed: 1550, spread: 0.0045, pref: 520 },
-      { name: 'SHOULDER MISSILE UNITS', type: 'bazooka', dmg: 320, rof: 1.1, clip: 12, reload: 3.4, speed: 350, spread: 0.018, splash: 10, pref: 440, integrated: true },
-      { name: 'WAIST MISSILE UNITS', type: 'bazooka', dmg: 430, rof: 0.8, clip: 4, reload: 3.8, speed: 330, spread: 0.014, splash: 14, pref: 410, integrated: true },
+      { name: '2.8MW GM III BEAM RIFLE', type: 'beam', dmg: 510, rof: 1.0, clip: 12, reload: 3.1, speed: 1650, spread: 0.004, pref: 560 },
+      { name: '60MM HEAD VULCAN GUNS', type: 'mg', dmg: 14, rof: 20, clip: 200, reload: 2.6, speed: 1500, spread: 0.022, head: true },
+      // Two four-tube pods, with three rounds carried for each tube.
+      { name: '2×4-TUBE MEDIUM MISSILE PODS', type: 'lockmissile', dmg: 290, rof: 2.0, clip: 24, reload: 5.8, speed: 500, spread: 0, splash: 9, pref: 430, lockTime: 0.8, turn: 4.2, integrated: true },
+      { name: '2×2-TUBE LARGE WAIST MISSILES', type: 'lockmissile', dmg: 600, rof: 0.65, clip: 4, reload: 6.2, speed: 420, spread: 0, splash: 16, pref: 390, lockTime: 1.15, turn: 3.3, integrated: true },
     ],
-    saber: { name: 'BEAM SABER', dmg: 560 }, cost: 32000,
+    saber: { name: 'TWIN BEAM SABERS', dmg: 550 }, cost: 33500,
   },
   {
     id: 'jegan', name: 'RGM-89 Jegan', code: 'RGM-89', faction: 'FED', style: 'gm',
-    hp: 4700, armor: 11, walk: 34, boost: 112, boostFuel: 110, scale: 1.01,
+    // Light armor and nineteen verniers favor sustained agility over protection.
+    hp: 4300, armor: 9, walk: 36, boost: 104, boostFuel: 120, scale: 1.04,
     colors: { main: 0x93c9ad, chest: 0x243548, accent: 0x27343d, trim: 0xd7d1a1 },
     weapons: [
-      { name: 'JEGAN BEAM RIFLE', type: 'beam', dmg: 400, rof: 1.7, clip: 18, reload: 2.4, speed: 1600, spread: 0.004, pref: 540 },
-      { name: 'HEAD VULCAN GUNS', type: 'mg', dmg: 16, rof: 20, clip: 200, reload: 2.5, speed: 1500, spread: 0.021, head: true },
-      { name: 'SHIELD MISSILE LAUNCHER', type: 'bazooka', dmg: 340, rof: 1.1, clip: 4, reload: 3.4, speed: 360, spread: 0.016, splash: 11, pref: 420, integrated: true },
+      // Short-barrel E-pack rifle: reduced output, excellent close-range handling and cadence.
+      { name: 'SHORT-RANGE BEAM RIFLE', type: 'beam', dmg: 310, rof: 2.45, clip: 20, reload: 2.3, speed: 1450, spread: 0.007, life: 1.05, pref: 300 },
+      { name: 'VULCAN POD SYSTEM', type: 'mg', dmg: 14, rof: 22, clip: 180, reload: 2.4, speed: 1450, spread: 0.024, head: true },
+      // Four sensor-guided short-range missiles in two twin shield launchers.
+      { name: 'TWIN SHIELD MISSILE LAUNCHERS', type: 'lockmissile', dmg: 420, rof: 1.35, clip: 4, reload: 5.0, speed: 460, spread: 0, splash: 11, pref: 280, lockTime: 0.85, turn: 5.2, integrated: true },
     ],
-    saber: { name: 'BEAM SABER', dmg: 580 }, cost: 36000,
+    saber: { name: 'VARIABLE-OUTPUT BEAM SABER', dmg: 570 }, cost: 35000,
   },
   {
     // GM bazooka loadout: shoulder-fed GM cannon, a 20-round kinetic rifle and a beam saber
