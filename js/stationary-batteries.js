@@ -16,12 +16,3 @@ export const STATIONARY_BATTERY_IDS = new Set(STATIONARY_BATTERIES.map(battery =
 export function stationaryBatteryById(id){
   return STATIONARY_BATTERIES.find(battery => battery.id === id) || null;
 }
-
-// Authored maps carry their own emplacements. These four batteries give every
-// generated ground battlefield a defended gun line for both factions.
-export const DEFAULT_GROUND_BATTERIES = Object.freeze([
-  Object.freeze({ kind: 'battery', team: 'FED', x: -250, z: -620, rotY: 0, scale: 1 }),
-  Object.freeze({ kind: 'battery', team: 'FED', x: 250, z: -620, rotY: 0, scale: 1 }),
-  Object.freeze({ kind: 'battery', team: 'ZEON', x: -250, z: 820, rotY: Math.PI, scale: 1 }),
-  Object.freeze({ kind: 'battery', team: 'ZEON', x: 250, z: 820, rotY: Math.PI, scale: 1 }),
-]);

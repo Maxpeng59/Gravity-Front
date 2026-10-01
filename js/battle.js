@@ -61,7 +61,10 @@ import {
   HOVER_CRAFT_ACCEL_MULTIPLIER,
   hoverCraftEquipped,
 } from './hovercraft.js';
-import { DEFAULT_GROUND_BATTERIES } from './stationary-batteries.js';
+import {
+  COLONY_FLIGHT_ENTER_HEIGHT, COLONY_GRAVITY_SCALE, COLONY_RADIUS, COLONY_SURFACE_FALL_ACCEL,
+  colonyFloorHeight, colonyFreeFlightState,
+} from './colony-physics.js';
 import {
   raySphere, rayYawBox, segmentSphere, segmentYawBox,
   circleYawRectPenetration, sweepCircleYawRect,
@@ -145,6 +148,7 @@ const DROP_RADIUS = 2600;  // outside this, real things collapse to statistics
 
 export function startBattle(renderer, opts, onEnd){
   const env = opts.env || 'space';
+  const COLONY = env === 'colony';
   const rng = new RNG(opts.terrainSeed || 'battle');
   const multiplayer = opts.multiplayer || null;
   const pvpLink = multiplayer?.link || null;
@@ -439,6 +443,7 @@ export function startBattle(renderer, opts, onEnd){
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
     : 'WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · Q/TAB/1-4 WEAPON · P AIM ASSIST · M MUTE ALL · ESC PAUSE';
   hintEl.textContent = baseHint
+    + (COLONY ? ` · COLONY 0.20G · BOOST ABOVE ${COLONY_FLIGHT_ENTER_HEIGHT}m FOR FREE-FLIGHT` : '')
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
 
@@ -644,27 +649,57 @@ export function startBattle(renderer, opts, onEnd){
       }
     }
   } else if (env === 'colony'){
-    hfn = () => 0;
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(11000, 11000), new THREE.MeshStandardMaterial({ color: 0x707a70, roughness: 1 }));
-    floor.rotation.x = -Math.PI / 2; scene.add(floor);
+    // The habitat is a true visible cylinder running along Z. Its lower inside arc is the
+    // playable landscape; the far wall, ceiling settlements, ribs, and axial sunline make
+    // the rotation geometry readable from the surface instead of resembling a flat planet.
+    hfn = x => colonyFloorHeight(x);
+    const shellMat = new THREE.MeshStandardMaterial({
+      color: 0x657467, roughness: 0.96, metalness: 0.04, side: THREE.BackSide,
+    });
+    const shell = new THREE.Mesh(new THREE.CylinderGeometry(
+      COLONY_RADIUS, COLONY_RADIUS, 11000, 96, 20, true,
+    ), shellMat);
+    shell.rotation.x = Math.PI / 2; shell.position.y = COLONY_RADIUS; scene.add(shell);
+
+    const panelMat = new THREE.MeshStandardMaterial({
+      color: 0xd7ecf3, emissive: 0xb9e7ff, emissiveIntensity: 2.4,
+      roughness: 0.28, side: THREE.BackSide,
+    });
+    for (const offset of [-0.34, 0, 0.34]){
+      const panel = new THREE.Mesh(new THREE.CylinderGeometry(
+        COLONY_RADIUS - 8, COLONY_RADIUS - 8, 10400, 64, 1, true,
+        Math.PI - 0.075 + offset, 0.15,
+      ), panelMat);
+      panel.rotation.x = Math.PI / 2; panel.position.y = COLONY_RADIUS; scene.add(panel);
+    }
+    const sunline = new THREE.Mesh(
+      new THREE.CylinderGeometry(14, 14, 10400, 14),
+      new THREE.MeshBasicMaterial({ color: 0xe8f7ff, toneMapped: false }),
+    );
+    sunline.rotation.x = Math.PI / 2; sunline.position.set(0, COLONY_RADIUS, 0); scene.add(sunline);
+    const ribMat = new THREE.MeshStandardMaterial({ color: 0x323d43, roughness: 0.58, metalness: 0.65 });
+    for (let z = -4500; z <= 4500; z += 900){
+      const rib = new THREE.Mesh(new THREE.TorusGeometry(COLONY_RADIUS - 12, 7, 6, 96), ribMat);
+      rib.position.set(0, COLONY_RADIUS, z); scene.add(rib);
+    }
     const bMat = new THREE.MeshStandardMaterial({ color: 0x8a93a0, roughness: 0.9 });
     const wMat = new THREE.MeshStandardMaterial({ color: 0x222831, emissive: 0xb8d0e0, emissiveIntensity: 0.5 });
     for (let i = 0; i < 70; i++){
       const w = rng.range(24, 70), h = rng.range(30, 170), x = rng.range(-1700, 1700), z = rng.range(-1700, 1700);
       if (Math.hypot(x, z) < 180) continue;
       const b = new THREE.Mesh(new THREE.BoxGeometry(w, h, w), bMat);
-      b.position.set(x, h / 2, z); scene.add(b);
+      b.position.set(x, hfn(x, z) + h / 2, z); scene.add(b);
       queueStaticObstacle(b, {
         radius: Math.SQRT1_2 * w, hitY: 0, label: 'COLONY BUILDING',
         hitBoxes: [{ x: 0, y: 0, z: 0, hx: w / 2, hy: h / 2, hz: w / 2 }],
       });
       if (rng.chance(0.5)){
         const win = new THREE.Mesh(new THREE.BoxGeometry(w * 0.7, h * 0.6, 1), wMat);
-        win.position.set(x, h * 0.5, z + w / 2 + 0.6); scene.add(win);
+        win.position.set(x, hfn(x, z) + h * 0.5, z + w / 2 + 0.6); scene.add(win);
       }
     }
     scene.background = new THREE.Color(0xbfd0d8);
-    scene.fog = new THREE.Fog(0xc8d4da, 400, 3000);
+    scene.fog = new THREE.Fog(0xc8d4da, 700, 7200);
   } else { // space
     scene.background = new THREE.Color(0x020409);
     addStars(6000, 9500, 2600);
@@ -1908,7 +1943,6 @@ export function startBattle(renderer, opts, onEnd){
     return builtProps;
   }
   if (activeMap) buildMapStructures(activeMap);
-  else if (!SPACE) buildMapStructures({ structures: DEFAULT_GROUND_BATTERIES });
 
   const missionProps = [];
   if (!SPACE && mission.customBatteries?.length){
@@ -4861,8 +4895,21 @@ export function startBattle(renderer, opts, onEnd){
     if (m.carrierRide) dismountGalcezonRider(m);
     const w = m.suit;
     const mountedCraft = !!m.hoverCraft?.alive;
-    // in space, thrust follows the full look direction; on the ground it stays planar
-    const fwd = SPACE && !mountedCraft
+    const colonyGround = COLONY ? groundY(m.root.position.x, m.root.position.z) : 0;
+    const colonyAltitude = COLONY ? m.root.position.y - colonyGround : 0;
+    const wasColonyFreeFlight = !!m.colonyFreeFlight;
+    m.colonyFreeFlight = COLONY && !mountedCraft
+      ? colonyFreeFlightState(wasColonyFreeFlight, colonyAltitude, m.vel.y)
+      : false;
+    if (m.colonyFreeFlight !== wasColonyFreeFlight){
+      setMsg(m.colonyFreeFlight
+        ? 'ROTATIONAL GRAVITY LOST — FREE-FLIGHT · SPACE/C VERTICAL'
+        : 'ROTATIONAL GRAVITY REACQUIRED — SURFACE MODE', 3.2);
+    }
+    const fullFlight = SPACE || m.colonyFreeFlight;
+    // In space and above the colony's rotational-gravity release line, thrust follows the full
+    // look direction. Near the inhabited shell, ordinary movement stays tangent to the surface.
+    const fwd = fullFlight && !mountedCraft
       ? tmpV.set(Math.sin(camYaw) * Math.cos(camPitch), Math.sin(camPitch), Math.cos(camYaw) * Math.cos(camPitch))
       : tmpV.set(Math.sin(camYaw), 0, Math.cos(camYaw));
     const right = tmpV2.set(Math.sin(camYaw - Math.PI / 2), 0, Math.cos(camYaw - Math.PI / 2));
@@ -4876,7 +4923,7 @@ export function startBattle(renderer, opts, onEnd){
 
     const gy = SPACE ? -Infinity : groundY(m.root.position.x, m.root.position.z);
     const restY = (!SPACE && w.hover) ? gy + 3 : gy;          // hover suits rest a few metres up
-    const grounded = !SPACE && m.root.position.y <= restY + 0.5;
+    const grounded = !SPACE && !m.colonyFreeFlight && m.root.position.y <= restY + 0.5;
     const legFactor = 1 - Math.min(0.45, m.legDmg * 0.6);
     const postureLocked = kneelEligible(m) && (m.kneelTarget || (m.kneelBlend || 0) > 0.001);
     const wantsHover = !mountedCraft && groundManeuverEligible(m) && !postureLocked && keys.has('e') && m.fuel > 0 && !m.stomping;
@@ -4913,8 +4960,9 @@ export function startBattle(renderer, opts, onEnd){
       if (shiftBoosting) m.fuel = Math.max(0, m.fuel - 16 * dt);
       else m.fuel = Math.min(m.maxFuel, m.fuel + 15 * dt);
       if (postureLocked){ m.vel.set(0, 0, 0); m.thrusting = false; }
-    } else if (SPACE){
-      // full-vector drift with verniers (suits tuned for ground are sluggish here)
+    } else if (fullFlight){
+      // Full-vector drift with verniers. In a colony this begins only after a boosted jump
+      // reaches the low-spin central volume; C descends back into rotational gravity.
       const acc = (shiftBoosting ? 95 : 42) * (w.spaceThrustMul || 1);
       m.thrusting = hasInput || keys.has(' ') || keys.has('c');
       if (hasInput) m.vel.addScaledVector(input, acc * dt);
@@ -4970,7 +5018,8 @@ export function startBattle(renderer, opts, onEnd){
           if (grounded){ m.vel.y = 16 * (w.jumpMul || 1); }   // ground GMs leap 1.5x higher
           else if (m.fuel > 0){ m.vel.y = Math.min(m.vel.y + 44 * dt, 30); m.fuel = Math.max(0, m.fuel - 22 * dt); }
         }
-        m.vel.y -= (m.groundHoverBlend > 0.05 ? 20 : 38) * dt;
+        const fallAccel = COLONY ? COLONY_SURFACE_FALL_ACCEL : 38;
+        m.vel.y -= (m.groundHoverBlend > 0.05 ? fallAccel * (20 / 38) : fallAccel) * dt;
         if (m.groundHoverBlend > 0.05) m.vel.y = Math.max(m.vel.y, -11); // releasing E settles without a false hard-landing slam
         m.hoverDustT = 0;
       }
@@ -6665,6 +6714,10 @@ export function startBattle(renderer, opts, onEnd){
       const travel = landTypeMobileSuit(player) ? '3× AUTO · 80% ENERGY' : '2× AUTO · 100% ENERGY';
       wHtml += `<br>GROUND EFFECT <span class="ammo" style="color:${player.hovering ? 'var(--ok)' : 'var(--dim)'}">E ${player.hovering ? 'HOVER ACTIVE' : 'HOVER READY'} · ${travel} · Q KICK ${kick}</span>`;
     }
+    if (COLONY){
+      const altitude = Math.max(0, player.root.position.y - groundY(player.root.position.x, player.root.position.z));
+      wHtml += `<br>COLONY GRAVITY <span class="ammo" style="color:${player.colonyFreeFlight ? 'var(--ok)' : 'var(--acc)'}">${COLONY_GRAVITY_SCALE.toFixed(2)}G · ${player.colonyFreeFlight ? 'FREE-FLIGHT · C TO RETURN' : `SURFACE · RELEASE ${COLONY_FLIGHT_ENTER_HEIGHT}m`} · ALT ${Math.round(altitude)}m</span>`;
+    }
     if (playerHoverCraft){
       const alive = playerHoverCraft.alive && player.hoverCraft === playerHoverCraft;
       const hf = Math.round(clamp(playerHoverCraft.hp / playerHoverCraft.maxHp, 0, 1) * 100);
@@ -6701,7 +6754,7 @@ export function startBattle(renderer, opts, onEnd){
     const real = mechs.filter(m => m.alive && !m.isPlayer).length;
     simEl.textContent = opts.sim
       ? `FULL-SIM ${real} UNITS · ABSTRACT ${blips.length} · OBSERVATION BUBBLE 1.6 KM`
-      : `${env.toUpperCase()} OPERATION`;
+      : COLONY ? 'COLONY OPERATION · ROTATIONAL GRAVITY 0.20G' : `${env.toUpperCase()} OPERATION`;
     msgT -= dt;
     if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
 
@@ -7603,6 +7656,15 @@ export function startBattle(renderer, opts, onEnd){
       }));
       return {
         kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
+        colony: COLONY ? {
+          radius: COLONY_RADIUS,
+          gravityScale: COLONY_GRAVITY_SCALE,
+          ballisticGravity: PHYS.gravity,
+          surfaceFallAcceleration: COLONY_SURFACE_FALL_ACCEL,
+          releaseHeight: COLONY_FLIGHT_ENTER_HEIGHT,
+          freeFlight: !!player.colonyFreeFlight,
+          altitude: player.root.position.y - groundY(player.root.position.x, player.root.position.z),
+        } : null,
         campaignTargets,
         collision: { ...colliderSummary, terrain: hfn ? 'shared-triangle-heightfield' : null },
         pvp: {

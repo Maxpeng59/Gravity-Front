@@ -10,11 +10,14 @@
 
 export const GRAVITY_EARTH = 9.81;
 export const GRAVITY_MOON = 1.62;
+export const GRAVITY_COLONY = GRAVITY_EARTH * 0.2;
 
-// Local physics for a battlefield. Colonies spin for ~1 g and hold air; airless bodies keep a
-// little gravity but no drag; open space has neither.
+// Local physics for a battlefield. This colony's deliberately slow spin produces 0.2 g at the
+// inhabited shell and retains air; airless bodies keep a little gravity but no drag; open space
+// has neither.
 export function environmentPhysics(env, { airless = false } = {}){
   if (env === 'space') return { gravity: 0, air: 0 };
+  if (env === 'colony') return { gravity: GRAVITY_COLONY, air: 1 };
   if (airless) return { gravity: GRAVITY_MOON, air: 0 };
   return { gravity: GRAVITY_EARTH, air: 1 };
 }

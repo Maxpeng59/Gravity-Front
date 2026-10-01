@@ -308,14 +308,17 @@ function runBattle(opts, after){
   if (['localhost', '127.0.0.1', '::1'].includes(location.hostname)) {
     globalThis.__gravityBattle = battleHandle;
     const unpause = () => battleHandle?._debugUnpause();
+    const colonyFlight = () => battleHandle?._debugInput({ position: [0, 60, 0], velocity: [0, 6, 0] });
     const publishState = () => {
       document.documentElement.dataset.gravityBattleState = JSON.stringify(battleHandle?._debugState?.() || null);
     };
     const qaUnpause = document.createElement('button');
+    const qaColonyFlight = document.createElement('button');
     const qaState = document.createElement('button');
     qaUnpause.id = 'gravity-debug-unpause';
+    qaColonyFlight.id = 'gravity-debug-colony-flight';
     qaState.id = 'gravity-debug-state';
-    for (const button of [qaUnpause, qaState]) {
+    for (const button of [qaUnpause, qaColonyFlight, qaState]) {
       button.type = 'button';
       button.tabIndex = -1;
       button.setAttribute('aria-hidden', 'true');
@@ -323,6 +326,7 @@ function runBattle(opts, after){
       document.body.appendChild(button);
     }
     qaUnpause.onclick = unpause;
+    qaColonyFlight.onclick = colonyFlight;
     qaState.onclick = publishState;
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
@@ -330,6 +334,7 @@ function runBattle(opts, after){
       document.removeEventListener('gravity-debug-unpause', unpause);
       document.removeEventListener('gravity-debug-state', publishState);
       qaUnpause.remove();
+      qaColonyFlight.remove();
       qaState.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete globalThis.__gravityBattle;

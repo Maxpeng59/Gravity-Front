@@ -39,9 +39,12 @@ test('every authored weapon gets a finite, sane profile', () => {
 test('vacuum has no drop or drag; ground has both', () => {
   const space = environmentPhysics('space'), ground = environmentPhysics('ground');
   const moon = environmentPhysics('ground', { airless: true });
+  const colony = environmentPhysics('colony');
   assert.deepEqual(space, { gravity: 0, air: 0 });
   assert.ok(ground.gravity > 9 && ground.air === 1);
   assert.ok(moon.gravity < 2 && moon.air === 0);
+  assert.equal(colony.gravity, ground.gravity * 0.2);
+  assert.equal(colony.air, 1);
   const mg = ballisticProfile(weapon('ZMP-50D 120MM MACHINE GUN'));
   assert.equal(superelevation(mg, 840, 800, space), 0);
   assert.equal(speedAfter(mg, 840, 800, space.air), 840);
