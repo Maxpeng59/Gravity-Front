@@ -7,7 +7,7 @@
 
 const FED_STANDARD = ['rx78', 'gm', 'gmbazooka'];
 const FED_GROUND = ['rx79g', 'ez8', 'gmg_a', 'gmg_b'];
-const FED_GM = ['gm', 'gmbazooka', 'gmg_a', 'gmg_b', 'rgm79sp', 'gmspartan'];
+const FED_GM = ['gm', 'gmii', 'gmiii', 'jegan', 'gmbazooka', 'gmg_a', 'gmg_b', 'rgm79sp', 'gmspartan'];
 const FED_ORIGINAL = ['harrow', 'kestrel'];
 const FED_MODULAR = [...new Set([...FED_STANDARD, ...FED_GROUND, ...FED_GM, ...FED_ORIGINAL])];
 const ZEON_ZAKU = ['zaku2', 'zaku2g', 'zaku2b', 'zaku2s'];

@@ -112,6 +112,38 @@ export const SUITS = [
     saber: { name: 'BEAM SABER', dmg: 420 }, cost: 9000,
   },
   {
+    id: 'gmii', name: 'RMS-179 GM II', code: 'RMS-179', faction: 'FED', style: 'gm',
+    hp: 3900, armor: 10, walk: 31, boost: 94, boostFuel: 95, scale: 1.0,
+    colors: { main: 0xd9e5d7, chest: 0xb9272e, accent: 0x303947, trim: 0xe0c34b },
+    weapons: [
+      { name: 'GM II BEAM RIFLE', type: 'beam', dmg: 340, rof: 1.65, clip: 18, reload: 2.5, speed: 1500, spread: 0.005, pref: 480 },
+      { name: 'HEAD VULCAN GUNS', type: 'mg', dmg: 14, rof: 20, clip: 200, reload: 2.6, speed: 1500, spread: 0.022, head: true },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 480 }, cost: 19000,
+  },
+  {
+    id: 'gmiii', name: 'RGM-86R GM III', code: 'RGM-86R', faction: 'FED', style: 'gm',
+    hp: 4500, armor: 12, walk: 30, boost: 101, boostFuel: 105, scale: 1.01,
+    colors: { main: 0xd8e5d9, chest: 0xb62b32, accent: 0x27374d, trim: 0xd9c65a },
+    weapons: [
+      { name: 'GM III BEAM RIFLE', type: 'beam', dmg: 380, rof: 1.55, clip: 16, reload: 2.6, speed: 1550, spread: 0.0045, pref: 520 },
+      { name: 'SHOULDER MISSILE UNITS', type: 'bazooka', dmg: 320, rof: 1.1, clip: 12, reload: 3.4, speed: 350, spread: 0.018, splash: 10, pref: 440, integrated: true },
+      { name: 'WAIST MISSILE UNITS', type: 'bazooka', dmg: 430, rof: 0.8, clip: 4, reload: 3.8, speed: 330, spread: 0.014, splash: 14, pref: 410, integrated: true },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 560 }, cost: 32000,
+  },
+  {
+    id: 'jegan', name: 'RGM-89 Jegan', code: 'RGM-89', faction: 'FED', style: 'gm',
+    hp: 4700, armor: 11, walk: 34, boost: 112, boostFuel: 110, scale: 1.01,
+    colors: { main: 0x93c9ad, chest: 0x243548, accent: 0x27343d, trim: 0xd7d1a1 },
+    weapons: [
+      { name: 'JEGAN BEAM RIFLE', type: 'beam', dmg: 400, rof: 1.7, clip: 18, reload: 2.4, speed: 1600, spread: 0.004, pref: 540 },
+      { name: 'HEAD VULCAN GUNS', type: 'mg', dmg: 16, rof: 20, clip: 200, reload: 2.5, speed: 1500, spread: 0.021, head: true },
+      { name: 'SHIELD MISSILE LAUNCHER', type: 'bazooka', dmg: 340, rof: 1.1, clip: 4, reload: 3.4, speed: 360, spread: 0.016, splash: 11, pref: 420, integrated: true },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 580 }, cost: 36000,
+  },
+  {
     // GM bazooka loadout: shoulder-fed GM cannon, a 20-round kinetic rifle and a beam saber
     id: 'gmbazooka', name: 'RGM-79 GM (Bazooka)', code: 'RGM-79', faction: 'FED', style: 'gm',
     hp: 3600, armor: 9, walk: 27, boost: 80, boostFuel: 85, scale: 0.98,

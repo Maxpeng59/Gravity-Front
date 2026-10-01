@@ -18,6 +18,9 @@ const PALETTES = {
   mk2:        { main: 0xe7e7df, chest: 0x18243d, accent: 0xb32a31, trim: 0xd6b63c },
   gundamx:    { main: 0xe9e9df, chest: 0x183f7f, accent: 0xae2930, trim: 0xd7a92e },
   gm:         { main: 0xdce5d6, chest: 0xbd3131, accent: 0x9e272b, trim: 0xd8ac2f },
+  gmii:       { main: 0xd7e3d5, chest: 0xb52931, accent: 0x303947, trim: 0xd9bf45 },
+  gmiii:      { main: 0xd5e3d7, chest: 0xb52b32, accent: 0x27374d, trim: 0xd8c354 },
+  jegan:      { main: 0x8fc6aa, chest: 0x243548, accent: 0x26343e, trim: 0xd8d2a5 },
   groundgm:   { main: 0xd6c9aa, chest: 0xb94b30, accent: 0x343b42, trim: 0xc5a54b },
   sniper:     { main: 0x72afc1, chest: 0x173b5b, accent: 0xa92c32, trim: 0xc4d0d3 },
   spartan:    { main: 0x536148, chest: 0x2f3c32, accent: 0x242b27, trim: 0x8a4a39 },
@@ -309,6 +312,36 @@ function addClassicGMHead(rig, P){
   return finishGMHead(rig, P, head, geom, new THREE.Vector3(0, 0.12, 1.42), visor);
 }
 
+// Later GM frames keep the single wraparound visor but replace the soft
+// RGM-79 dome with a taller, angular sensor housing.  Small silhouette changes
+// distinguish the GM II, missile-heavy GM III and slim Jegan at combat range.
+function addLateGMHead(rig, P, variant){
+  const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.18, 0);
+  const geom = new THREE.Group();
+  const jegan = variant === 'jegan', gmiii = variant === 'gmiii';
+  const visor = gmVisorMaterial(P, jegan ? 0x54d4c4 : 0x58ccb0, jegan ? 0x32ead8 : 0x35d8ad);
+  geom.add(chamferBox(jegan ? 1.92 : 2.08, 1.45, 1.78, P.main, 0, 0.02, -0.08, 0.19));
+  geom.add(chamferBox(jegan ? 1.52 : 1.72, 0.72, 1.52, P.main, 0, 0.86, -0.14, 0.13));
+  geom.add(frontPlate([[-0.88, 0.29], [-0.65, 0.53], [0.65, 0.53], [0.88, 0.29], [0.7, -0.29], [-0.7, -0.29]], 0.22, P.dark, 0, 0.12, 0.97));
+  geom.add(frontPlate([[-0.72, 0.2], [-0.54, 0.36], [0.54, 0.36], [0.72, 0.2], [0.58, -0.15], [-0.58, -0.15]], 0.13, visor, 0, 0.13, 1.13));
+  geom.add(chamferBox(jegan ? 0.5 : 0.62, 0.83, 0.58, gmiii ? P.accent : P.main, 0, -0.48, 1.06, 0.09));
+  for (const sx of [-1, 1]){
+    geom.add(chamferBox(0.48, 0.68, 0.58, P.main, sx * 0.7, -0.48, 0.76, 0.09));
+    geom.add(cyl(0.4, 0.4, 0.22, P.chest, sx * 1.02, 0, -0.12, 14).rotateZ(PI / 2));
+    geom.add(cyl(0.25, 0.25, 0.25, P.dark, sx * 1.04, 0, -0.12, 12).rotateZ(PI / 2));
+  }
+  geom.add(chamferBox(0.5, gmiii ? 0.9 : 0.72, 0.62, P.chest, 0, 1.15, -0.02, 0.1));
+  geom.add(chamferBox(0.3, 0.22, 0.13, visor, 0, 1.22, 0.36, 0.04));
+  if (gmiii){
+    const antenna = cyl(0.04, 0.06, 2.25, P.frame, 0.7, 1.62, -0.25, 8);
+    antenna.rotation.z = -0.08; geom.add(antenna);
+  } else if (jegan){
+    geom.add(chamferBox(0.22, 1.45, 0.25, P.chest, -0.62, 1.38, -0.22, 0.05));
+    geom.add(chamferBox(0.55, 0.24, 0.32, P.chest, 0.52, 0.91, 0.53, 0.05));
+  }
+  return finishGMHead(rig, P, head, geom, new THREE.Vector3(0, 0.14, 1.43), visor);
+}
+
 // RGM-79[G]: the Requiem/08th MS Team ground head is much more angular.  Its
 // tall camera mohawk and central mask visibly split the green panoramic visor.
 function addGroundGMHead(rig, P){
@@ -422,6 +455,17 @@ function makeArmShield(P, kind = 'gundam', short = false){
 function mountShield(rig, shield, x = 1.32, y = -3.45, z = 0.2){
   shield.position.set(x, y, z); shield.rotation.y = 0.06;
   rig.parts.armL.add(shield); rig.parts.shield = shield; rig.parts.shieldKind = 'native';
+}
+
+function makeJeganShield(P, missileMuzzles){
+  const shield = makeArmShield(P, 'gm', true);
+  shield.children[1].material = P.chest;
+  for (let i = 0; i < 4; i++){
+    const x = i < 2 ? -0.62 : 0.62, y = i % 2 ? -0.72 : 0.72;
+    shield.add(cyl(0.22, 0.27, 0.5, P.dark, -0.24, y, x, 10).rotateZ(PI / 2));
+    const muzzle = new THREE.Object3D(); muzzle.position.set(-0.52, y, x); shield.add(muzzle); missileMuzzles.push(muzzle);
+  }
+  return shield;
 }
 
 function addStandardBackpack(rig, P, options = {}){
@@ -702,6 +746,69 @@ function buildGM(suit, M){
   addThruster(rig.backpack, rig.parts, P.dark, P.flame, -0.68, 11.6, -2.65, 0.4, 1.9, 'rear');
   addThruster(rig.backpack, rig.parts, P.dark, P.flame, 0.68, 11.6, -2.65, 0.4, 1.9, 'rear');
   mountShield(rig, makeArmShield(P, 'gm'));
+  return finishHumanoid(suit, rig, { allowDefaultShield: false });
+}
+
+function buildGMII(suit, M){
+  const P = palette('gmii', M);
+  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main });
+  addLateGMHead(rig, P, 'gmii');
+  addChestVents(rig, P, 12.48, 1.48, 0.74);
+  rig.torso.add(chamferBox(1.0, 1.25, 0.46, P.main, 0, 11.76, 1.56, 0.08));
+  rig.torso.add(chamferBox(5.0, 0.48, 2.66, P.main, 0, 14.16, 0, 0.09));
+  for (const sx of [-1, 1]) rig.waist.add(chamferBox(0.42, 1.2, 0.25, P.chest, sx * 1.76, 8.65, 1.32, 0.06));
+  addStandardBackpack(rig, P, { width: 3.7, height: 3.75, depth: 1.55, thruster: 0.48 });
+  mountShield(rig, makeArmShield(P, 'gm'));
+  return finishHumanoid(suit, rig, { allowDefaultShield: false });
+}
+
+function buildGMIII(suit, M){
+  const P = palette('gmiii', M);
+  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main, shoulderMat: P.main });
+  addLateGMHead(rig, P, 'gmiii');
+  addChestVents(rig, P, 12.48, 1.5, 0.76);
+  rig.torso.add(chamferBox(1.05, 1.35, 0.48, P.accent, 0, 11.72, 1.58, 0.09));
+  rig.torso.add(chamferBox(5.35, 0.58, 2.8, P.main, 0, 14.2, -0.02, 0.1));
+  addStandardBackpack(rig, P, { width: 4.15, height: 4.0, depth: 1.75, thruster: 0.54 });
+  mountShield(rig, makeArmShield(P, 'gm'));
+
+  const shoulderMuzzles = [], waistMuzzles = [];
+  for (const sx of [-1, 1]){
+    const shoulderPod = new THREE.Group(); shoulderPod.position.set(sx * 3.25, 14.8, -0.1);
+    shoulderPod.add(chamferBox(1.3, 1.55, 2.35, P.chest, 0, 0, 0, 0.12));
+    for (const ox of [-0.28, 0.28]) for (const oy of [-0.35, 0.35]){
+      shoulderPod.add(cyl(0.16, 0.2, 0.5, P.dark, ox, oy, 1.3, 9).rotateX(PI / 2));
+      const muzzle = new THREE.Object3D(); muzzle.position.set(ox, oy, 1.58); shoulderPod.add(muzzle); shoulderMuzzles.push(muzzle);
+    }
+    rig.root.add(shoulderPod);
+    const waistPod = new THREE.Group(); waistPod.position.set(sx * 2.2, 9.15, 0.8);
+    waistPod.add(chamferBox(0.9, 2.0, 1.3, P.chest, 0, 0, 0, 0.1));
+    for (const oy of [-0.42, 0.42]){
+      waistPod.add(cyl(0.2, 0.24, 0.42, P.dark, 0, oy, 0.76, 10).rotateX(PI / 2));
+      const muzzle = new THREE.Object3D(); muzzle.position.set(0, oy, 1.0); waistPod.add(muzzle); waistMuzzles.push(muzzle);
+    }
+    rig.root.add(waistPod);
+  }
+  rig.parts.weaponMuzzles = []; rig.parts.weaponMuzzles[1] = shoulderMuzzles; rig.parts.weaponMuzzles[2] = waistMuzzles;
+  return finishHumanoid(suit, rig, { allowDefaultShield: false });
+}
+
+function buildJegan(suit, M){
+  const P = palette('jegan', M);
+  const rig = makeBiped(P, 'lategm', { footMat: P.chest, chestMat: P.chest, kneeMat: P.main, shoulderMat: P.main });
+  addLateGMHead(rig, P, 'jegan');
+  rig.torso.add(chamferBox(1.0, 1.45, 0.48, P.main, 0, 11.72, 1.58, 0.09));
+  rig.torso.add(chamferBox(5.05, 0.5, 2.72, P.main, 0, 14.18, 0, 0.09));
+  for (const sx of [-1, 1]){
+    rig.torso.add(chamferBox(0.78, 1.45, 0.36, P.main, sx * 1.65, 12.62, 1.55, 0.07));
+    rig.waist.add(chamferBox(0.45, 1.35, 0.27, P.chest, sx * 1.78, 8.7, 1.32, 0.06));
+  }
+  addStandardBackpack(rig, P, { width: 4.05, height: 4.2, depth: 1.7, material: P.chest, thruster: 0.58, sabers: false });
+  for (const sx of [-1, 1]) rig.backpackBody.add(chamferBox(0.72, 3.4, 0.95, P.main, sx * 1.75, 13.0, -2.2, 0.12));
+  const missileMuzzles = [];
+  mountShield(rig, makeJeganShield(P, missileMuzzles), 1.3, -3.35, 0.2);
+  rig.parts.weaponMuzzles = []; rig.parts.weaponMuzzles[2] = missileMuzzles;
+  rig.parts.integratedAimArms = []; rig.parts.integratedAimArms[2] = [rig.parts.armL];
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
 }
 
@@ -1132,6 +1239,9 @@ export function buildFederationCanonical(suit, M){
     case 'gundamx': return buildGundamX(suit, M);
     case 'gm':
     case 'gmbazooka': return buildGM(suit, M);
+    case 'gmii': return buildGMII(suit, M);
+    case 'gmiii': return buildGMIII(suit, M);
+    case 'jegan': return buildJegan(suit, M);
     case 'gmg_a':
     case 'gmg_b': return buildGroundGM(suit, M);
     case 'rgm79sp': return buildSniperII(suit, M);

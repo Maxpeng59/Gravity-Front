@@ -960,7 +960,7 @@ const defaultPos = (team, k) => team === 'enemy'                    // fan new e
   : { x: ((k % 5) - 2) * 300, z: 120 + Math.floor(k / 5) * 220 };
 // mass-battle preset sizes (per side); 0 = use the manual enemy/ally lists above
 const ARMY_SIZES = [0, 50, 100, 200, 300];
-const ARMY_FED = ['gm', 'gmbazooka', 'guncannon', 'rgm79sp'];
+const ARMY_FED = ['gm', 'gmii', 'gmiii', 'jegan', 'gmbazooka', 'guncannon', 'rgm79sp'];
 const BIOME_LIST = ['verdant', 'desert', 'ice', 'regolith', 'crimson'];
 // capital landships you can field as enemies/allies in a custom sortie — these deploy as
 // destructible props (full combatants with gun batteries), not piloted units
