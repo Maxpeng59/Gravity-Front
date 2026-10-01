@@ -442,8 +442,8 @@ export function startBattle(renderer, opts, onEnd){
     : hintSuit && hintSuit.vehicle
     ? 'WASD DRIVE/STEER · MOUSE TURRET · LMB FIRE · RMB HOLD AIM · N LATCH AIM · V PERISCOPE · SHIFT SPRINT · TAB/1-4 WEAPON · R RELOAD · P AIM ASSIST · M MUTE ALL · ESC PAUSE'
     : hintGroundManeuver
-    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V COCKPIT · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
-    : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V COCKPIT · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · ${freeFlightWeaponHint} · P AIM ASSIST · M MUTE ALL · ESC PAUSE`;
+    ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V CAMERA · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
+    : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V CAMERA · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · ${freeFlightWeaponHint} · P AIM ASSIST · M MUTE ALL · ESC PAUSE`;
   hintEl.textContent = baseHint
     + (COLONY ? ` · COLONY 0.20G · BOOST ABOVE ${COLONY_FLIGHT_ENTER_HEIGHT}m FOR FREE-FLIGHT` : '')
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
@@ -2903,17 +2903,17 @@ export function startBattle(renderer, opts, onEnd){
   // Select the visible muzzle for the active weapon. Explicit per-weapon banks
   // never fall through to another weapon's aggregate bank; held guns always use
   // the anchor parented to their currently visible right-hand mesh.
-  function activeMuzzleNode(m, advance = false){
+  function activeMuzzleNode(m, advance = false, weaponIndex = m.wi){
     if (!m.parts) return null;
-    const w = m.suit.weapons[m.wi];
+    const w = m.suit.weapons[weaponIndex];
     if (m.parts.weaponIsHeld) return m.parts.muzzle;
     const bank = m.parts.weaponMuzzles
-      ? m.parts.weaponMuzzles[m.wi]
+      ? m.parts.weaponMuzzles[weaponIndex]
       : m.parts.muzzles;
     if (bank && bank.length){
       const cursors = m.muzzleCursors || (m.muzzleCursors = []);
-      const idx = (cursors[m.wi] || 0) % bank.length;
-      if (advance) cursors[m.wi] = (idx + 1) % bank.length;
+      const idx = (cursors[weaponIndex] || 0) % bank.length;
+      if (advance) cursors[weaponIndex] = (idx + 1) % bank.length;
       return bank[idx];
     }
     if (w?.head) return m.parts.eye || m.parts.head || m.parts.muzzle;
@@ -2937,11 +2937,16 @@ export function startBattle(renderer, opts, onEnd){
     const w = m.suit.weapons[m.wi];
     if (w.type === 'lockmissile'){
       // homing missile. The player fires these through the lock-on sequence (playerFlightUpdate);
-      // here we handle AI pilots, which loose one at their current target.
+      // here we handle AI pilots. Barrage racks commit every remaining round in
+      // a rapid ripple instead of waiting for a fresh lock between missiles.
       if (m.fireT > 0 || m.reloadT > 0) return;
       if (m.clip <= 0){ m.reloadT = w.reload; return; }
       const tgt = (!m.isPlayer && m.ai && m.ai.target && m.ai.target.alive) ? m.ai.target : null;
       if (!tgt) return;
+      if (w.barrage){
+        startMissileBarrage(m, tgt);
+        return;
+      }
       m.clip--; m.fireT = 1 / w.rof;
       if (m.clip <= 0) m.reloadT = w.reload;
       launchMissile(m, tgt);
@@ -3034,13 +3039,13 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // a guided missile that homes onto a specific mech (Saberfish 5000 lock-on weapon)
-  function launchMissile(m, target){
-    const w = m.suit.weapons[m.wi];
+  function launchMissile(m, target, { weaponIndex = m.wi, cone = 0, barrageIndex = 0 } = {}){
+    const w = m.suit.weapons[weaponIndex];
     const targetPoint = target
       ? target.root.position.clone().setY(target.root.position.y + aimHeight(target))
       : null;
     syncMuzzlePose(m, targetPoint ? null : tmpV2.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)), targetPoint);
-    const node = activeMuzzleNode(m, true);
+    const node = activeMuzzleNode(m, true, weaponIndex);
     const muzzle = node
       ? node.getWorldPosition(new THREE.Vector3())
       : approximateMuzzle(m, w);
@@ -3048,6 +3053,12 @@ export function startBattle(renderer, opts, onEnd){
     const aim = targetPoint
       ? tmpV2.copy(targetPoint).sub(muzzle).normalize()
       : tmpV2.set(Math.sin(m.yaw), 0, Math.cos(m.yaw));
+    if (cone > 0){
+      aim.x += (rng.next() - 0.5) * 2 * cone;
+      aim.y += (rng.next() - 0.5) * cone;
+      aim.z += (rng.next() - 0.5) * 2 * cone;
+      aim.normalize();
+    }
     const mesh = new THREE.Mesh(missileGeo, missileMat);
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, aim); // cone apex forward
@@ -3055,8 +3066,47 @@ export function startBattle(renderer, opts, onEnd){
     const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: target || null, turn: w.turn || 2.4 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'missile');
-    if (m.isPlayer) applyPlayerWeaponRecoil(w);
-    sfx('bazooka', m.isPlayer ? 0.26 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14));
+    // A barrage has one launcher impulse, not twenty-four full camera kicks.
+    if (m.isPlayer && barrageIndex === 0) applyPlayerWeaponRecoil(w);
+    if (barrageIndex === 0 || barrageIndex % 4 === 0)
+      sfx('bazooka', m.isPlayer ? 0.26 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14));
+  }
+
+  function startMissileBarrage(m, target){
+    const weaponIndex = m.wi, w = m.suit.weapons[weaponIndex];
+    if (!w?.barrage || !target?.alive || m.missileBarrage || m.clip <= 0 || m.reloadT > 0) return false;
+    const count = m.clip;
+    m.clip = 0; // the trigger commits the whole rack immediately
+    m.fireT = Math.max(1 / Math.max(0.01, w.rof || 1), count * (w.barrageCadence || 0.06));
+    m.reloadT = w.reload + count * (w.barrageCadence || 0.06);
+    m.missileBarrage = {
+      weaponIndex, target, remaining: count, total: count, t: 0,
+      cadence: w.barrageCadence || 0.06, cone: w.barrageCone || 0.014,
+    };
+    m.shotsFired = (m.shotsFired || 0) + count;
+    return true;
+  }
+
+  function updateMissileBarrage(m, dt){
+    const salvo = m.missileBarrage;
+    if (!salvo) return;
+    if (!m.alive){ m.missileBarrage = null; return; }
+    salvo.t -= dt;
+    // Cap catch-up work so a long frame cannot create an unbounded projectile spike.
+    let launchedThisFrame = 0;
+    while (salvo.remaining > 0 && salvo.t <= 0 && launchedThisFrame < 6){
+      const target = salvo.target?.alive ? salvo.target : null;
+      const barrageIndex = salvo.total - salvo.remaining;
+      launchMissile(m, target, {
+        weaponIndex: salvo.weaponIndex,
+        cone: salvo.cone,
+        barrageIndex,
+      });
+      salvo.remaining--;
+      salvo.t += salvo.cadence;
+      launchedThisFrame++;
+    }
+    if (salvo.remaining <= 0) m.missileBarrage = null;
   }
 
   // bombs fall under heavy gravity and burst on impact — released 3 from EACH side of the bay window (G-Fighter)
@@ -3546,7 +3596,7 @@ export function startBattle(renderer, opts, onEnd){
   const keys = new Set();
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
-  let locked = false, firstPerson = false, sniperMode = false, sniperPreviousView = false;
+  let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
   let sniperHoldingBreath = false, sniperBreathBlocked = false;
   let sniperSwayYaw = 0, sniperSwayPitch = 0, sniperLatched = false, sniperRmbHeld = false;
@@ -3608,6 +3658,19 @@ export function startBattle(renderer, opts, onEnd){
       : 'RISING — 2.0s · MOVEMENT LOCKED', 2.1);
   }
   const cyclePlayerWeapon = () => switchWeapon((player.wi + 1) % (player.suit.weapons.length + (hasSaber ? 1 : 0)));
+  function cycleCameraView(){
+    if (sniperMode) setSniperMode(false, true);
+    if (!firstPerson && thirdPersonView === 'pursuit'){
+      firstPerson = true;
+      setMsg(player.air ? 'BOMBING CAMERA' : player.suit.vehicle ? 'PERISCOPE VIEW' : 'COCKPIT VIEW', 1.2);
+    } else if (firstPerson){
+      firstPerson = false; thirdPersonView = 'tactical';
+      setMsg('TACTICAL CAMERA — WIDE', 1.2);
+    } else {
+      thirdPersonView = 'pursuit';
+      setMsg('PURSUIT CAMERA — CLOSE', 1.2);
+    }
+  }
 
   const onMouseMove = e => {
     if (!locked) return;
@@ -3654,10 +3717,7 @@ export function startBattle(renderer, opts, onEnd){
       const idx = +k - 1;
       if (player.suit.weapons[idx] || (hasSaber && idx === SABER_SLOT)) switchWeapon(idx);
     }
-    if (k === 'v'){
-      if (sniperMode) setSniperMode(false, true);
-      firstPerson = !firstPerson; setMsg(firstPerson ? 'COCKPIT VIEW' : 'PURSUIT CAMERA', 1.2);
-    }
+    if (k === 'v' && !e.repeat) cycleCameraView();
     if (k === 'n' && !e.repeat){
       if (sniperMode && sniperRmbHeld && !sniperLatched) sniperLatched = true;
       else if (sniperMode){ sniperLatched = false; setSniperMode(false); }
@@ -4936,6 +4996,11 @@ export function startBattle(renderer, opts, onEnd){
       m.reloadT -= dt;
       if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
     }
+    const activeWeapon = m.wi === SABER_SLOT ? null : m.suit.weapons[m.wi];
+    if (activeWeapon?.type === 'lockmissile'){
+      updateLockOn(m, dt);
+      return;
+    }
     if (mouseDown && m.reloadT <= 0){
       if (m.wi === SABER_SLOT) trySaber();
       else if (m.swingT <= 0 && m.meleeT <= 0) {
@@ -5275,10 +5340,14 @@ export function startBattle(renderer, opts, onEnd){
       const aimCoefficient = m.isPlayer && sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1;
       const lockRate = 1 + (1 - aimCoefficient) * 0.65;
       m.lockT = Math.min(w.lockTime, (m.lockT || 0) + dt * lockRate);
-      if (m.lockT >= w.lockTime){ // full lock → loose the missile
-        launchMissile(m, tgt);
-        m.clip--; m.fireT = 1 / w.rof;
-        if (m.clip <= 0) m.reloadT = w.reload;
+      if (m.lockT >= w.lockTime){ // full lock → loose the missile or commit the full rack
+        if (w.barrage) startMissileBarrage(m, tgt);
+        else {
+          launchMissile(m, tgt);
+          m.clip--; m.fireT = 1 / w.rof;
+          if (m.clip <= 0) m.reloadT = w.reload;
+          m.shotsFired = (m.shotsFired || 0) + 1;
+        }
         m.lockT = 0; m.lockCd = 0.6; m.lockedFlash = 0.6;
         camShake = Math.min(0.8, camShake + 0.12);
         sfx('ui', 0.18);
@@ -5950,6 +6019,7 @@ export function startBattle(renderer, opts, onEnd){
     if (m.fireHeat > 0) m.fireHeat = Math.max(0, m.fireHeat - HEAT_COOL_RATE * dt * (m.kneelBlend > 0.5 ? 1.4 : 1));
     updateKneelTransition(m, dt);
     updatePendingMelee(m, dt);
+    updateMissileBarrage(m, dt);
     // GAW carrier: periodically drops a Zaku that descends slowly and can only shoot (no moving)
     if (!m.networkRemote && m.suit.carrier){
       m.dropCd = (m.dropCd == null ? 3 : m.dropCd) - dt;
@@ -6778,6 +6848,9 @@ export function startBattle(renderer, opts, onEnd){
     let wHtml;
     if (player.wi === SABER_SLOT){
       wHtml = `${player.suit.saber.name} <span class="ammo">MELEE</span>`;
+    } else if (w.type === 'lockmissile' && player.missileBarrage?.weaponIndex === player.wi){
+      const salvo = player.missileBarrage;
+      wHtml = `${w.name} <span class="ammo">BARRAGE · ${salvo.total - salvo.remaining}/${salvo.total} AWAY</span>`;
     } else if (player.reloadT > 0){
       wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s</span>`;
     } else if (w.type === 'lockmissile'){
@@ -6948,6 +7021,7 @@ export function startBattle(renderer, opts, onEnd){
       cameraChaseDirection.copy(cameraAimDirection);
     }
     const fwd = cameraAimDirection;
+    const tacticalView = !firstPerson && thirdPersonView === 'tactical';
     camera.up.copy(cameraFrameUp);
     let lookOverride = null; // branches that don't look straight along the aim set this
     hud.classList.toggle('sniper-mode', sniperMode);
@@ -7006,15 +7080,15 @@ export function startBattle(renderer, opts, onEnd){
       // airframe so huge carriers are framed (camera not stuck inside the hull) and the crosshair stays centred
       player.root.visible = player.alive || player.deadT > 0;
       const acs = Math.max(1, (player.suit.scale || 1) * 0.7);
-      const desired = tmpV3.copy(p).addScaledVector(fwd, -38 * acs);
-      desired.y += 13 * acs;
+      const desired = tmpV3.copy(p).addScaledVector(fwd, -(tacticalView ? 62 : 38) * acs);
+      desired.y += (tacticalView ? 23 : 13) * acs;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 6);
       camera.position.lerp(desired, started ? Math.min(1, 7 * dt) : 1);
     } else if (player.suit.vehicle){
       // Low vehicle chase camera: frame the 2.7m APC instead of hovering at mobile-suit head height.
       player.root.visible = player.alive || player.deadT > 0;
-      const desired = tmpV3.copy(p).addScaledVector(fwd, -14);
-      desired.y += 7 - sp * 2;
+      const desired = tmpV3.copy(p).addScaledVector(fwd, tacticalView ? -25 : -14);
+      desired.y += (tacticalView ? 13 : 7) - sp * 2;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 2.5);
       camera.position.lerp(desired, started ? Math.min(1, 12 * dt) : 1);
     } else {
@@ -7023,16 +7097,18 @@ export function startBattle(renderer, opts, onEnd){
       // cockpit sightline. Pull back during a firing kneel so the low asymmetric
       // silhouette remains visible instead of dropping beneath the screen edge.
       const kneelView = clamp(player.kneelBlend || 0, 0, 1);
+      const chaseDistance = (tacticalView ? 42 : 23) + kneelView * 8;
+      const chaseHeight = (tacticalView ? 30 : 21) - sp * 5 - kneelView * 1.5;
       const desired = tmpV3.copy(p)
-        .addScaledVector(bodyLinkedCamera ? cameraChaseDirection : fwd, -(23 + kneelView * 8));
+        .addScaledVector(bodyLinkedCamera ? cameraChaseDirection : fwd, -chaseDistance);
       if (bodyLinkedCamera){
-        desired.addScaledVector(cameraFrameUp, 21 - sp * 5 - kneelView * 1.5);
+        desired.addScaledVector(cameraFrameUp, chaseHeight);
         // Keep the upper body as the stable composition anchor while allowing
         // enough forward lead for the reticle and targets to remain readable.
         lookOverride = cameraFocusPoint.copy(p)
           .addScaledVector(cameraFrameUp, 9 * (player.suit.scale || 1))
           .addScaledVector(fwd, 16);
-      } else desired.y += 21 - sp * 5 - kneelView * 1.5;
+      } else desired.y += chaseHeight;
       if (hfn) desired.y = Math.max(desired.y, groundY(desired.x, desired.z) + 2.5);
       camera.position.lerp(desired, started ? Math.min(1, 11 * dt) : 1);
     }
@@ -7131,7 +7207,7 @@ export function startBattle(renderer, opts, onEnd){
         .multiplyScalar(firstPerson ? 120 : 90).add(camera.position);
       camera.lookAt(look);
     }
-    const normalFov = (player.boosting ? 8 : 0) + (firstPerson ? 68 : 62);
+    const normalFov = (player.boosting ? 8 : 0) + (firstPerson ? 68 : tacticalView ? 70 : 62);
     const adsFov = lerp(normalFov, aimProfile?.fov ?? normalFov, sniperZoom);
     camera.fov = lerp(camera.fov, adsFov, (sniperMode ? 10 : 5) * dt);
     camera.updateProjectionMatrix();
@@ -7638,6 +7714,13 @@ export function startBattle(renderer, opts, onEnd){
       if ('fire' in o) mouseDown = o.fire;
       if ('fp' in o) firstPerson = o.fp;
       if ('view' in o){ firstPerson = !!o.view; buildViewGun(vgMeleeOverride); }
+      if ('camera' in o){
+        const mode = String(o.camera).toLowerCase();
+        if (mode === 'cockpit' || mode === 'first') firstPerson = true;
+        else if (mode === 'pursuit' || mode === 'tactical'){
+          firstPerson = false; thirdPersonView = mode;
+        }
+      }
       if ('sniper' in o) setSniperMode(!!o.sniper, true);
       if ('aim' in o) setSniperMode(!!o.aim, true);
       if ('keys' in o){ keys.clear(); for (const k of o.keys) keys.add(k); }
@@ -7857,13 +7940,20 @@ export function startBattle(renderer, opts, onEnd){
           kneelBlend: remote.kneelBlend || 0,
         })) : null,
         playerSuitId: player.suit.id, playerStyle: player.suit.style,
-        firstPerson, viewGunChildren: viewGun.children.length, playerRootVisible: player.root.visible,
+        firstPerson, cameraView: firstPerson ? 'cockpit' : thirdPersonView,
+        viewGunChildren: viewGun.children.length, playerRootVisible: player.root.visible,
         viewMeleeOverride: vgMeleeOverride, viewShowsSaber: player.wi === SABER_SLOT || vgMeleeOverride,
         pYaw: +player.yaw.toFixed(3), camYawDbg: +camYaw.toFixed(3), pRotY: +player.root.rotation.y.toFixed(3),
         weaponIndex: player.wi, weaponName: selectedWeapon?.name || (player.wi === SABER_SLOT ? player.suit.saber.name : null),
         weaponIsHeld: !!player.parts?.weaponIsHeld,
         bladeVisible: !!player.parts?.blade?.visible, gunVisible: !!player.parts?.gun?.visible,
         pMeleeT: player.meleeT, pBladeT: player.bladeT, pReloadT: player.reloadT,
+        pClip: player.clip, pShotsFired: player.shotsFired || 0,
+        missileBarrage: player.missileBarrage ? {
+          weaponIndex: player.missileBarrage.weaponIndex,
+          remaining: player.missileBarrage.remaining,
+          total: player.missileBarrage.total,
+        } : null,
         pSwingT: player.swingT, pSwingDuration: player.swingDuration,
         pSwingProgress: player.swingProgress || 0, pSwingKind: player.swingKind,
         pSwingDir: player.swingDir, pSwingHitResolved: !!player.swingHitResolved,

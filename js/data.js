@@ -132,8 +132,8 @@ export const SUITS = [
       { name: '2.8MW GM III BEAM RIFLE', type: 'beam', dmg: 510, rof: 1.0, clip: 12, reload: 3.1, speed: 1650, spread: 0.004, pref: 560 },
       { name: '60MM HEAD VULCAN GUNS', type: 'mg', dmg: 14, rof: 20, clip: 200, reload: 2.6, speed: 1500, spread: 0.022, head: true },
       // Two four-tube pods, with three rounds carried for each tube.
-      { name: '2×4-TUBE MEDIUM MISSILE PODS', type: 'lockmissile', dmg: 290, rof: 2.0, clip: 24, reload: 5.8, speed: 500, spread: 0, splash: 9, pref: 430, lockTime: 0.8, turn: 4.2, integrated: true },
-      { name: '2×2-TUBE LARGE WAIST MISSILES', type: 'lockmissile', dmg: 600, rof: 0.65, clip: 4, reload: 6.2, speed: 420, spread: 0, splash: 16, pref: 390, lockTime: 1.15, turn: 3.3, integrated: true },
+      { name: '2×4-TUBE MEDIUM MISSILE PODS', type: 'lockmissile', dmg: 290, rof: 2.0, clip: 24, reload: 5.8, speed: 1050, spread: 0, splash: 9, pref: 430, lockTime: 0.8, turn: 5.8, barrage: true, barrageCadence: 0.045, barrageCone: 0.018, integrated: true },
+      { name: '2×2-TUBE LARGE WAIST MISSILES', type: 'lockmissile', dmg: 600, rof: 0.65, clip: 4, reload: 6.2, speed: 900, spread: 0, splash: 16, pref: 390, lockTime: 1.15, turn: 4.6, barrage: true, barrageCadence: 0.075, barrageCone: 0.012, integrated: true },
     ],
     saber: { name: 'TWIN BEAM SABERS', dmg: 550 }, cost: 33500,
   },
@@ -147,7 +147,7 @@ export const SUITS = [
       { name: 'SHORT-RANGE BEAM RIFLE', type: 'beam', dmg: 310, rof: 2.45, clip: 20, reload: 2.3, speed: 1450, spread: 0.007, life: 1.05, pref: 300 },
       { name: 'VULCAN POD SYSTEM', type: 'mg', dmg: 14, rof: 22, clip: 180, reload: 2.4, speed: 1450, spread: 0.024, head: true },
       // Four sensor-guided short-range missiles in two twin shield launchers.
-      { name: 'TWIN SHIELD MISSILE LAUNCHERS', type: 'lockmissile', dmg: 420, rof: 1.35, clip: 4, reload: 5.0, speed: 460, spread: 0, splash: 11, pref: 280, lockTime: 0.85, turn: 5.2, integrated: true },
+      { name: 'TWIN SHIELD MISSILE LAUNCHERS', type: 'lockmissile', dmg: 420, rof: 1.35, clip: 4, reload: 5.0, speed: 980, spread: 0, splash: 11, pref: 280, lockTime: 0.85, turn: 6.4, barrage: true, barrageCadence: 0.065, barrageCone: 0.014, integrated: true },
     ],
     saber: { name: 'VARIABLE-OUTPUT BEAM SABER', dmg: 570 }, cost: 35000,
   },
