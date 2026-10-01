@@ -40,13 +40,23 @@ test('each late Federation suit is routed to a dedicated canonical model builder
   assert.match(source, /case 'gmiii': return buildGMIII/);
   assert.match(source, /case 'jegan': return buildJegan/);
   assert.ok((source.match(/facetedHull\(/g) || []).length >= 18);
-  assert.match(source, /geometry\.setAttribute\('uv', new THREE\.Float32BufferAttribute\(uvs, 2\)\)/);
+  assert.match(modelKit, /export function facetedHull/);
+  assert.match(modelKit, /geometry\.setAttribute\('uv', new THREE\.Float32BufferAttribute\(uvs, 2\)\)/);
   assert.match(modelKit, /if \(!geo\.getAttribute\('uv'\)\)/);
   assert.match(modelKit, /name !== 'position' && name !== 'normal' && name !== 'uv'/);
   assert.match(source, /frontSkirts: false/);
   assert.match(source, /shoulderIndex.*MEDIUM MISSILE/);
   assert.match(source, /waistIndex.*WAIST MISSILE/);
   assert.match(source, /missileIndex.*SHIELD MISSILE/);
+});
+
+test('selective faceted armour remodelling covers the shared Federation and Zeon frames', () => {
+  const federation = readFileSync(new URL('../js/canonical-fed.js', import.meta.url), 'utf8');
+  const zeon = readFileSync(new URL('../js/canonical-zeon.js', import.meta.url), 'utf8');
+  assert.ok((federation.match(/facetedHull\(/g) || []).length >= 28);
+  assert.ok((zeon.match(/facetedHull\(/g) || []).length >= 3);
+  assert.match(federation, /One economical loft replaces the old stacked chest boxes/);
+  assert.match(zeon, /\[11\.3, 1\.95, 1\.3, -1\.22\]/);
 });
 
 test('late Federation missile racks fire immediately as a free-aim full-rack barrage', () => {

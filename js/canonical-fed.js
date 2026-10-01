@@ -3,7 +3,7 @@
 // animation after a humanoid body is returned.
 import {
   THREE, box, cyl, sph, chamferBox, profile, tube, ribbedCable,
-  materialSet, compactGroup, addThruster, instancedTrack,
+  materialSet, compactGroup, addThruster, instancedTrack, facetedHull,
 } from './model-kit.js';
 
 const PI = Math.PI;
@@ -93,8 +93,16 @@ function makeBiped(P, style, options = {}){
   }
 
   torso.add(chamferBox(3.3 * C.chest, 1.6, 2.3, P.frame, 0, C.hipY + 2.0, 0, 0.2));
-  torso.add(chamferBox(4.65 * C.chest, 3.15, 2.65, chestMat, 0, C.hipY + 4.15, 0, 0.3));
-  torso.add(chamferBox(5.35 * C.chest, 1.15, 2.5, chestMat, 0, C.hipY + 5.55, -0.05, 0.2));
+  // One economical loft replaces the old stacked chest boxes.  The waist is
+  // narrow, the shoulder line broad, and the collar slopes inward, giving all
+  // Federation frames a readable humanoid torso while variant armour remains
+  // free to establish the individual suit.
+  torso.add(facetedHull([
+    [C.hipY + 2.55, 1.62 * C.chest, 1.1, -1.02],
+    [C.hipY + 3.55, 2.18 * C.chest, 1.38, -1.26],
+    [C.hipY + 5.35, 2.7 * C.chest, 1.28, -1.24],
+    [C.hipY + 6.12, 1.62 * C.chest, 0.82, -0.96],
+  ], chestMat));
   torso.add(chamferBox(1.2, 2.15, 0.65, P.accent, 0, C.hipY + 3.35, 1.55, 0.1));
   torso.add(chamferBox(2.1, 0.7, 2.35, P.main, 0, C.hipY + 5.85, 0, 0.12));
 
@@ -106,10 +114,18 @@ function makeBiped(P, style, options = {}){
     kneePivot.position.y = kneeY;
     const addLower = object => { object.position.y -= kneeY; lower.add(object); };
     upper.add(sph(0.8 * C.leg, P.joint, 0, 0, 0, 14, 9));
-    upper.add(chamferBox(1.85 * C.leg, 2.8, 2.05, legArmour, 0, -1.72, 0, 0.2));
+    upper.add(facetedHull([
+      [-3.12, 0.76 * C.leg, 0.82, -0.8],
+      [-1.72, 0.98 * C.leg, 1.05, -1.0],
+      [-0.3, 0.82 * C.leg, 0.88, -0.84],
+    ], legArmour));
     upper.add(chamferBox(1.7 * C.leg, 0.9, 1.9, P.joint, 0, -3.42, 0.05, 0.12));
     upper.add(chamferBox(1.75 * C.leg, 1.45, 0.75, kneeMat, 0, -3.45, 1.18, 0.14));
-    addLower(chamferBox(2.05 * C.leg, 3.25, 2.25, legArmour, 0, -5.4, 0.05, 0.22));
+    addLower(facetedHull([
+      [-7.0, 0.88 * C.leg, 1.08, -1.1],
+      [-5.55, 1.1 * C.leg, 1.2, -1.16],
+      [-3.82, 0.84 * C.leg, 0.92, -0.88],
+    ], legArmour));
     addLower(chamferBox(1.7 * C.leg, 1.8, 0.75, legArmour, 0, -5.25, -1.38, 0.14));
     addLower(cyl(0.55, 0.55, 0.75, P.joint, 0, -C.hipY + 1.35, 0, 12));
     // ExtrudeGeometry's bevel extends beyond the nominal rectangle.  The
@@ -156,10 +172,22 @@ function makeBiped(P, style, options = {}){
     arm.position.set(sx * C.shoulderX, C.shoulderY, 0);
     const armour = new THREE.Group();
     armour.add(sph(0.72 * C.arm, P.joint, 0, -0.05, 0, 14, 9));
-    armour.add(chamferBox(2.45 * C.arm, 1.85, 2.5, shoulderMat, 0, 0.05, 0, 0.18));
-    armour.add(chamferBox(1.5 * C.arm, 2.55, 1.65, armArmour, 0, -1.75, 0, 0.16));
+    armour.add(facetedHull([
+      [-0.88, 1.0 * C.arm, 1.08, -1.02],
+      [0.02, 1.32 * C.arm, 1.32, -1.24],
+      [0.98, 0.88 * C.arm, 0.94, -0.9],
+    ], shoulderMat));
+    armour.add(facetedHull([
+      [-3.0, 0.62 * C.arm, 0.7, -0.68],
+      [-1.75, 0.8 * C.arm, 0.86, -0.82],
+      [-0.48, 0.68 * C.arm, 0.74, -0.72],
+    ], armArmour));
     armour.add(cyl(0.65, 0.65, 0.62, P.joint, 0, -3.25, 0, 12));
-    armour.add(chamferBox(1.85 * C.arm, 2.75, 2.0, armArmour, 0, -4.75, 0.18, 0.18));
+    armour.add(facetedHull([
+      [-6.1, 0.7 * C.arm, 0.98, -0.76],
+      [-4.8, 0.98 * C.arm, 1.18, -0.96],
+      [-3.42, 0.76 * C.arm, 0.94, -0.82],
+    ], armArmour));
     armour.add(chamferBox(1.25, 0.9, 1.45, P.frame, 0, -6.18, 0.35, 0.12));
 
     if (style === 'ground'){
@@ -220,8 +248,13 @@ function addGundamHead(rig, P, options = {}){
   const head = new THREE.Group();
   head.position.set(0, options.y || rig.C.shoulderY + 2.25, 0);
   const geom = new THREE.Group();
-  geom.add(chamferBox(2.2, 1.55, 2.0, P.main, 0, 0.15, 0, 0.2));
-  geom.add(chamferBox(1.8, 0.85, 1.95, options.crownMat || P.main, 0, 0.92, -0.08, 0.14));
+  geom.add(facetedHull([
+    [-0.72, 0.72, 0.82, -0.68],
+    [-0.12, 1.1, 1.02, -0.94],
+    [0.72, 1.02, 0.9, -0.96],
+    [1.3, 0.48, 0.48, -0.58],
+  ], P.main));
+  geom.add(facetedHull([[0.62, 0.82, 0.74, -0.86], [1.28, 0.42, 0.43, -0.54]], options.crownMat || P.main));
   geom.add(box(1.62, 0.42, 0.34, P.dark, 0, 0.16, 1.07));
   geom.add(chamferBox(0.36, 0.3, 0.2, P.eye, -0.43, 0.18, 1.29, 0.04));
   geom.add(chamferBox(0.36, 0.3, 0.2, P.eye, 0.43, 0.18, 1.29, 0.04));
@@ -272,37 +305,6 @@ function frontPlate(points, depth, material, x = 0, y = 0, z = 0){
   const geo = new THREE.ExtrudeGeometry(shape, { depth, steps: 1, bevelEnabled: false });
   geo.translate(0, 0, -depth / 2);
   const mesh = new THREE.Mesh(geo, material); mesh.position.set(x, y, z); return mesh;
-}
-
-// A hand-authored multi-section hull.  Every section is [y, half-width,
-// front-z, back-z]; adjacent rings are triangulated into explicit faces.  This
-// keeps late-UC armor readable as sloped mechanical plates instead of cuboids.
-function facetedHull(sections, material, x = 0, y = 0, z = 0){
-  const positions = [], uvs = [], indices = [];
-  // compactGroup merges these hulls with ordinary Box/ExtrudeGeometry armor.
-  // Those geometries carry UVs, so the authored hull must expose the same
-  // attribute set or BufferGeometryUtils rejects the whole material bucket.
-  for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++){
-    const [sy, hw, front, back] = sections[sectionIndex];
-    positions.push(-hw, sy, front, hw, sy, front, hw, sy, back, -hw, sy, back);
-    const v = sections.length === 1 ? 0 : sectionIndex / (sections.length - 1);
-    uvs.push(0, v, 1, v, 1, v, 0, v);
-  }
-  for (let ring = 0; ring < sections.length - 1; ring++){
-    const a = ring * 4, b = (ring + 1) * 4;
-    for (let side = 0; side < 4; side++){
-      const n = (side + 1) % 4;
-      indices.push(a + side, a + n, b + n, a + side, b + n, b + side);
-    }
-  }
-  indices.push(0, 3, 2, 0, 2, 1);
-  const top = (sections.length - 1) * 4;
-  indices.push(top, top + 1, top + 2, top, top + 2, top + 3);
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
-  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-  geometry.setIndex(indices); geometry.computeVertexNormals(); geometry.computeBoundingSphere();
-  const mesh = new THREE.Mesh(geometry, material); mesh.position.set(x, y, z); return mesh;
 }
 
 function gmVisorMaterial(P, color = 0x58cbb0, emissive = 0x35d6ad){
@@ -406,8 +408,10 @@ function addLateGMHead(rig, P, variant){
 function addGroundGMHead(rig, P){
   const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.12, 0);
   const geom = new THREE.Group(), visor = gmVisorMaterial(P, 0x5ec7a3, 0x30d395);
-  geom.add(chamferBox(2.15, 1.58, 1.82, P.main, 0, 0.0, -0.08, 0.2));
-  geom.add(chamferBox(1.72, 0.72, 1.6, P.main, 0, 0.83, -0.17, 0.13));
+  geom.add(facetedHull([
+    [-0.8, 0.72, 0.72, -0.72], [-0.18, 1.08, 0.94, -0.94],
+    [0.62, 1.0, 0.78, -0.92], [1.18, 0.44, 0.42, -0.56],
+  ], P.main));
   geom.add(frontPlate([[-0.9, 0.3], [-0.67, 0.58], [0.67, 0.58], [0.9, 0.3], [0.74, -0.25], [0.38, -0.38], [-0.38, -0.38], [-0.74, -0.25]], 0.23, P.dark, 0, 0.08, 0.96));
   geom.add(frontPlate([[-0.75, 0.2], [-0.57, 0.36], [0.57, 0.36], [0.75, 0.2], [0.63, -0.1], [0.31, -0.18], [-0.31, -0.18], [-0.63, -0.1]], 0.13, visor, 0, 0.1, 1.13));
   geom.add(chamferBox(0.5, 0.82, 0.58, P.main, 0, -0.4, 1.09, 0.09));
@@ -428,8 +432,11 @@ function addGroundGMHead(rig, P){
 function addSniperIIHead(rig, P){
   const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.15, 0);
   const geom = new THREE.Group(), visor = gmVisorMaterial(P, 0x55d3a8, 0x32db9c);
-  geom.add(chamferBox(1.92, 1.46, 1.7, P.main, 0, -0.02, -0.12, 0.18));
-  geom.add(chamferBox(2.24, 0.93, 1.55, P.chest, 0, 0.5, 0.38, 0.16));
+  geom.add(facetedHull([
+    [-0.76, 0.68, 0.7, -0.7], [-0.2, 0.98, 0.88, -0.9],
+    [0.58, 1.12, 1.12, -0.84], [1.12, 0.62, 0.62, -0.58],
+  ], P.main));
+  geom.add(facetedHull([[0.02, 1.08, 1.2, 0.12], [0.92, 0.92, 1.12, 0.02]], P.chest));
   geom.add(chamferBox(1.82, 0.38, 1.35, P.chest, 0, 1.08, 0.12, 0.09));
   geom.add(frontPlate([[-0.88, 0.36], [0.88, 0.36], [0.82, -0.36], [-0.82, -0.36]], 0.12, P.dark, 0, 0.5, 1.2));
   geom.add(chamferBox(0.42, 0.5, 0.14, P.frame, -0.64, 0.5, 1.28, 0.05));
@@ -453,7 +460,10 @@ function addSniperIIHead(rig, P){
 function addSpartanHead(rig, P){
   const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.08, 0);
   const geom = new THREE.Group(), visor = gmVisorMaterial(P, 0x36b8ca, 0x22cbe4);
-  geom.add(chamferBox(2.1, 1.42, 1.82, P.chest, 0, -0.04, -0.12, 0.18));
+  geom.add(facetedHull([
+    [-0.78, 0.7, 0.74, -0.72], [-0.22, 1.05, 0.94, -0.94],
+    [0.62, 0.98, 0.82, -0.9], [1.08, 0.54, 0.48, -0.58],
+  ], P.chest));
   geom.add(frontPlate([[-1.0, 0.06], [-0.65, 0.88], [0.64, 0.88], [1.0, 0.18], [0.82, -0.2], [-0.82, -0.2]], 1.58, P.main, 0, 0.28, -0.08));
   geom.add(frontPlate([[-0.8, 0.19], [0.8, 0.19], [0.68, -0.2], [-0.68, -0.2]], 0.2, P.dark, 0, -0.11, 0.96));
   geom.add(chamferBox(1.18, 0.18, 0.12, visor, 0, -0.12, 1.12, 0.035));
@@ -477,7 +487,10 @@ function addSpartanHead(rig, P){
 function addGuncannonHead(rig, P){
   const head = new THREE.Group(); head.position.set(0, rig.C.shoulderY + 2.05, 0);
   const geom = new THREE.Group();
-  geom.add(chamferBox(2.2, 1.65, 2.0, P.accent, 0, 0, 0, 0.22));
+  geom.add(facetedHull([
+    [-0.84, 0.72, 0.82, -0.72], [-0.24, 1.1, 1.04, -0.96],
+    [0.62, 1.06, 0.94, -0.94], [0.92, 0.78, 0.7, -0.78],
+  ], P.accent));
   geom.add(chamferBox(1.85, 0.68, 0.35, P.eye, 0, 0.18, 1.12, 0.08));
   geom.add(chamferBox(2.1, 0.3, 0.4, P.dark, 0, 0.65, 1.05, 0.06));
   geom.add(chamferBox(1.2, 0.5, 0.68, P.accent, 0, -0.62, 0.83, 0.1));

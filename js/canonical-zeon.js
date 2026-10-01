@@ -7,7 +7,7 @@
 //   * only static detail subgroups are compacted
 import {
   THREE, box, cyl, cone, sph, chamferBox, profile, ribbedCable,
-  materialSet, boltRing, addThruster, instancedTrack, compactGroup,
+  materialSet, boltRing, addThruster, instancedTrack, compactGroup, facetedHull,
 } from './model-kit.js';
 
 const PI = Math.PI;
@@ -112,7 +112,11 @@ function zeonArm(M, sx, options = {}){
   stat.add(sph(0.88, M.joint, 0, 0.05, 0, 14, 9));
   stat.add(cyl(0.83, 0.98, 2.65, armor, 0, -1.65, 0, 12));
   stat.add(sideCyl(0.62, 0.62, 1.75, M.joint, 0, -3.25, 0, 12));
-  stat.add(chamferBox(1.82, 2.55, 1.9, armor, 0, -4.72, 0, 0.16));
+  stat.add(facetedHull([
+    [-6.0, 0.7, 0.88, -0.72],
+    [-4.72, 0.96, 1.06, -0.92],
+    [-3.42, 0.76, 0.86, -0.78],
+  ], armor));
   stat.add(chamferBox(1.18, 1.05, 1.35, M.joint, 0, -6.15, 0.05, 0.12));
   stat.add(chamferBox(1.25, 0.72, 1.42, M.dark, 0, -6.55, 0.2, 0.1));
   for (let i = -1; i <= 1; i++) stat.add(box(0.25, 0.17, 0.72, M.frame, i * 0.33, -6.72, 0.52));
@@ -271,7 +275,12 @@ function buildZaku(suit, rawM){
   stat.add(chamferBox(2.65, 1.65, 0.46, M.main, 0, 10.2, 1.72, 0.1));
   stat.add(chamferBox(2.55, 1.35, 0.38, M.main, 0, 10.25, -1.55, 0.08));
 
-  stat.add(chamferBox(5.25, 3.45, 3.1, M.chest, 0, 13.05, 0, 0.3));
+  stat.add(facetedHull([
+    [11.3, 1.95, 1.3, -1.22],
+    [12.15, 2.62, 1.62, -1.5],
+    [14.15, 2.72, 1.52, -1.48],
+    [14.82, 1.62, 0.98, -1.08],
+  ], M.chest));
   for (const sx of [-1, 1]) stat.add(chamferBox(1.35, 2.9, 2.7, M.main, sx * 2.35, 13.15, 0.12, 0.22));
   const chest = chamferBox(3.95, 1.55, 0.72, M.main, 0, 13.65, 1.66, 0.16); chest.rotation.x = -0.14; stat.add(chest);
   stat.add(chamferBox(1.48, 1.3, 0.34, M.accent, 0, 12.25, 1.72, 0.1));
@@ -326,7 +335,12 @@ function buildGouf(suit, rawM, custom){
   }
 
   stat.add(cyl(2.65, 3.15, 2.0, M.chest, 0, 10.25, 0, 15));
-  stat.add(chamferBox(5.65, 3.5, 3.25, M.chest, 0, 13.0, 0, custom ? 0.18 : 0.28));
+  stat.add(facetedHull([
+    [11.25, 2.08, 1.35, -1.3],
+    [12.15, 2.82, 1.68, -1.58],
+    [14.05, 2.92, 1.58, -1.54],
+    [14.82, 1.72, 1.02, -1.12],
+  ], M.chest));
   for (const sx of [-1, 1]) stat.add(chamferBox(1.45, 3.0, 2.75, M.main, sx * 2.52, 13.1, 0.05, 0.2));
   const chest = chamferBox(4.35, 1.55, 0.75, custom ? M.chest : M.dark, 0, 13.65, 1.7, 0.14); chest.rotation.x = -0.15; stat.add(chest);
   for (const sx of [-1, 1]){

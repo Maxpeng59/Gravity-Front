@@ -57,6 +57,43 @@ export function profile(points, holes, depth, material, x = 0, y = 0, z = 0){
   const mesh = new THREE.Mesh(geo, material); mesh.position.set(x, y, z); return mesh;
 }
 
+// Low-cost mechanical hull built from rectangular cross-sections.  Each
+// section is [y, half-width, front-z, back-z].  It gives armour deliberate
+// sloped faces without spending polygons on invisible bevel subdivisions.
+export function facetedHull(sections, material, x = 0, y = 0, z = 0){
+  const positions = [], uvs = [], indices = [];
+  for (let sectionIndex = 0; sectionIndex < sections.length; sectionIndex++){
+    const [sy, halfWidth, front, back] = sections[sectionIndex];
+    positions.push(
+      -halfWidth, sy, front,
+      halfWidth, sy, front,
+      halfWidth, sy, back,
+      -halfWidth, sy, back,
+    );
+    const v = sections.length === 1 ? 0 : sectionIndex / (sections.length - 1);
+    uvs.push(0, v, 1, v, 1, v, 0, v);
+  }
+  for (let ring = 0; ring < sections.length - 1; ring++){
+    const a = ring * 4, b = (ring + 1) * 4;
+    for (let side = 0; side < 4; side++){
+      const next = (side + 1) % 4;
+      indices.push(a + side, a + next, b + next, a + side, b + next, b + side);
+    }
+  }
+  indices.push(0, 3, 2, 0, 2, 1);
+  const top = (sections.length - 1) * 4;
+  indices.push(top, top + 1, top + 2, top, top + 2, top + 3);
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  geometry.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.set(x, y, z);
+  return mesh;
+}
+
 export function tube(points, radius, material, tubularSegments = 32, radialSegments = 8, closed = false){
   const curve = new THREE.CatmullRomCurve3(points.map(p => p.isVector3 ? p : new THREE.Vector3(...p)));
   return new THREE.Mesh(new THREE.TubeGeometry(curve, tubularSegments, radius, radialSegments, closed), material);
