@@ -24,11 +24,11 @@ test('late Federation suits retain their intended stock combat roles', () => {
   assert.equal(gmii.weapons[0].dmg, 420);
   assert.ok(gmiii.weapons.some(weapon => weapon.head && /VULCAN/.test(weapon.name)));
   assert.ok(gmiii.weapons.some(weapon => weapon.integrated && /MEDIUM MISSILE/.test(weapon.name)
-    && weapon.clip === 24 && weapon.barrage && weapon.speed >= 1000));
+    && weapon.clip === 24 && weapon.barrage && weapon.freeAim && weapon.speed >= 1000));
   assert.ok(gmiii.weapons.some(weapon => weapon.integrated && /WAIST MISSILE/.test(weapon.name)
-    && weapon.clip === 4 && weapon.barrage && weapon.speed >= 900));
+    && weapon.clip === 4 && weapon.barrage && weapon.freeAim && weapon.speed >= 900));
   assert.ok(jegan.weapons.some(weapon => weapon.integrated && /SHIELD MISSILE/.test(weapon.name)
-    && weapon.type === 'lockmissile' && weapon.barrage && weapon.speed >= 900));
+    && weapon.type === 'lockmissile' && weapon.barrage && weapon.freeAim && weapon.speed >= 900));
   assert.ok(jegan.weapons[0].rof > gmii.weapons[0].rof && jegan.weapons[0].dmg < gmii.weapons[0].dmg);
   assert.ok(IDS.every(id => weaponLoadoutOptions(suitById(id)).primary.length >= 3));
 });
@@ -45,12 +45,15 @@ test('each late Federation suit is routed to a dedicated canonical model builder
   assert.match(source, /missileIndex.*SHIELD MISSILE/);
 });
 
-test('late Federation missile racks fire as a committed full-rack barrage', () => {
+test('late Federation missile racks fire immediately as a free-aim full-rack barrage', () => {
   const source = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
   assert.match(source, /function startMissileBarrage/);
   assert.match(source, /m\.clip = 0; \/\/ the trigger commits the whole rack immediately/);
   assert.match(source, /updateMissileBarrage\(m, dt\)/);
-  assert.match(source, /activeWeapon\?\.type === 'lockmissile'[\s\S]*updateLockOn\(m, dt\)/);
+  assert.match(source, /m\.isPlayer && w\.freeAim/);
+  assert.match(source, /startMissileBarrage\(m, null, manualAim\)/);
+  assert.match(source, /homing: w\.freeAim \? null/);
+  assert.match(source, /activeWeapon\?\.type === 'lockmissile' && !activeWeapon\.freeAim/);
 });
 
 test('the camera control cycles cockpit, tactical and pursuit views', () => {

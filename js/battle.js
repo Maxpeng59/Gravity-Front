@@ -2936,11 +2936,21 @@ export function startBattle(renderer, opts, onEnd){
   function fire(m, dir, aimPoint){
     const w = m.suit.weapons[m.wi];
     if (w.type === 'lockmissile'){
-      // homing missile. The player fires these through the lock-on sequence (playerFlightUpdate);
-      // here we handle AI pilots. Barrage racks commit every remaining round in
-      // a rapid ripple instead of waiting for a fresh lock between missiles.
+      // Free-aim racks fire immediately along the crosshair without acquiring
+      // or tracking a target. Other missile weapons retain their lock sequence.
       if (m.fireT > 0 || m.reloadT > 0) return;
       if (m.clip <= 0){ m.reloadT = w.reload; return; }
+      if (m.isPlayer && w.freeAim){
+        const manualAim = aimPoint || playerAimPoint(w);
+        if (w.barrage) startMissileBarrage(m, null, manualAim);
+        else {
+          launchMissile(m, null, { aimPoint: manualAim });
+          m.clip--; m.fireT = 1 / w.rof;
+          if (m.clip <= 0) m.reloadT = w.reload;
+          m.shotsFired = (m.shotsFired || 0) + 1;
+        }
+        return;
+      }
       const tgt = (!m.isPlayer && m.ai && m.ai.target && m.ai.target.alive) ? m.ai.target : null;
       if (!tgt) return;
       if (w.barrage){
@@ -3038,10 +3048,13 @@ export function startBattle(renderer, opts, onEnd){
     sfx(w.type, vol);
   }
 
-  // a guided missile that homes onto a specific mech (Saberfish 5000 lock-on weapon)
-  function launchMissile(m, target, { weaponIndex = m.wi, cone = 0, barrageIndex = 0 } = {}){
+  // Launch either a guided weapon at a target or an unguided missile toward an
+  // explicit crosshair point. Free-aim missiles never gain homing after launch.
+  function launchMissile(m, target, { weaponIndex = m.wi, cone = 0, barrageIndex = 0, aimPoint = null } = {}){
     const w = m.suit.weapons[weaponIndex];
-    const targetPoint = target
+    const targetPoint = aimPoint
+      ? aimPoint.clone()
+      : target
       ? target.root.position.clone().setY(target.root.position.y + aimHeight(target))
       : null;
     syncMuzzlePose(m, targetPoint ? null : tmpV2.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)), targetPoint);
@@ -3063,7 +3076,7 @@ export function startBattle(renderer, opts, onEnd){
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, aim); // cone apex forward
     scene.add(mesh);
-    const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: target || null, turn: w.turn || 2.4 };
+    const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: w.freeAim ? null : target || null, turn: w.turn || 2.4 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'missile');
     // A barrage has one launcher impulse, not twenty-four full camera kicks.
@@ -3072,15 +3085,15 @@ export function startBattle(renderer, opts, onEnd){
       sfx('bazooka', m.isPlayer ? 0.26 : clamp(280 / muzzle.distanceTo(player.root.position), 0.02, 0.14));
   }
 
-  function startMissileBarrage(m, target){
+  function startMissileBarrage(m, target, aimPoint = null){
     const weaponIndex = m.wi, w = m.suit.weapons[weaponIndex];
-    if (!w?.barrage || !target?.alive || m.missileBarrage || m.clip <= 0 || m.reloadT > 0) return false;
+    if (!w?.barrage || (!target?.alive && !aimPoint) || m.missileBarrage || m.clip <= 0 || m.reloadT > 0) return false;
     const count = m.clip;
     m.clip = 0; // the trigger commits the whole rack immediately
     m.fireT = Math.max(1 / Math.max(0.01, w.rof || 1), count * (w.barrageCadence || 0.06));
     m.reloadT = w.reload + count * (w.barrageCadence || 0.06);
     m.missileBarrage = {
-      weaponIndex, target, remaining: count, total: count, t: 0,
+      weaponIndex, target, aimPoint: aimPoint?.clone() || null, remaining: count, total: count, t: 0,
       cadence: w.barrageCadence || 0.06, cone: w.barrageCone || 0.014,
     };
     m.shotsFired = (m.shotsFired || 0) + count;
@@ -3101,6 +3114,7 @@ export function startBattle(renderer, opts, onEnd){
         weaponIndex: salvo.weaponIndex,
         cone: salvo.cone,
         barrageIndex,
+        aimPoint: salvo.aimPoint,
       });
       salvo.remaining--;
       salvo.t += salvo.cadence;
@@ -3365,7 +3379,7 @@ export function startBattle(renderer, opts, onEnd){
     projectiles.push({
       pos: position, vel: velocity, dmg: 0, splash: w.splash || (kind === 'missile' ? 14 : kind === 'bomb' ? 16 : 0),
       team: m.team, owner: m, weaponName: w.name, life, mesh,
-      homing: kind === 'missile' ? player : null, turn: w.turn || 2.4,
+      homing: kind === 'missile' && !w.freeAim ? player : null, turn: w.turn || 2.4,
       bomb: kind === 'bomb', arc: kind === 'artillery', networkGhost: true,
       ballistic: kind === 'direct' ? ballisticProfile(w) : null, muzzleSpeed: w.speed, traveled: 0,
     });
@@ -4982,7 +4996,7 @@ export function startBattle(renderer, opts, onEnd){
     m.fireT -= dt;
     if (m.reloadT > 0){ m.reloadT -= dt; if (m.reloadT <= 0) m.clip = m.suit.weapons[m.wi].clip; }
     const aw = m.suit.weapons[m.wi];
-    if (aw && aw.type === 'lockmissile'){
+    if (aw && aw.type === 'lockmissile' && !aw.freeAim){
       updateLockOn(m, dt); // movie-style lock sequence → auto-launches a homing missile at full lock
     } else if (mouseDown && m.reloadT <= 0 && aw){
       fire(m, null, playerAimPoint(aw));
@@ -4997,7 +5011,7 @@ export function startBattle(renderer, opts, onEnd){
       if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
     }
     const activeWeapon = m.wi === SABER_SLOT ? null : m.suit.weapons[m.wi];
-    if (activeWeapon?.type === 'lockmissile'){
+    if (activeWeapon?.type === 'lockmissile' && !activeWeapon.freeAim){
       updateLockOn(m, dt);
       return;
     }
@@ -5641,7 +5655,7 @@ export function startBattle(renderer, opts, onEnd){
   }
   function drawReticle(){
     const w = player.suit.weapons[player.wi];
-    if (!w || w.type !== 'lockmissile') return;
+    if (!w || w.type !== 'lockmissile' || w.freeAim) return;
     const tgt = player.lockTarget;
     if (!tgt || !tgt.alive) return;
     const wp = tmpV.copy(tgt.root.position); wp.y += aimHeight(tgt);
@@ -6853,7 +6867,7 @@ export function startBattle(renderer, opts, onEnd){
       wHtml = `${w.name} <span class="ammo">BARRAGE · ${salvo.total - salvo.remaining}/${salvo.total} AWAY</span>`;
     } else if (player.reloadT > 0){
       wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s</span>`;
-    } else if (w.type === 'lockmissile'){
+    } else if (w.type === 'lockmissile' && !w.freeAim){
       const st = (player.lockedFlash || 0) > 0 ? 'LOCK ✓ — FOX'
         : player.lockTarget ? `LOCKING ${Math.round(clamp((player.lockT || 0) / w.lockTime, 0, 1) * 100)}%`
         : `${player.clip} / ${w.clip} · AUTO-LOCK`;

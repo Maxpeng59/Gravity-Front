@@ -312,6 +312,9 @@ function runBattle(opts, after){
     const colonySurface = () => battleHandle?._debugColonySurface?.(1200);
     const colonyTurn = () => battleHandle?._debugInput({ yaw: Math.PI / 2, bodyYaw: Math.PI / 2 });
     const colonyRoll = () => battleHandle?._debugInput({ keys: ['e'] });
+    const missileRack = () => battleHandle?._debugInput({ weapon: 2, ready: true });
+    const fireOn = () => battleHandle?._debugInput({ fire: true });
+    const fireOff = () => battleHandle?._debugInput({ fire: false });
     const publishState = () => {
       document.documentElement.dataset.gravityBattleState = JSON.stringify(battleHandle?._debugState?.() || null);
     };
@@ -320,14 +323,20 @@ function runBattle(opts, after){
     const qaColonySurface = document.createElement('button');
     const qaColonyTurn = document.createElement('button');
     const qaColonyRoll = document.createElement('button');
+    const qaMissileRack = document.createElement('button');
+    const qaFireOn = document.createElement('button');
+    const qaFireOff = document.createElement('button');
     const qaState = document.createElement('button');
     qaUnpause.id = 'gravity-debug-unpause';
     qaColonyFlight.id = 'gravity-debug-colony-flight';
     qaColonySurface.id = 'gravity-debug-colony-surface';
     qaColonyTurn.id = 'gravity-debug-colony-turn';
     qaColonyRoll.id = 'gravity-debug-colony-roll';
+    qaMissileRack.id = 'gravity-debug-missile-rack';
+    qaFireOn.id = 'gravity-debug-fire-on';
+    qaFireOff.id = 'gravity-debug-fire-off';
     qaState.id = 'gravity-debug-state';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaState]) {
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState]) {
       button.type = 'button';
       button.tabIndex = -1;
       button.setAttribute('aria-hidden', 'true');
@@ -339,6 +348,9 @@ function runBattle(opts, after){
     qaColonySurface.onclick = colonySurface;
     qaColonyTurn.onclick = colonyTurn;
     qaColonyRoll.onclick = colonyRoll;
+    qaMissileRack.onclick = missileRack;
+    qaFireOn.onclick = fireOn;
+    qaFireOff.onclick = fireOff;
     qaState.onclick = publishState;
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
@@ -350,6 +362,9 @@ function runBattle(opts, after){
       qaColonySurface.remove();
       qaColonyTurn.remove();
       qaColonyRoll.remove();
+      qaMissileRack.remove();
+      qaFireOn.remove();
+      qaFireOff.remove();
       qaState.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete globalThis.__gravityBattle;
