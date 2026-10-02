@@ -14,6 +14,7 @@ import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js';
 import { spaceShipProfile } from './space-ship-balance.js';
+import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
 import {
   HEAT_COOL_RATE, armorThickness, ballisticProfile, environmentPhysics, impactMultiplier,
@@ -1312,6 +1313,8 @@ export function startBattle(renderer, opts, onEnd){
       fixedMuzzles: canonicalLandship?.fixedMuzzles || [],
       secondaryMuzzles: canonicalLandship?.secondaryMuzzles || [],
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
+      carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
+      carrierLaunchCycles: 0, carrierLaunches: [],
       goal: null, arrived: false, escaped: false };
     // landships are long hulls — swap the single fat ball for a chain of spheres along the keel
     // (local: x=beam, z=prow) so both the damage hitbox and the physical block match the silhouette.
@@ -6636,6 +6639,47 @@ export function startBattle(renderer, opts, onEnd){
     p.root.position.addScaledVector(p.vel, dt);
   }
 
+  function launchColumbusReinforcement(carrier, suitId, slotIndex){
+    // The two side-bay exits sit clear of the Columbus collision hull. Multiple
+    // successes in one cycle alternate sides and rows instead of overlapping.
+    const side = slotIndex % 2 === 0 ? -1 : 1;
+    const row = Math.floor(slotIndex / 2);
+    const localExit = new THREE.Vector3(side * 22, 15 + row * 5, -8 - row * 8)
+      .applyQuaternion(carrier.root.quaternion);
+    const exit = carrier.root.position.clone().add(localExit);
+    const outward = new THREE.Vector3(side, 0, 0).applyQuaternion(carrier.root.quaternion).normalize();
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(carrier.root.quaternion).normalize();
+    const unit = spawnMech({ suitId }, carrier.team, exit, { core: false });
+    // Aircraft normally receive a cruise-altitude offset in spawnMech; a carrier
+    // launch starts at the actual bay and is carried clear by its launch vector.
+    unit.root.position.copy(exit);
+    unit.vel.copy(carrier.vel).addScaledVector(outward, 42).addScaledVector(forward, 18);
+    unit.yaw = Math.atan2(unit.vel.x, unit.vel.z);
+    unit.root.rotation.y = unit.yaw;
+    carrier.carrierLaunches.push({
+      suitId,
+      cycle: carrier.carrierLaunchCycles,
+      t: +battleClock.toFixed(2),
+    });
+    if (carrier.carrierLaunches.length > 24) carrier.carrierLaunches.shift();
+    return unit;
+  }
+
+  function runColumbusLaunchCycle(carrier, launches = rollColumbusLaunches(() => rng.next())){
+    carrier.carrierLaunchCycles++;
+    launches.forEach((suitId, slotIndex) => launchColumbusReinforcement(carrier, suitId, slotIndex));
+    return launches;
+  }
+
+  function updateColumbusCarrier(carrier, dt){
+    if (!SPACE || carrier.kind !== 'columbus' || !carrier.alive) return;
+    carrier.carrierLaunchT -= dt;
+    while (carrier.carrierLaunchT <= 0){
+      carrier.carrierLaunchT += COLUMBUS_LAUNCH_INTERVAL;
+      runColumbusLaunchCycle(carrier);
+    }
+  }
+
   function missionUpdate(dt){
     if (staged && outcome === null) updateStaged(dt);
     // delayed attack waves (defend)
@@ -6664,7 +6708,10 @@ export function startBattle(renderer, opts, onEnd){
     }
     // Campaign and custom fleets use the same class-specific cruise and standoff
     // behavior, so custom capital ships actively close and duel instead of hovering.
-    for (const p of props) if (p.alive && p.spaceProfile) updateSpaceShipMovement(p, dt);
+    for (const p of props) if (p.alive && p.spaceProfile){
+      updateSpaceShipMovement(p, dt);
+      updateColumbusCarrier(p, dt);
+    }
     // Landships maneuver as capital combatants in every ground battle, then fire
     // their main, fixed and defensive batteries independently.
     for (const p of props){
@@ -7724,6 +7771,12 @@ export function startBattle(renderer, opts, onEnd){
     // test hooks: run the sim without pointer lock, drive aim/fire, read state
     _debugUnpause(){ paused = false; started = true; setMsg('', 0); },
     _debugPause(value = true){ paused = !!value; },
+    _debugColumbusLaunchAll(){
+      const launched = [];
+      for (const carrier of props.filter(p => p.alive && p.kind === 'columbus'))
+        launched.push(...runColumbusLaunchCycle(carrier, ['gm', 'saberfish', 'saberfish5000', 'gmii']));
+      return launched;
+    },
     _debugColonySurface(x = 1200){
       if (!COLONY) return false;
       player.root.position.x = x;
@@ -8139,6 +8192,9 @@ export function startBattle(renderer, opts, onEnd){
           label: p.label || null, hitBoxes: p.hitBoxes?.length || 0, hitSpheres: p.hitSpheres?.length || 0,
           hp: p.hp, maxHp: p.maxHp, alive: p.alive, arrived: p.arrived, escaped: p.escaped,
           speed: p.speed || 0, velocity: p.vel?.toArray?.() || null,
+          carrierLaunchT: p.carrierLaunchT == null ? null : +p.carrierLaunchT.toFixed(2),
+          carrierLaunchCycles: p.carrierLaunchCycles || 0,
+          carrierLaunches: p.carrierLaunches?.slice(-8) || [],
           mainTurrets: p.turrets?.length || 0, fixedGuns: p.fixedMuzzles?.length || 0,
           secondaryStations: p.secondaryMuzzles?.length || 0 })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,

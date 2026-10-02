@@ -39,6 +39,6 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
   assert.match(menu, /custom\.env === 'space' \? 'salamis'/);
   assert.match(battle, /buildCanonicalSpaceShip\(kind, glow, thrust/);
   assert.match(battle, /function updateSpaceShipMovement/);
-  assert.match(battle, /if \(p\.alive && p\.spaceProfile\) updateSpaceShipMovement/);
+  assert.match(battle, /if \(p\.alive && p\.spaceProfile\)\{[\s\S]*?updateSpaceShipMovement\(p, dt\)/);
   assert.match(battle, /p\.spaceProfile \? 'SHIP MAIN BATTERY'/);
 });
