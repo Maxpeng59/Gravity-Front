@@ -12,6 +12,8 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js';
+import { spaceShipProfile } from './space-ship-balance.js';
 import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
 import {
   HEAT_COOL_RATE, armorThickness, ballisticProfile, environmentPhysics, impactMultiplier,
@@ -1029,10 +1031,13 @@ export function startBattle(renderer, opts, onEnd){
   const props = [];
   props.push(...pendingStaticProps);
   function spawnProp(kind, team, pos, hp, options = {}){
-    const isSpaceShip = kind === 'musai' || kind === 'chivvay' || kind === 'salamis' || kind === 'magellan' || kind === 'columbus' || kind === 'solfortress';
+    const spaceProfile = spaceShipProfile(kind);
+    const isSpaceShip = !!spaceProfile || kind === 'solfortress';
     const landProfile = landshipProfile(kind);
     const isLandShip = !!landProfile;
     const isShip = isSpaceShip || isLandShip;
+    // Ground capital profiles always own their HP. Space missions may author a
+    // scenario-scale hull value, while Custom Battle passes the class HP below.
     hp = landProfile?.hp || (options.missionTarget
       ? campaignObjectiveHitPoints(hp)
       : buildingHitPoints(kind, hp));
@@ -1060,9 +1065,14 @@ export function startBattle(renderer, opts, onEnd){
     };
     const canonicalLandship = isLandShip
       ? buildCanonicalLandship(kind, glow, () => rng.range(0, 3)) : null;
+    const canonicalSpaceShip = spaceProfile
+      ? buildCanonicalSpaceShip(kind, glow, thrust, () => rng.range(0, 3)) : null;
     if (canonicalLandship){
       root.add(canonicalLandship.root);
       shipTurrets.push(...canonicalLandship.turrets);
+    } else if (canonicalSpaceShip){
+      root.add(canonicalSpaceShip.root);
+      shipTurrets.push(...canonicalSpaceShip.turrets);
     } else if (kind === 'base'){
       add(new THREE.BoxGeometry(26, 14, 20), mat, 0, 7, 0);
       add(new THREE.CylinderGeometry(2, 2, 26, 8), mat, -9, 13, -6);
@@ -1290,13 +1300,15 @@ export function startBattle(renderer, opts, onEnd){
       gunT: rng.range(2, 4),
       // The Gallop is a fast transport with one rear artillery mount, not a super-heavy landship.
       // The Magellan is the Federation's gun-line flagship; the Columbus barely defends itself.
-      gunRange: landProfile?.mainRange || (kind === 'solfortress' ? 1600 : kind === 'magellan' ? 1600 : kind === 'columbus' ? 1000 : 1400),
-      gunDmg: landProfile?.mainDamage || (kind === 'magellan' ? 440 : kind === 'columbus' ? 220 : 360),
-      gunSplash: landProfile?.mainSplash || 12,
-      gunRof: landProfile?.mainRof || (kind === 'solfortress' ? [1.4, 2.6] : kind === 'columbus' ? [4.2, 6.0] : [2.6, 4.2]),
-      gunShots: kind === 'solfortress' ? 4 : kind === 'magellan' ? 2 : 1,
-      speed: landProfile?.speed || 0, turnRate: landProfile?.turnRate || 0.12,
-      standoff: landProfile?.standoff || 0, landProfile,
+      gunRange: landProfile?.mainRange || spaceProfile?.mainRange || (kind === 'solfortress' ? 1600 : 1400),
+      gunDmg: landProfile?.mainDamage || spaceProfile?.mainDamage || 360,
+      gunSplash: landProfile?.mainSplash || spaceProfile?.mainSplash || 12,
+      gunRof: landProfile?.mainRof || spaceProfile?.mainRof || (kind === 'solfortress' ? [1.4, 2.6] : [2.6, 4.2]),
+      gunShots: kind === 'solfortress' ? 4 : spaceProfile?.gunShots || 1,
+      speed: landProfile?.speed || spaceProfile?.speed || 0,
+      turnRate: landProfile?.turnRate || spaceProfile?.turnRate || 0.12,
+      standoff: landProfile?.standoff || spaceProfile?.standoff || 0,
+      landProfile, spaceProfile,
       fixedMuzzles: canonicalLandship?.fixedMuzzles || [],
       secondaryMuzzles: canonicalLandship?.secondaryMuzzles || [],
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
@@ -2259,11 +2271,12 @@ export function startBattle(renderer, opts, onEnd){
     return out;
   }
 
-  // custom sortie: landships fielded from the loadout screen fight as full combatants
+  // custom sortie: surface landships and space fleet hulls fielded from the loadout
+  // screen fight as full combatants (and keep the class HP from their balance profile).
   // (enemy → ZEON ahead of the line, ally → FED at the player's back)
   if (mission.customShips){
     for (const cs of mission.customShips){
-      const hp = cs.kind === 'gallop' ? 22000 : 20000;
+      const hp = landshipProfile(cs.kind)?.hp || spaceShipProfile(cs.kind)?.hp || 20000;
       const pos = cs.pos ? new THREE.Vector3(cs.pos.x, SPACE ? rng.range(-120, 120) : 0, cs.pos.z) // per-entry deployment marker
         : cs.team === 'ZEON'
         ? ringPos(rng.range(-30, 30), cs.dist ? enemyDistBand(cs.dist) : rng.range(720, 1000), 120)
@@ -6501,12 +6514,14 @@ export function startBattle(renderer, opts, onEnd){
           const baseDir = stv3.copy(aim).addScaledVector(best.vel, mw.distanceTo(aim) / shellSpeed).sub(mw).normalize(); // lead
           const dir = baseDir.clone();
           dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
-          // Landships and batteries share the articulated, machined HE shell
-          // silhouette already used by the Zaku Tank and Guntank guns.
-          const mesh = makeShell(shellScale, false);
+          // Surface batteries fire machined HE shells; warship batteries use the
+          // same luminous naval beams as the campaign fleet battle.
+          const mesh = p.spaceProfile
+            ? new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat)
+            : makeShell(shellScale, false);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
           projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p,
-            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
+            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? 'SHIP MAIN BATTERY' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
         }
         t.muzzleCursor = (muzzleStart + (t.shots || 1)) % muzzleNodes.length;
         const soundPos = t.muzzle.getWorldPosition(stv1);
@@ -6605,6 +6620,22 @@ export function startBattle(renderer, opts, onEnd){
     } else p.vel.set(0, 0, 0);
   }
 
+  function updateSpaceShipMovement(p, dt){
+    if (!SPACE || !p.spaceProfile || p.speed <= 0) return;
+    const target = nearestLandshipTarget(p, Infinity, true);
+    if (!target){ p.vel.multiplyScalar(1 - Math.min(1, 2 * dt)); return; }
+    const offset = stv1.subVectors(target.root.position, p.root.position);
+    const distance = offset.length();
+    if (distance <= p.standoff){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
+    const direction = offset.multiplyScalar(1 / Math.max(1, distance));
+    const targetYaw = Math.atan2(direction.x, direction.z);
+    const dyaw = wrapAngle(targetYaw - p.root.rotation.y);
+    p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
+    const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.35, 1);
+    p.vel.copy(direction).multiplyScalar(moveSpeed);
+    p.root.position.addScaledVector(p.vel, dt);
+  }
+
   function missionUpdate(dt){
     if (staged && outcome === null) updateStaged(dt);
     // delayed attack waves (defend)
@@ -6631,30 +6662,9 @@ export function startBattle(renderer, opts, onEnd){
         waveCd = 10;
       }
     }
-    // fleet battle: capital ships are not statues — each line steams toward the other until it holds
-    // a broadside standoff, so the Salamis wall actually closes and fights (the fortress never moves)
-    if (mission.type === 'fleet'){
-      for (const p of props){
-        if (!p.alive || !p.isShip || p.kind === 'solfortress') continue;
-        let best = null, bd = Infinity;
-        for (const q of props){
-          if (!q.alive || !q.isShip || q.team === p.team) continue;
-          const d2 = q.root.position.distanceToSquared(p.root.position);
-          if (d2 < bd){ bd = d2; best = q; }
-        }
-        if (!best) continue;
-        const standoff = p.kind === 'columbus' ? 950 : 620;    // carriers hang back behind the gun line
-        if (bd > standoff * standoff){                         // close to gun range, then hold the line
-          if (p.cruise == null) p.cruise = rng.range(9, 14);   // per-hull speed so the wall staggers naturally
-          tmpV.subVectors(best.root.position, p.root.position).normalize();
-          p.root.position.addScaledVector(tmpV, p.cruise * dt);
-          const want = Math.atan2(tmpV.x, tmpV.z);
-          let dy = want - p.root.rotation.y;
-          while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
-          p.root.rotation.y += clamp(dy, -0.12 * dt, 0.12 * dt); // ponderous prow-first turn
-        }
-      }
-    }
+    // Campaign and custom fleets use the same class-specific cruise and standoff
+    // behavior, so custom capital ships actively close and duel instead of hovering.
+    for (const p of props) if (p.alive && p.spaceProfile) updateSpaceShipMovement(p, dt);
     // Landships maneuver as capital combatants in every ground battle, then fire
     // their main, fixed and defensive batteries independently.
     for (const p of props){
@@ -6833,7 +6843,7 @@ export function startBattle(renderer, opts, onEnd){
         const zShips = missionProps.filter(p => p.isShip && p.team === 'ZEON');
         const zBatteries = missionProps.filter(p => p.battery && p.team === 'ZEON');
         return `${base} · ${total - left}/${total}`
-          + (zShips.length ? ` · LANDSHIPS ${zShips.filter(p => !p.alive).length}/${zShips.length}` : '')
+          + (zShips.length ? ` · ${SPACE ? 'SHIPS' : 'LANDSHIPS'} ${zShips.filter(p => !p.alive).length}/${zShips.length}` : '')
           + (zBatteries.length ? ` · BATTERIES ${zBatteries.filter(p => !p.alive).length}/${zBatteries.length}` : '');
       }
     }
@@ -6853,6 +6863,11 @@ export function startBattle(renderer, opts, onEnd){
       hud.dataset.debugCampaignTargets = JSON.stringify(missionProps
         .filter(p => p.missionTarget)
         .map(p => ({ kind: p.kind, hp: p.hp, maxHp: p.maxHp, indestructible: !!p.indestructible })));
+      hud.dataset.debugCustomShips = JSON.stringify(missionProps
+        .filter(p => p.isShip)
+        .map(p => ({ kind: p.kind, team: p.team, hp: p.hp,
+          x: +p.root.position.x.toFixed(2), y: +p.root.position.y.toFixed(2), z: +p.root.position.z.toFixed(2),
+          turrets: p.turrets?.length || 0 })));
     }
     const frac = clamp(player.hp / player.maxHp, 0, 1);
     hpBar.style.width = frac * 100 + '%';

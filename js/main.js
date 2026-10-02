@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=42b';
+import { startBattle } from './battle.js?v=47ships';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
@@ -20,6 +20,7 @@ import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
+import { spaceShipProfile } from './space-ship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import { customSquadTraits as customSquadTraitsForUnit } from './custom-roster.js';
 import {
@@ -928,7 +929,7 @@ function localQaTuning(){
 
 // Custom Battle operation types. The staged ones run the same objective rules as campaign contracts.
 const CUSTOM_OPERATIONS = [
-  { id: 'sortie', name: 'SORTIE', brief: 'Destroy every hostile unit, landship and battery on the field.' },
+  { id: 'sortie', name: 'SORTIE', brief: 'Destroy every hostile unit, capital ship and battery on the field.' },
   { id: 'recon', name: 'RECON', brief: 'Survey three sites (hold inside each ring), then return to the extraction point.' },
   { id: 'sabotage', name: 'DEMOLITION', groundOnly: true, brief: 'Hold still beside each target to set charges, then clear the blast zone before the fuse runs out.' },
   { id: 'extraction', name: 'PILOT RESCUE', groundOnly: true, brief: 'Reach the downed pilot and hold the landing zone for 60 s while Zeon closes in.' },
@@ -977,15 +978,31 @@ const defaultPos = (team, k) => team === 'enemy'                    // fan new e
 const ARMY_SIZES = [0, 50, 100, 200, 300];
 const ARMY_FED = ['gm', 'gmii', 'gmiii', 'jegan', 'gmbazooka', 'guncannon', 'rgm79sp'];
 const BIOME_LIST = ['verdant', 'desert', 'ice', 'regolith', 'crimson'];
-// capital landships you can field as enemies/allies in a custom sortie — these deploy as
-// destructible props (full combatants with gun batteries), not piloted units
+// Capital hulls you can field as enemies/allies in a custom sortie. Surface
+// landships and space warships are deliberately separated by environment.
 const SHIPS = [
-  { id: 'bigtray', name: 'Big Tray-class', code: 'hover land battleship', faction: 'FED' },
-  { id: 'gallop',  name: 'Gallop-class',   code: 'hover ground transport', faction: 'ZEON' },
-  { id: 'dabude',  name: 'DOBDAY-class',   code: 'tracked land cruiser', faction: 'ZEON' },
+  { id: 'bigtray', name: 'Big Tray-class', code: 'hover land battleship', faction: 'FED', env: 'ground' },
+  { id: 'gallop',  name: 'Gallop-class',   code: 'hover ground transport', faction: 'ZEON', env: 'ground' },
+  { id: 'dabude',  name: 'DOBDAY-class',   code: 'tracked land cruiser', faction: 'ZEON', env: 'ground' },
+  { id: 'salamis', name: 'Salamis-class', code: 'EFSF mass-production cruiser', faction: 'FED', env: 'space' },
+  { id: 'magellan', name: 'Magellan-class', code: 'EFSF fleet flagship', faction: 'FED', env: 'space' },
+  { id: 'columbus', name: 'Columbus-class', code: 'EFSF supply and MS carrier', faction: 'FED', env: 'space' },
+  { id: 'musai', name: 'Musai-class', code: 'Zeon mobile-suit cruiser', faction: 'ZEON', env: 'space' },
+  { id: 'chivvay', name: 'Chivvay-class', code: 'Zeon high-speed heavy cruiser', faction: 'ZEON', env: 'space' },
 ];
 const SHIP_IDS = new Set(SHIPS.map(s => s.id));
 const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...STATIONARY_BATTERY_IDS]);
+const shipById = id => SHIPS.find(ship => ship.id === id) || null;
+function normalizeCustomRosterForEnvironment(){
+  const allowed = entry => {
+    const ship = shipById(entry.id);
+    if (ship) return ship.env === custom.env;
+    if (STATIONARY_BATTERY_IDS.has(entry.id)) return custom.env === 'ground';
+    return true;
+  };
+  custom.enemies = custom.enemies.filter(allowed);
+  custom.allies = custom.allies.filter(allowed);
+}
 // One row for every selectable combat type. The roster panels scroll, so the
 // full catalogue remains usable without pushing the launch controls off-screen.
 const ROWS_MAX = SUITS.length + AIRCRAFT.length
@@ -1066,7 +1083,12 @@ function renderCustom(){
   const envBox = $('env-picker'); envBox.innerHTML = '';
   for (const e of ENVIRONMENTS){
     const b = el('button', 'small' + (custom.env === e.id ? ' sel' : ''), e.name);
-    b.onclick = () => { custom.env = e.id; renderCustom(); };
+    b.onclick = () => {
+      custom.env = e.id;
+      if (custom.env !== 'ground') custom.map = null;
+      normalizeCustomRosterForEnvironment();
+      renderCustom();
+    };
     envBox.appendChild(b);
   }
   // operation type: a plain sortie or one of the staged objective missions
@@ -1116,6 +1138,7 @@ function renderCustom(){
       b.onclick = () => {
         const changed = custom.map !== m.id;
         custom.map = m.id; custom.env = 'ground';
+        normalizeCustomRosterForEnvironment();
         if (changed) applyRecommendedMapForces(m);
         renderCustom();
       }; // maps are ground-only; authored scenarios can load their canonical force package
@@ -1154,11 +1177,11 @@ function renderCustom(){
       const canonicalShipFaction = team === 'enemy' ? 'ZEON' : 'FED';
       for (const s of [
         ...SUITS, ...AIRCRAFT,
-        ...SHIPS.filter(ship => ship.faction === canonicalShipFaction),
-        ...STATIONARY_BATTERIES.filter(battery => battery.faction === canonicalShipFaction),
+        ...SHIPS.filter(ship => ship.faction === canonicalShipFaction && ship.env === custom.env),
+        ...(custom.env === 'ground' ? STATIONARY_BATTERIES.filter(battery => battery.faction === canonicalShipFaction) : []),
       ]){
         const o = document.createElement('option');
-        const shipStats = landshipProfile(s.id);
+        const shipStats = landshipProfile(s.id) || spaceShipProfile(s.id);
         const battery = STATIONARY_BATTERY_IDS.has(s.id);
         o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
@@ -1220,9 +1243,16 @@ function renderCustom(){
     squadWarning.textContent = massBattle ? 'Mass Battle uses automatic 5–7 MS squads.'
       : 'Manual squads have no member cap. AUTO examines the formation and builds balanced squads of no more than 7 units.';
   }
-  const landshipCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
-  $('btn-add-enemy-landships').disabled = landshipCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
-  $('btn-add-ally-landships').disabled = landshipCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
+  const capitalCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
+  const capitalAllowed = custom.env === 'ground' || custom.env === 'space';
+  const enemyCapitalButton = $('btn-add-enemy-landships');
+  const allyCapitalButton = $('btn-add-ally-landships');
+  enemyCapitalButton.textContent = custom.env === 'space' ? '+ ZEON SPACE SHIP GROUP ×3' : '+ ZEON LANDSHIP GROUP ×3';
+  allyCapitalButton.textContent = custom.env === 'space' ? '+ EFSF SPACE SHIP GROUP ×3' : '+ BIG TRAY GROUP ×3';
+  enemyCapitalButton.hidden = !capitalAllowed;
+  allyCapitalButton.hidden = !capitalAllowed;
+  enemyCapitalButton.disabled = !capitalAllowed || capitalCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
+  allyCapitalButton.disabled = !capitalAllowed || capitalCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
   $('btn-add-enemy').disabled = custom.enemies.length >= ROWS_MAX;
   $('btn-add-ally').disabled = custom.allies.length >= ROWS_MAX;
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
@@ -1256,8 +1286,9 @@ $('btn-custom-back').onclick = () => show('menu-main');
 $('btn-add-enemy').onclick = () => { if (custom.enemies.length < ROWS_MAX){ custom.enemies.push({ id: 'zaku2', n: 1, pos: defaultPos('enemy', custom.enemies.length) }); renderCustom(); } };
 $('btn-add-enemy-landships').onclick = () => {
   const used = custom.enemies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
-  if (custom.enemies.length < ROWS_MAX && used < LANDSHIP_CAP){
-    custom.enemies.push({ id: 'dabude', n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('enemy', custom.enemies.length) });
+  const kind = custom.env === 'space' ? 'musai' : custom.env === 'ground' ? 'dabude' : null;
+  if (kind && custom.enemies.length < ROWS_MAX && used < LANDSHIP_CAP){
+    custom.enemies.push({ id: kind, n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('enemy', custom.enemies.length) });
     renderCustom();
   }
 };
@@ -1265,8 +1296,9 @@ $('btn-clear-enemy').onclick = () => { custom.enemies = []; renderCustom(); };
 $('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom.allies.push({ id: 'gm', n: 1, pos: defaultPos('ally', custom.allies.length) }); renderCustom(); } };
 $('btn-add-ally-landships').onclick = () => {
   const used = custom.allies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
-  if (custom.allies.length < ROWS_MAX && used < LANDSHIP_CAP){
-    custom.allies.push({ id: 'bigtray', n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('ally', custom.allies.length) });
+  const kind = custom.env === 'space' ? 'salamis' : custom.env === 'ground' ? 'bigtray' : null;
+  if (kind && custom.allies.length < ROWS_MAX && used < LANDSHIP_CAP){
+    custom.allies.push({ id: kind, n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('ally', custom.allies.length) });
     renderCustom();
   }
 };
@@ -1295,7 +1327,12 @@ $('btn-launch-custom').onclick = () => {
   // mass battle: generate N-per-side armies from random pools; otherwise use the manual lists
   const zPool = ['zaku2', 'zaku2b', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)
-  const expand = list => { const out = []; for (const e of list) for (let k = 0; k < e.n; k++) out.push({ id: e.id, pos: e.pos, requestedSquad: e.squad || 0 }); return out.slice(0, PER_SIDE_CAP); };
+  const expand = list => {
+    const out = [];
+    for (const e of list) for (let k = 0; k < e.n; k++)
+      out.push({ id: e.id, pos: e.pos, formationIndex: k, requestedSquad: e.squad || 0 });
+    return out.slice(0, PER_SIDE_CAP);
+  };
   const enemyEx = expand(custom.enemies), allyEx = expand(custom.allies);
   const assignGroundSquads = (specs, faction) => {
     const ground = assignRequestedSquadIds(specs.filter(spec => !suitById(spec.suitId).air)
@@ -1311,12 +1348,19 @@ $('btn-launch-custom').onclick = () => {
     : allyEx.filter(o => !CUSTOM_PROP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const enemies = assignGroundSquads(enemySpecs, 'ZEON');
   const allies = assignGroundSquads(allySpecs, 'FED');
-  // Landships retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
-  // list and Federation hulls only to the ally list. Cap capital props because they do not use mech LOD.
+  // Capital hulls retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
+  // list and Federation hulls only to the ally list. Cap them because they do not use mech LOD.
   const customShips = custom.army > 0 ? [] : [
-    ...enemyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP).map(o => ({ kind: o.id, team: SHIPS.find(s => s.id === o.id).faction, pos: o.pos })),
-    ...allyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP).map(o => ({ kind: o.id, team: SHIPS.find(s => s.id === o.id).faction, pos: o.pos })),
-  ];
+    ...enemyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP),
+    ...allyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP),
+  ].map(o => ({
+    kind: o.id,
+    team: shipById(o.id).faction,
+    pos: o.pos ? {
+      x: o.pos.x + ((o.formationIndex % 3) - 1) * (custom.env === 'space' ? 130 : 90),
+      z: o.pos.z + Math.floor(o.formationIndex / 3) * (custom.env === 'space' ? 110 : 80),
+    } : null,
+  }));
   const customBatteries = custom.army > 0 ? [] : [
     ...enemyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
     ...allyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
