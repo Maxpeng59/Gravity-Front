@@ -15,6 +15,7 @@ import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
+import { spaceShipAttackHeading, sweptHeavyCollisionFraction } from './naval-combat.js';
 import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
 import {
   HEAT_COOL_RATE, armorThickness, ballisticProfile, environmentPhysics, impactMultiplier,
@@ -2507,6 +2508,8 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- projectiles & particles ----------
   // shapes are slim and velocity-aligned so what you see is the actual hit line
   const projectiles = [], particles = [];
+  let heavyProjectileInterceptions = 0;
+  let lastHeavyInterception = null;
   const FWD = new THREE.Vector3(0, 0, 1);
   const bzGeo = new THREE.ConeGeometry(0.5, 2.6, 8);       // finned shell (apex forward)
   const missileGeo = new THREE.ConeGeometry(0.32, 3.4, 8); // guided missile (apex forward)
@@ -3049,7 +3052,9 @@ export function startBattle(renderer, opts, onEnd){
       else mesh.quaternion.setFromUnitVectors(FWD, d);
       scene.add(mesh);
       const projectile = { pos: muzzle.clone(), vel: d.multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 4, mesh,
-        ballistic, muzzleSpeed: w.speed, traveled: 0 };
+        ballistic, muzzleSpeed: w.speed, traveled: 0,
+        heavy: w.type === 'bazooka' || !!w.shell,
+        collisionRadius: w.type === 'bazooka' ? 1.8 : w.shell ? 1.25 : 0 };
       projectiles.push(projectile);
       sendPvpShot(m, projectile, 'direct');
     }
@@ -3092,7 +3097,8 @@ export function startBattle(renderer, opts, onEnd){
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, aim); // cone apex forward
     scene.add(mesh);
-    const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: w.freeAim ? null : target || null, turn: w.turn || 2.4 };
+    const projectile = { pos: muzzle.clone(), vel: aim.clone().multiplyScalar(w.speed), dmg: w.dmg, splash: w.splash || 14, team: m.team, owner: m, weaponName: w.name, life: 6, mesh, homing: w.freeAim ? null : target || null, turn: w.turn || 2.4,
+      heavy: true, collisionRadius: 1.8 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'missile');
     // A barrage has one launcher impulse, not twenty-four full camera kicks.
@@ -3158,7 +3164,8 @@ export function startBattle(renderer, opts, onEnd){
         pos.z += rz * side * 1.5 * sc * patternScale + fz * fwdOff;
         const mesh = makeBomb(); if (bombScale !== 1) mesh.scale.setScalar(bombScale); mesh.position.copy(pos); scene.add(mesh);
         const vel = new THREE.Vector3(fx * w.speed, -8, fz * w.speed); // released forward + a down kick; gravity does the rest
-        const projectile = { pos: pos.clone(), vel, dmg: w.dmg, splash: w.splash || 16, team: m.team, owner: m, weaponName: w.name, life: 7, mesh, bomb: true };
+        const projectile = { pos: pos.clone(), vel, dmg: w.dmg, splash: w.splash || 16, team: m.team, owner: m, weaponName: w.name, life: 7, mesh, bomb: true,
+          heavy: true, collisionRadius: 2.4 };
         projectiles.push(projectile);
         sendPvpShot(m, projectile, 'bomb');
       }
@@ -3397,6 +3404,8 @@ export function startBattle(renderer, opts, onEnd){
       team: m.team, owner: m, weaponName: w.name, life, mesh,
       homing: kind === 'missile' && !w.freeAim ? player : null, turn: w.turn || 2.4,
       bomb: kind === 'bomb', arc: kind === 'artillery', networkGhost: true,
+      heavy: kind !== 'direct' || w.type === 'bazooka' || !!w.shell,
+      collisionRadius: kind === 'bomb' ? 2.4 : kind === 'missile' ? 1.8 : kind === 'artillery' ? 1.5 : w.type === 'bazooka' ? 1.8 : w.shell ? 1.25 : 0,
       ballistic: kind === 'direct' ? ballisticProfile(w) : null, muzzleSpeed: w.speed, traveled: 0,
     });
     m.lastMuzzleWorld = position.clone();
@@ -5317,7 +5326,8 @@ export function startBattle(renderer, opts, onEnd){
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, vel.clone().normalize());
     scene.add(mesh);
-    const projectile = { pos: muzzle.clone(), vel, dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 9, mesh, arc: true };
+    const projectile = { pos: muzzle.clone(), vel, dmg: w.dmg, splash: w.splash || 0, team: m.team, owner: m, weaponName: w.name, life: w.life || 9, mesh, arc: true,
+      heavy: true, collisionRadius: 1.5 };
     projectiles.push(projectile);
     sendPvpShot(m, projectile, 'artillery');
     if (m.isPlayer) applyPlayerWeaponRecoil(w);
@@ -6294,9 +6304,41 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   // ---------- projectiles tick ----------
+  function detonateHeavyProjectileCollisions(dt){
+    for (const p of projectiles) p.age = (p.age || 0) + dt;
+    for (let i = 0; i < projectiles.length; i++){
+      const a = projectiles[i];
+      if (!a.heavy || a.networkGhost || a._intercepted || a.age < 0.08) continue;
+      for (let j = i + 1; j < projectiles.length; j++){
+        const b = projectiles[j];
+        if (!b.heavy || b.networkGhost || b._intercepted || b.age < 0.08 || a.owner === b.owner) continue;
+        const contact = sweptHeavyCollisionFraction(a, b, dt);
+        if (contact === null) continue;
+        const point = a.pos.clone().addScaledVector(a.vel, dt * contact);
+        a._intercepted = true; b._intercepted = true;
+        heavyProjectileInterceptions++;
+        lastHeavyInterception = {
+          a: a.weaponName, b: b.weaponName,
+          p: point.toArray(), t: +battleClock.toFixed(2),
+        };
+        const radius = Math.max(6, a.splash || 0, b.splash || 0);
+        explosion(point, radius, clamp(420 / point.distanceTo(player.root.position), 0.08, 0.42));
+        splashDamage(point, radius, a.dmg, a.owner, `${a.weaponName} INTERCEPTION`);
+        splashDamage(point, radius, b.dmg, b.owner, `${b.weaponName} INTERCEPTION`);
+        break;
+      }
+    }
+  }
+
   function projectilesUpdate(dt){
+    detonateHeavyProjectileCollisions(dt);
     for (let i = projectiles.length - 1; i >= 0; i--){
       const p = projectiles[i];
+      if (p._intercepted){
+        scene.remove(p.mesh);
+        projectiles.splice(i, 1);
+        continue;
+      }
       p.life -= dt;
       if (p.homing){
         if (!p.homing.alive) p.homing = null;            // target gone → fly straight on
@@ -6467,7 +6509,8 @@ export function startBattle(renderer, opts, onEnd){
       mesh.quaternion.setFromUnitVectors(UP, d);
       scene.add(mesh);
       // capital-grade shells hit other capitals much harder than MS-scale rounds
-      projectiles.push({ pos: muzzle.clone(), vel: d.normalize().multiplyScalar(420), dmg: p.gunDmg * (shipShot ? 2.2 : 1), splash: p.gunSplash, team: p.team, owner: p, weaponName: 'MAIN BATTERY', life: 5.5, mesh });
+      projectiles.push({ pos: muzzle.clone(), vel: d.normalize().multiplyScalar(420), dmg: p.gunDmg * (shipShot ? 2.2 : 1), splash: p.gunSplash, team: p.team, owner: p, weaponName: 'MAIN BATTERY', life: 5.5, mesh,
+        heavy: true, collisionRadius: 2.6 });
       fired = true;
     }
     if (fired) sfx('bazooka', clamp(380 / p.root.position.distanceTo(player.root.position), 0.03, 0.2));
@@ -6524,8 +6567,10 @@ export function startBattle(renderer, opts, onEnd){
             : makeShell(shellScale, false);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
           projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p,
-            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? 'SHIP MAIN BATTERY' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh });
+            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? 'SHIP MAIN BATTERY' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
+            heavy: true, collisionRadius: p.spaceProfile ? 2.6 : p.battery ? 1.8 : 2.1 });
         }
+        t.shotsFired = (t.shotsFired || 0) + (t.shots || 1);
         t.muzzleCursor = (muzzleStart + (t.shots || 1)) % muzzleNodes.length;
         const soundPos = t.muzzle.getWorldPosition(stv1);
         sfx('bazooka', clamp(380 / soundPos.distanceTo(player.root.position), 0.03, 0.18));
@@ -6560,7 +6605,8 @@ export function startBattle(renderer, opts, onEnd){
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(machineGun ? FWD : UP, dir);
     scene.add(mesh);
-    projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life, mesh });
+    projectiles.push({ pos: muzzle.clone(), vel: dir.multiplyScalar(speed), dmg: damageAmount, splash, team: p.team, owner: p, weaponName: name, life, mesh,
+      heavy: !machineGun, collisionRadius: machineGun ? 0 : 1.8 });
   }
 
   function updateLandshipAuxBatteries(p, dt){
@@ -6629,11 +6675,23 @@ export function startBattle(renderer, opts, onEnd){
     if (!target){ p.vel.multiplyScalar(1 - Math.min(1, 2 * dt)); return; }
     const offset = stv1.subVectors(target.root.position, p.root.position);
     const distance = offset.length();
-    if (distance <= p.standoff){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
     const direction = offset.multiplyScalar(1 / Math.max(1, distance));
     const targetYaw = Math.atan2(direction.x, direction.z);
-    const dyaw = wrapAngle(targetYaw - p.root.rotation.y);
+    const attackHeading = spaceShipAttackHeading({
+      team: p.team,
+      turretCount: p.turrets?.length || 0,
+      distance,
+      gunRange: p.gunRange,
+      currentYaw: p.root.rotation.y,
+      targetYaw,
+      broadsideSide: p.broadsideSide,
+    });
+    p.broadside = attackHeading.broadside;
+    p.broadsideSide = attackHeading.side;
+    p.attackYaw = attackHeading.yaw;
+    const dyaw = wrapAngle(attackHeading.yaw - p.root.rotation.y);
     p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
+    if (distance <= p.standoff){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
     const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.35, 1);
     p.vel.copy(direction).multiplyScalar(moveSpeed);
     p.root.position.addScaledVector(p.vel, dt);
@@ -8192,10 +8250,13 @@ export function startBattle(renderer, opts, onEnd){
           label: p.label || null, hitBoxes: p.hitBoxes?.length || 0, hitSpheres: p.hitSpheres?.length || 0,
           hp: p.hp, maxHp: p.maxHp, alive: p.alive, arrived: p.arrived, escaped: p.escaped,
           speed: p.speed || 0, velocity: p.vel?.toArray?.() || null,
+          broadside: !!p.broadside, broadsideSide: p.broadsideSide || 0,
+          attackYaw: p.attackYaw == null ? null : +p.attackYaw.toFixed(3),
           carrierLaunchT: p.carrierLaunchT == null ? null : +p.carrierLaunchT.toFixed(2),
           carrierLaunchCycles: p.carrierLaunchCycles || 0,
           carrierLaunches: p.carrierLaunches?.slice(-8) || [],
           mainTurrets: p.turrets?.length || 0, fixedGuns: p.fixedMuzzles?.length || 0,
+          turretShots: p.turrets?.map(t => t.shotsFired || 0) || [],
           secondaryStations: p.secondaryMuzzles?.length || 0 })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,
         staged: staged ? {
@@ -8213,6 +8274,9 @@ export function startBattle(renderer, opts, onEnd){
         reserves: { fed: fedReserve.length, zeon: zeonReserve.length },
         troops: { fed: infantry.aliveF, zeon: infantry.aliveZ },
         projCount: projectiles.length,
+        heavyProjectileCount: projectiles.filter(p => p.heavy).length,
+        heavyProjectileInterceptions,
+        lastHeavyInterception,
         fedAir: mechs.filter(m => m.alive && m.air && m.team === 'FED').length,
         zeonAir: mechs.filter(m => m.alive && m.air && m.team === 'ZEON').length,
         fedAirHp: mechs.filter(m => m.alive && m.air && m.team === 'FED').reduce((a, m) => a + m.hp, 0),
