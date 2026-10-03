@@ -51,8 +51,7 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
   for (const id of [...FED, ...ZEON]) assert.match(menu, new RegExp(`id: '${id}'.*env: 'space'`));
   assert.match(menu, /ship\.faction === canonicalShipFaction && ship\.env === custom\.env/);
-  assert.match(menu, /custom\.env === 'space' \? 'musai'/);
-  assert.match(menu, /custom\.env === 'space' \? 'salamis'/);
+  assert.match(menu, /faction === 'FED' \? 'salamis' : 'musai'/);
   assert.match(battle, /buildCanonicalSpaceShip\(kind, glow, thrust/);
   assert.match(battle, /function updateSpaceShipMovement/);
   assert.match(battle, /_debugViewShip\(kind = 'salamis'/);
@@ -60,4 +59,18 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
   assert.match(battle, /if \(p\.alive && p\.spaceProfile\)\{[\s\S]*?updateSpaceShipMovement\(p, dt\)/);
   assert.match(battle, /t\.weaponName \|\| 'SHIP MAIN BATTERY'/);
   assert.match(battle, /sideTurrets: p\.turrets\?\.filter\(t => t\.secondary\)\.length/);
+});
+
+test('all five space hulls can launch as the player-controlled unit', () => {
+  const menu = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
+  const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
+  assert.match(menu, /SHIPS\.filter\(unit => unit\.env === 'space'\)/);
+  assert.match(menu, /custom\.playerShip = ship\.id/);
+  assert.match(menu, /playerControlled: true/);
+  assert.match(menu, /playerTeam: playerFaction, playerShipKind: custom\.playerShip/);
+  assert.match(battle, /const playerShipLocked = !!opts\.playerShipKind/);
+  assert.match(battle, /if \(cs\.playerControlled\)[\s\S]*?commandedShip = spawned/);
+  assert.match(battle, /if \(p === commandedShip\) updateCommandedShip\(p, dt\)/);
+  assert.match(battle, /playerShipLocked && !playerShipProp\?\.alive/);
+  assert.match(battle, /playerShipLocked && playerShipProp[\s\S]*?playerShipProp\.hp \/ playerShipProp\.maxHp/);
 });

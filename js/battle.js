@@ -12,7 +12,7 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=54shiphelm1';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
@@ -173,6 +173,8 @@ export function startBattle(renderer, opts, onEnd){
   let pvpDisconnectedAt = 0;
   let pvpShotsSent = 0, pvpShotsReceived = 0, pvpHitsSent = 0, pvpHitsReceived = 0;
   let pvpForfeit = false, pvpListenersAttached = false;
+  const playerShipLocked = !!opts.playerShipKind;
+  let commandedShip = null, playerShipProp = null;
   const PVP_DISCONNECT_GRACE_MS = 12000;
   const PVP_SILENCE_LIMIT_MS = 30000;
   const scene = new THREE.Scene();
@@ -462,7 +464,8 @@ export function startBattle(renderer, opts, onEnd){
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
-  hintEl.textContent = pilotHint;
+  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
+  hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -977,7 +980,9 @@ export function startBattle(renderer, opts, onEnd){
     const key = c.x + ',' + c.z, i = clusterCount.get(key) || 0; clusterCount.set(key, i + 1);
     return new THREE.Vector3(c.x + ((i % 5) - 2) * 70 + rng.range(-22, 22), 0, c.z - Math.floor(i / 5) * 70 + rng.range(-22, 22));
   };
-  const player = spawnMech({ suitId: opts.playerSuitId, loadout: opts.playerLoadout || null }, 'FED',
+  const playerTeam = opts.playerTeam === 'ZEON' ? 'ZEON' : 'FED';
+  const enemyTeam = playerTeam === 'FED' ? 'ZEON' : 'FED';
+  const player = spawnMech({ suitId: opts.playerSuitId, loadout: opts.playerLoadout || null }, playerTeam,
     spawnCenters ? new THREE.Vector3(spawnCenters.player.x, 0, spawnCenters.player.z) : new THREE.Vector3(0, 0, 0),
     { isPlayer: true, hpFrac: opts.playerHp ?? 1 });
   let playerHoverCraft = null;
@@ -1003,7 +1008,7 @@ export function startBattle(renderer, opts, onEnd){
       : spec.dist
       ? ringPos(rng.range(-40, 40) + ((i % 5) - 2) * 8, allyDistBand(spec.dist), 20) // forward arc toward the enemy
       : ringPos(120 + i * 25, 40 + (i % 4) * 18, 20);
-    spawnMech(spec, 'FED', pos, { core: false, hpFrac: spec.hpFrac ?? 1 });
+    spawnMech(spec, playerTeam, pos, { core: false, hpFrac: spec.hpFrac ?? 1 });
   });
   // hangar wingmen: a capped squadron sorties (a full 20-bay hangar would swamp the field)
   (opts.wingmen || []).slice(0, MAX_WING).forEach((wsp, i) => {
@@ -1034,7 +1039,7 @@ export function startBattle(renderer, opts, onEnd){
         ? new THREE.Vector3(e.pos.x, e.pos.y || 0, e.pos.z)                       // PvP start markers are exact on both peers
         : clusterAt(e.pos))                                                       // per-entry deployment marker
       : ringPos(rng.range(-55, 55), e.dist ? enemyDistBand(e.dist) : rng.range(600, 1050), 220);
-    const spawned = spawnMech(e, 'ZEON', pos, { core: true });
+    const spawned = spawnMech(e, enemyTeam, pos, { core: true });
     if (PVP && e.networkRemote){
       if (spawned.networkId) networkRemotes.set(spawned.networkId, spawned);
     }
@@ -2299,7 +2304,13 @@ export function startBattle(renderer, opts, onEnd){
         : cs.team === 'ZEON'
         ? ringPos(rng.range(-30, 30), cs.dist ? enemyDistBand(cs.dist) : rng.range(720, 1000), 120)
         : ringPos(rng.range(165, 195), cs.dist ? allyDistBand(cs.dist) : rng.range(160, 300), 60);
-      missionProps.push(spawnProp(cs.kind, cs.team, pos, hp));
+      const spawned = spawnProp(cs.kind, cs.team, pos, hp);
+      missionProps.push(spawned);
+      if (cs.playerControlled){
+        playerShipProp = spawned;
+        commandedShip = spawned;
+        player.root.visible = false;
+      }
     }
   }
 
@@ -3653,7 +3664,6 @@ export function startBattle(renderer, opts, onEnd){
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
   let debugShipCamera = null;
-  let commandedShip = null;
   let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
   let sniperHoldingBreath = false, sniperBreathBlocked = false;
@@ -3732,6 +3742,7 @@ export function startBattle(renderer, opts, onEnd){
 
   function releaseCommandedShip(quiet = false){
     if (!commandedShip) return false;
+    if (playerShipLocked && !quiet){ setMsg('THIS SORTIE BEGAN AT THE CAPITAL-SHIP HELM', 1.8); return false; }
     const ship = commandedShip;
     commandedShip = null;
     keys.clear();
@@ -3755,7 +3766,7 @@ export function startBattle(renderer, opts, onEnd){
     player.vel.set(0, 0, 0);
     player.root.visible = false;
     if (playerHoverCraft?.alive && player.hoverCraft === playerHoverCraft) playerHoverCraft.root.visible = false;
-    hintEl.textContent = 'SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · SHIFT FLANK SPEED · H EXIT HELM · AUTO BATTERIES ACTIVE';
+    hintEl.textContent = shipHelmHint;
     if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM CONTROL — BATTERIES REMAIN AUTOMATIC`, 2.6);
     return true;
   }
@@ -7046,7 +7057,7 @@ export function startBattle(renderer, opts, onEnd){
   // ---------- HUD ----------
   function objectiveText(){
     const base = opts.objective || 'DESTROY ALL HOSTILES';
-    const left = mechs.filter(m => m.alive && m.core && m.team === 'ZEON').length
+    const left = mechs.filter(m => m.alive && m.core && m.team !== player.team).length
       + waves.reduce((a, w) => a + w.specs.length, 0);
     const total = (opts.enemies || []).length;
     switch (mission.type){
@@ -7119,8 +7130,8 @@ export function startBattle(renderer, opts, onEnd){
           + ` · WAVE ${totalWaves - waveQueue.length}/${totalWaves} · HOSTILES ${aliveZ}`;
       }
       default: {
-        const zShips = missionProps.filter(p => p.isShip && p.team === 'ZEON');
-        const zBatteries = missionProps.filter(p => p.battery && p.team === 'ZEON');
+        const zShips = missionProps.filter(p => p.isShip && p.team !== player.team);
+        const zBatteries = missionProps.filter(p => p.battery && p.team !== player.team);
         return `${base} · ${total - left}/${total}`
           + (zShips.length ? ` · ${SPACE ? 'SHIPS' : 'LANDSHIPS'} ${zShips.filter(p => !p.alive).length}/${zShips.length}` : '')
           + (zBatteries.length ? ` · BATTERIES ${zBatteries.filter(p => !p.alive).length}/${zBatteries.length}` : '');
@@ -7158,7 +7169,7 @@ export function startBattle(renderer, opts, onEnd){
       wEl.innerHTML = `${ship.kind.toUpperCase()} HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · AUTO BATTERIES ACTIVE</span>`
         + `<br>VERTICAL VERNIERS <span class="ammo" style="color:${ship.verticalThrust ? 'var(--ok)' : 'var(--dim)'}">${ship.helmVertical >= 0 ? '+' : ''}${(ship.helmVertical || 0).toFixed(1)} m/s · SPACE/C</span>`;
       objEl.textContent = objectiveText();
-      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · SHIFT FLANK SPEED · H EXIT`;
+      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT'}`;
       msgT -= dt;
       if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
       radarT -= dt;
@@ -7575,7 +7586,11 @@ export function startBattle(renderer, opts, onEnd){
         return;
       }
       const zCore = mechs.some(m => m.alive && m.core && m.team === 'ZEON') || waves.length > 0 || waveQueue.length > 0 || zeonReserve.length > 0;
+      const hostileCore = mechs.some(m => m.alive && m.core && m.team !== player.team)
+        || waves.length > 0 || waveQueue.length > 0 || (player.team === 'FED' && zeonReserve.length > 0);
       let win = false, winMsg = 'ENEMY FORCE ELIMINATED', lose = null;
+      if (playerShipLocked && !playerShipProp?.alive)
+        lose = `THE ${opts.playerShipKind.toUpperCase()} IS LOST — SORTIE FAILED`;
       if (allyShipProp && !allyShipProp.alive)
         lose = `THE ${allyShipProp.kind.toUpperCase()} IS LOST — OPERATION FAILED`;
       switch (mission.type){
@@ -7658,7 +7673,7 @@ export function startBattle(renderer, opts, onEnd){
         default:
           // Custom sortie: clear every enemy mech and every fielded enemy
           // landship or stationary battery chosen in the roster.
-          win = !zCore && !missionProps.some(p => (p.isShip || p.battery) && p.team === 'ZEON' && p.alive);
+          win = !hostileCore && !missionProps.some(p => (p.isShip || p.battery) && p.team !== player.team && p.alive);
       }
       if (lose){ outcome = { victory: false }; endT = 3; setMsg(lose, 4); }
       else if (win){
@@ -7680,10 +7695,13 @@ export function startBattle(renderer, opts, onEnd){
     cockpitEl.classList.add('hidden');
     killFeedEl.replaceChildren();
     hud.classList.add('hidden');
+    const sortieHpFrac = playerShipLocked && playerShipProp
+      ? clamp(playerShipProp.hp / playerShipProp.maxHp, 0, 1)
+      : clamp(player.hp / player.maxHp, 0, 1);
     onEnd({
       victory: !!res.victory, retreat: !!res.retreat,
       forfeit: !!res.forfeit, disconnected: !!res.forfeit, kills,
-      destroyedIds, hpFrac: clamp(player.hp / player.maxHp, 0, 1),
+      destroyedIds, hpFrac: sortieHpFrac,
       wing: mechs.filter(m => m.wingId !== undefined).map(m => ({
         wingId: m.wingId, alive: m.alive, hpFrac: clamp(m.hp / m.maxHp, 0, 1),
       })),
@@ -7702,7 +7720,7 @@ export function startBattle(renderer, opts, onEnd){
       elapsed: battleClock,
       secondary: evaluateSecondaries(opts.secondary || [], {
         victory: !!res.victory,
-        hpFrac: clamp(player.hp / player.maxHp, 0, 1),
+        hpFrac: sortieHpFrac,
         wingLost: mechs.filter(m => m.wingId !== undefined && !m.alive).length,
         elapsed: battleClock,
         acesTotal: mechs.filter(m => m.team === 'ZEON' && m.ace && !m.vip).length,
@@ -8283,7 +8301,8 @@ export function startBattle(renderer, opts, onEnd){
         .addScaledVector(playerUpDbg, 9 * (player.suit.scale || 1))
         .project(camera);
       return {
-        kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
+        kills, playerHp: player.hp, playerTeam: player.team, playerShipLocked,
+        cam: camera.position.toArray(), env, space: SPACE, paused,
         commandedShip: commandedShip?.alive ? {
           kind: commandedShip.kind,
           hp: commandedShip.hp,

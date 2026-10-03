@@ -4,8 +4,9 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=54shiphelm1';
+import { startBattle } from './battle.js?v=55playership1';
 import { buildMech } from './mecha.js';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
 import { enterBridge, leaveBridge } from './bridge.js';
@@ -24,7 +25,7 @@ import { spaceShipProfile } from './space-ship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import {
   CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,
-} from './custom-roster.js?v=54shiphelm1';
+} from './custom-roster.js?v=55playership1';
 import {
   STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
 } from './stationary-batteries.js';
@@ -114,15 +115,23 @@ const msPreview = (() => {
     const f = new THREE.DirectionalLight(0xbcd0e8, 0.5); f.position.set(-30, 18, -22); scene.add(f);
     return true;
   }
-  function setSuit(id, loadout = null){
-    const key = `${id}:${loadout?.primary || 'stock'}:${loadout?.support || 'stock'}`;
+  function setSuit(id, loadout = null, shipKind = null){
+    const key = shipKind ? `ship:${shipKind}` : `${id}:${loadout?.primary || 'stock'}:${loadout?.support || 'stock'}`;
     if (!ensure() || key === curKey) return;
     curKey = key;
     if (holder){ scene.remove(holder); disposeModel(holder); holder = null; }
-    const baseSuit = suitById(id); if (!baseSuit) return;
-    const suit = applyWeaponLoadout(baseSuit, loadout);
     let root;
-    try { root = buildMech(suit).root; } catch (e){ return; }
+    try {
+      if (shipKind){
+        const glow = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, emissive: 0x4aa3ff, emissiveIntensity: 1.1 });
+        const thrust = new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.82 });
+        root = buildCanonicalSpaceShip(shipKind, glow, thrust, () => 0)?.root;
+      } else {
+        const baseSuit = suitById(id); if (!baseSuit) return;
+        root = buildMech(applyWeaponLoadout(baseSuit, loadout)).root;
+      }
+    } catch (e){ return; }
+    if (!root) return;
     const box = new THREE.Box3().setFromObject(root);
     const c = box.getCenter(new THREE.Vector3()), sz = box.getSize(new THREE.Vector3());
     root.position.sub(c);                                   // centre the model on the turntable
@@ -130,8 +139,8 @@ const msPreview = (() => {
     const reach = Math.max(sz.x, sz.y, sz.z) || 20;
     // The RTX-440-B's thin cannon and radio whips extend far beyond its visual mass. Give this hero
     // mesh a tighter inspection framing so its track, arm and casemate detail stays readable.
-    const framing = id === 'guntankmk2' ? 1.6 : id === 'weasel' ? 1.4 : 1.75;
-    cam.position.set(0, sz.y * 0.12, reach * framing);
+    const framing = shipKind ? 1.15 : id === 'guntankmk2' ? 1.6 : id === 'weasel' ? 1.4 : 1.75;
+    cam.position.set(shipKind ? reach * 0.72 : 0, sz.y * (shipKind ? 0.7 : 0.12), reach * framing);
     cam.lookAt(0, 0, 0);
   }
   function render(dt){
@@ -165,6 +174,23 @@ function renderMsStats(suit){
   const wl = suit.weapons.map(w => `▸ <b>${w.name}</b>`);
   if (suit.saber && suit.saber.dmg > 0) wl.push(`▸ <b>${suit.saber.name}</b> · melee`);
   html += `<div class="wl">${wl.join('<br>')}</div>`;
+  box.innerHTML = html;
+}
+
+function renderShipStats(kind){
+  const box = $('ms-stats'), profile = spaceShipProfile(kind), ship = shipById(kind);
+  if (!box || !profile || !ship) return;
+  const rows = [
+    ['CLASS', profile.role],
+    ['FACTION', profile.faction === 'FED' ? 'E.F.S.F.' : 'ZEON'],
+    ['INTEGRITY', profile.hp.toLocaleString()],
+    ['CRUISE', profile.speed],
+    ['TURN RATE', profile.turnRate],
+    ['BATTERY RANGE', profile.mainRange],
+  ];
+  let html = `<div class="nm">${ship.name}</div><div class="cd">${ship.code}</div>`;
+  for (const [k, v] of rows) html += `<div class="sl"><span>${k}</span><b>${v}</b></div>`;
+  html += '<div class="wl">▸ <b>CAPITAL-SHIP HELM</b><br>▸ AUTOMATIC MAIN BATTERIES<br>▸ AUTOMATIC SIDE BATTERIES</div>';
   box.innerHTML = html;
 }
 
@@ -974,7 +1000,7 @@ const CUSTOM_OPERATIONS = [
   { id: 'breakthrough', name: 'BREAKTHROUGH', groundOnly: true, brief: 'Three phases: destroy the AA sites, hold the drop zone, then kill the sector commander.' },
 ];
 
-const custom = { op: 'sortie', suit: 'rx78', env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
+const custom = { op: 'sortie', suit: 'rx78', playerShip: null, env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
 // relief you see IS the battlefield (mountains/hills/valleys). Only for random biomes (no authored map) + ground.
@@ -1031,6 +1057,18 @@ const SHIPS = [
 const SHIP_IDS = new Set(SHIPS.map(s => s.id));
 const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...STATIONARY_BATTERY_IDS]);
 const shipById = id => SHIPS.find(ship => ship.id === id) || null;
+const unitFaction = id => shipById(id)?.faction || stationaryBatteryById(id)?.faction || suitById(id)?.faction || null;
+const opposingFaction = faction => faction === 'ZEON' ? 'FED' : 'ZEON';
+const customPlayerFaction = () => custom.playerShip ? shipById(custom.playerShip).faction : suitById(custom.suit)?.faction || 'FED';
+function normalizeCustomSidesForPlayer(){
+  const friendly = customPlayerFaction(), hostile = opposingFaction(friendly);
+  custom.enemies = custom.enemies.filter(entry => unitFaction(entry.id) === hostile);
+  custom.allies = custom.allies.filter(entry => unitFaction(entry.id) === friendly);
+  if (!custom.enemies.length){
+    const id = hostile === 'FED' ? 'gm' : 'zaku2';
+    custom.enemies.push({ id, n: 1, pos: defaultPos('enemy', 0) });
+  }
+}
 function normalizeCustomRosterForEnvironment(){
   const allowed = entry => {
     const ship = shipById(entry.id);
@@ -1052,7 +1090,7 @@ function applyRecommendedMapForces(map){
   const preset = map?.recommendedForces;
   if (!preset) return;
   custom.army = 0;
-  if (pvpSuit(preset.playerSuitId)) custom.suit = preset.playerSuitId;
+  if (pvpSuit(preset.playerSuitId)){ custom.suit = preset.playerSuitId; custom.playerShip = null; }
   custom.enemies = preset.enemies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   custom.allies = preset.allies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   if (map.spawn?.player) custom.spawn.player = { ...map.spawn.player };
@@ -1069,6 +1107,10 @@ function statBar(label, frac){
 
 function renderCustomLoadout(){
   const box = $('custom-loadout'); if (!box) return;
+  if (custom.playerShip){
+    box.innerHTML = '<div class="hovercraft-card"><div class="hovercraft-copy"><b>NAVAL FIRE CONTROL</b><span>Main and side batteries acquire and engage hostile targets automatically while you steer the hull.</span></div></div>';
+    return;
+  }
   const suit = suitById(custom.suit);
   renderEquipmentPanel(box, suit, custom.loadouts[suit.id], next => {
     if (!next) delete custom.loadouts[suit.id];
@@ -1080,6 +1122,10 @@ function renderCustomLoadout(){
 
 function renderCustomHoverCraft(){
   const box = $('custom-hovercraft'); if (!box) return;
+  if (custom.playerShip){
+    box.innerHTML = '<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>INTEGRAL CAPITAL-SHIP DRIVE</b><span>Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.</span></div></div>';
+    return;
+  }
   const suit = suitById(custom.suit), eligible = canUseHoverCraft(suit);
   const equipped = hoverCraftEquipped(suit, custom.hoverCrafts[suit.id]);
   box.replaceChildren();
@@ -1098,9 +1144,30 @@ function renderCustomHoverCraft(){
 
 function renderCustom(){
   const grid = $('suit-grid'); grid.innerHTML = '';
+  if (custom.env === 'space') for (const ship of SHIPS.filter(unit => unit.env === 'space')){
+    const profile = spaceShipProfile(ship.id);
+    const card = el('div', 'suit-card' + (custom.playerShip === ship.id ? ' sel' : ''));
+    const top = el('div', '');
+    top.appendChild(el('span', 'fac ' + ship.faction, 'CAPITAL SHIP'));
+    card.appendChild(top);
+    card.appendChild(el('div', 'nm', ship.name));
+    card.appendChild(el('div', 'cd', ship.code));
+    card.appendChild(statBar('HULL', profile.hp / 52000));
+    card.appendChild(statBar('SPD', profile.speed / 15));
+    card.appendChild(statBar('PWR', profile.mainDamage / 440));
+    card.onclick = () => {
+      custom.playerShip = ship.id;
+      custom.op = 'sortie';
+      normalizeCustomSidesForPlayer();
+      sfx('ui', 0.1);
+      renderCustom();
+      setFold('readout', true);
+    };
+    grid.appendChild(card);
+  }
   // mobile suits, then every fighter you can also pilot
   for (const s of [...SUITS.filter(unit => !unit.supportOnly), ...AIRCRAFT]){
-    const card = el('div', 'suit-card' + (custom.suit === s.id ? ' sel' : ''));
+    const card = el('div', 'suit-card' + (!custom.playerShip && custom.suit === s.id ? ' sel' : ''));
     const top = el('div', '');
     top.appendChild(el('span', 'fac ' + s.faction, s.air ? 'FIGHTER' : s.faction));
     card.appendChild(top);
@@ -1111,6 +1178,8 @@ function renderCustom(){
     card.appendChild(statBar('PWR', Math.max(...s.weapons.map(w => w.dmg * Math.min(w.rof, 3))) / 900));
     card.onclick = () => {
       custom.suit = s.id;
+      custom.playerShip = null;
+      normalizeCustomSidesForPlayer();
       sfx('ui', 0.1);
       renderCustom();
       setFold('readout', true);
@@ -1123,8 +1192,10 @@ function renderCustom(){
     const b = el('button', 'small' + (custom.env === e.id ? ' sel' : ''), e.name);
     b.onclick = () => {
       custom.env = e.id;
+      if (custom.env !== 'space') custom.playerShip = null;
       if (custom.env !== 'ground') custom.map = null;
       normalizeCustomRosterForEnvironment();
+      normalizeCustomSidesForPlayer();
       renderCustom();
     };
     envBox.appendChild(b);
@@ -1136,7 +1207,7 @@ function renderCustom(){
     for (const op of CUSTOM_OPERATIONS){
       const blocked = op.groundOnly && custom.env !== 'ground';
       const b = el('button', 'small' + (custom.op === op.id ? ' sel' : ''), op.name);
-      b.disabled = blocked || custom.army > 0;
+      b.disabled = blocked || custom.army > 0 || (!!custom.playerShip && op.id !== 'sortie');
       b.title = op.brief;
       b.onclick = () => { custom.op = op.id; renderCustom(); };
       opBox.appendChild(b);
@@ -1175,8 +1246,9 @@ function renderCustom(){
       const b = el('button', 'small' + (custom.map === m.id ? ' sel' : ''), m.name);
       b.onclick = () => {
         const changed = custom.map !== m.id;
-        custom.map = m.id; custom.env = 'ground';
+        custom.map = m.id; custom.env = 'ground'; custom.playerShip = null;
         normalizeCustomRosterForEnvironment();
+        normalizeCustomSidesForPlayer();
         if (changed) applyRecommendedMapForces(m);
         renderCustom();
       }; // maps are ground-only; authored scenarios can load their canonical force package
@@ -1191,7 +1263,8 @@ function renderCustom(){
 
   const mkList = (boxId, arr, team) => {
     const box = $(boxId); box.innerHTML = '';
-    const faction = team === 'enemy' ? 'ZEON' : 'FED';
+    const friendlyFaction = customPlayerFaction();
+    const faction = team === 'enemy' ? opposingFaction(friendlyFaction) : friendlyFaction;
     const shortFaction = faction === 'ZEON' ? 'Z' : 'F';
     const deployedRows = [];
     arr.forEach((entry, rowIndex) => {
@@ -1212,9 +1285,9 @@ function renderCustom(){
       badge.style.color = team === 'enemy' ? '#ff5d5d' : '#49d67a';
       row.appendChild(badge);
       const sel = document.createElement('select');
-      const canonicalShipFaction = team === 'enemy' ? 'ZEON' : 'FED';
+      const canonicalShipFaction = faction;
       for (const s of [
-        ...SUITS, ...AIRCRAFT,
+        ...SUITS.filter(unit => unit.faction === faction), ...AIRCRAFT.filter(unit => unit.faction === faction),
         ...SHIPS.filter(ship => ship.faction === canonicalShipFaction && ship.env === custom.env),
         ...(custom.env === 'ground' ? STATIONARY_BATTERIES.filter(battery => battery.faction === canonicalShipFaction) : []),
       ]){
@@ -1288,8 +1361,9 @@ function renderCustom(){
   const capitalAllowed = custom.env === 'ground' || custom.env === 'space';
   const enemyCapitalButton = $('btn-add-enemy-landships');
   const allyCapitalButton = $('btn-add-ally-landships');
-  enemyCapitalButton.textContent = custom.env === 'space' ? '+ ZEON SPACE SHIP GROUP ×3' : '+ ZEON LANDSHIP GROUP ×3';
-  allyCapitalButton.textContent = custom.env === 'space' ? '+ EFSF SPACE SHIP GROUP ×3' : '+ BIG TRAY GROUP ×3';
+  const friendlyFaction = customPlayerFaction(), hostileFaction = opposingFaction(friendlyFaction);
+  enemyCapitalButton.textContent = custom.env === 'space' ? `+ ${hostileFaction === 'FED' ? 'EFSF' : 'ZEON'} SPACE SHIP GROUP ×3` : `+ ${hostileFaction} LANDSHIP GROUP ×3`;
+  allyCapitalButton.textContent = custom.env === 'space' ? `+ ${friendlyFaction === 'FED' ? 'EFSF' : 'ZEON'} SPACE SHIP GROUP ×3` : `+ ${friendlyFaction} LANDSHIP GROUP ×3`;
   enemyCapitalButton.hidden = !capitalAllowed;
   allyCapitalButton.hidden = !capitalAllowed;
   enemyCapitalButton.disabled = !capitalAllowed || custom.enemies.length >= ROWS_MAX;
@@ -1301,8 +1375,9 @@ function renderCustom(){
   renderCustomLoadout();
   renderCustomHoverCraft();
   const loadout = custom.loadouts[custom.suit] || null;
-  msPreview.setSuit(custom.suit, loadout);
-  renderMsStats(applyWeaponLoadout(suitById(custom.suit), loadout));
+  msPreview.setSuit(custom.suit, loadout, custom.playerShip);
+  if (custom.playerShip) renderShipStats(custom.playerShip);
+  else renderMsStats(applyWeaponLoadout(suitById(custom.suit), loadout));
   ensureMapControls();
   spawnMap.show();
 }
@@ -1324,18 +1399,22 @@ function ensureMapControls(){
 
 $('btn-custom').onclick = () => { music.play('requiem'); show('menu-custom'); renderCustom(); }; // show first so canvases have dimensions
 $('btn-custom-back').onclick = () => show('menu-main');
-$('btn-add-enemy').onclick = () => { if (custom.enemies.length < ROWS_MAX){ custom.enemies.push({ id: 'zaku2', n: 1, pos: defaultPos('enemy', custom.enemies.length) }); renderCustom(); } };
+$('btn-add-enemy').onclick = () => { if (custom.enemies.length < ROWS_MAX){ custom.enemies.push({ id: opposingFaction(customPlayerFaction()) === 'FED' ? 'gm' : 'zaku2', n: 1, pos: defaultPos('enemy', custom.enemies.length) }); renderCustom(); } };
 $('btn-add-enemy-landships').onclick = () => {
-  const kind = custom.env === 'space' ? 'musai' : custom.env === 'ground' ? 'dabude' : null;
+  const faction = opposingFaction(customPlayerFaction());
+  const kind = custom.env === 'space' ? (faction === 'FED' ? 'salamis' : 'musai')
+    : custom.env === 'ground' ? (faction === 'FED' ? 'bigtray' : 'dabude') : null;
   if (kind && custom.enemies.length < ROWS_MAX){
     custom.enemies.push({ id: kind, n: 3, pos: defaultPos('enemy', custom.enemies.length) });
     renderCustom();
   }
 };
 $('btn-clear-enemy').onclick = () => { custom.enemies = []; renderCustom(); };
-$('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom.allies.push({ id: 'gm', n: 1, pos: defaultPos('ally', custom.allies.length) }); renderCustom(); } };
+$('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom.allies.push({ id: customPlayerFaction() === 'FED' ? 'gm' : 'zaku2', n: 1, pos: defaultPos('ally', custom.allies.length) }); renderCustom(); } };
 $('btn-add-ally-landships').onclick = () => {
-  const kind = custom.env === 'space' ? 'salamis' : custom.env === 'ground' ? 'bigtray' : null;
+  const faction = customPlayerFaction();
+  const kind = custom.env === 'space' ? (faction === 'FED' ? 'salamis' : 'musai')
+    : custom.env === 'ground' ? (faction === 'FED' ? 'bigtray' : 'dabude') : null;
   if (kind && custom.allies.length < ROWS_MAX){
     custom.allies.push({ id: kind, n: 3, pos: defaultPos('ally', custom.allies.length) });
     renderCustom();
@@ -1355,9 +1434,10 @@ $('btn-fold-readout').addEventListener('click', () => setFold('readout'));
 $('btn-fold-map').addEventListener('click', () => setFold('map'));
 $('btn-launch-custom').onclick = () => {
   const rng = new RNG('custom' + Date.now());
+  const playerFaction = customPlayerFaction(), enemyFaction = opposingFaction(playerFaction);
   // a land-only suit can't deploy in space — drop the sortie to the surface
   let env = custom.env;
-  if (env === 'space' && !hoverCraftSpaceCapable(suitById(custom.suit), custom.hoverCrafts[custom.suit])){
+  if (!custom.playerShip && env === 'space' && !hoverCraftSpaceCapable(suitById(custom.suit), custom.hoverCrafts[custom.suit])){
     env = 'ground';
     modal('GROUND-ONLY UNIT', `${suitById(custom.suit).name} cannot operate in space. Sortie redirected to a planetary surface.`, [{ label: 'UNDERSTOOD' }]);
   }
@@ -1365,6 +1445,8 @@ $('btn-launch-custom').onclick = () => {
   if (activeMap) env = 'ground'; // named battlefields are ground-only
   // mass battle: generate N-per-side armies from random pools; otherwise use the manual lists
   const zPool = ['zaku2', 'zaku2b', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
+  const enemyPool = enemyFaction === 'FED' ? ARMY_FED : zPool;
+  const allyPool = playerFaction === 'FED' ? ARMY_FED : zPool;
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)
   const enemyEx = expandCustomRoster(custom.enemies), allyEx = expandCustomRoster(custom.allies);
   const assignGroundSquads = (specs, faction) => {
@@ -1374,15 +1456,15 @@ $('btn-launch-custom').onclick = () => {
     return specs.map(spec => suitById(spec.suitId).air ? spec : ground[groundIndex++]);
   };
   const enemySpecs = custom.army > 0
-    ? Array.from({ length: custom.army }, () => ({ suitId: rng.pick(zPool), ace: rng.chance(0.04) }))
+    ? Array.from({ length: custom.army }, () => ({ suitId: rng.pick(enemyPool), ace: rng.chance(0.04) }))
     : enemyEx.filter(o => !CUSTOM_PROP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
   const allySpecs = custom.army > 0
-    ? Array.from({ length: custom.army - 1 }, () => ({ suitId: rng.pick(ARMY_FED) }))
+    ? Array.from({ length: custom.army - 1 }, () => ({ suitId: rng.pick(allyPool) }))
     : allyEx.filter(o => !CUSTOM_PROP_IDS.has(o.id)).map(o => ({ suitId: o.id, pos: o.pos, requestedSquad: o.requestedSquad }));
-  const enemies = assignGroundSquads(enemySpecs, 'ZEON');
-  const allies = assignGroundSquads(allySpecs, 'FED');
-  // Capital hulls retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
-  // list and Federation hulls only to the ally list. They share the normal per-side deployment cap.
+  const enemies = assignGroundSquads(enemySpecs, enemyFaction);
+  const allies = assignGroundSquads(allySpecs, playerFaction);
+  // Capital hulls retain canonical faction identity. Each roster follows the selected
+  // player's faction, including when the player launches aboard a Zeon hull.
   const customShips = custom.army > 0 ? [] : [
     ...enemyEx.filter(o => SHIP_IDS.has(o.id)),
     ...allyEx.filter(o => SHIP_IDS.has(o.id)),
@@ -1394,6 +1476,12 @@ $('btn-launch-custom').onclick = () => {
       z: o.pos.z + Math.floor(o.formationIndex / 3) * (custom.env === 'space' ? 110 : 80),
     } : null,
   }));
+  if (custom.playerShip) customShips.unshift({
+    kind: custom.playerShip,
+    team: playerFaction,
+    playerControlled: true,
+    pos: { ...custom.spawn.player },
+  });
   const customBatteries = custom.army > 0 ? [] : [
     ...enemyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
     ...allyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
@@ -1406,7 +1494,8 @@ $('btn-launch-custom').onclick = () => {
     mapId: activeMap ? activeMap.id : null,     // authored battlefield
     terrainSeed: custom.terrainSeed,            // the exact seed previewed on the deployment map → WYSIWYG terrain
     playerSuitId: custom.suit, playerHp: 1, playerLoadout: custom.loadouts[custom.suit] || null,
-    hoverCraft: hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
+    playerTeam: playerFaction, playerShipKind: custom.playerShip,
+    hoverCraft: !custom.playerShip && hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
     mission: staged
