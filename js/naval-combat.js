@@ -1,5 +1,8 @@
 const PI = Math.PI;
 
+export const SPACE_SHIP_TURN_ALIGNMENT = 0.18;
+export const SPACE_SHIP_HOLD_HYSTERESIS = 55;
+
 export function wrapNavalAngle(angle){
   while (angle > PI) angle -= PI * 2;
   while (angle < -PI) angle += PI * 2;
@@ -8,8 +11,12 @@ export function wrapNavalAngle(angle){
 
 export function spaceShipAttackHeading({
   team, turretCount, distance, gunRange, currentYaw, targetYaw, broadsideSide = 0,
+  travelMode = 'move',
 }){
-  const canBroadside = team === 'FED' && turretCount >= 3 && distance <= gunRange;
+  // Broadside is a stopped firing posture. A ship that needs to travel always
+  // points its bow at the destination before propulsion can engage.
+  const canBroadside = travelMode === 'hold'
+    && team === 'FED' && turretCount >= 3 && distance <= gunRange;
   if (!canBroadside) return { yaw: targetYaw, broadside: false, side: 0 };
 
   let side = Math.sign(broadsideSide);
@@ -24,6 +31,17 @@ export function spaceShipAttackHeading({
     broadside: true,
     side,
   };
+}
+
+export function spaceShipTravelMode(distance, standoff, previous = 'move'){
+  if (previous === 'hold'){
+    return distance > standoff + SPACE_SHIP_HOLD_HYSTERESIS ? 'move' : 'hold';
+  }
+  return distance <= standoff ? 'hold' : 'move';
+}
+
+export function spaceShipPropulsionEngaged(travelMode, headingError){
+  return travelMode === 'move' && Math.abs(headingError) <= SPACE_SHIP_TURN_ALIGNMENT;
 }
 
 // Continuous point-against-point sweep expanded by both collision radii. The

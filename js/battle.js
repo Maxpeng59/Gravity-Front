@@ -15,7 +15,12 @@ import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
-import { spaceShipAttackHeading, sweptHeavyCollisionFraction } from './naval-combat.js';
+import {
+  spaceShipAttackHeading,
+  spaceShipPropulsionEngaged,
+  spaceShipTravelMode,
+  sweptHeavyCollisionFraction,
+} from './naval-combat.js';
 import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
 import {
   HEAT_COOL_RATE, armorThickness, ballisticProfile, environmentPhysics, impactMultiplier,
@@ -6672,11 +6677,18 @@ export function startBattle(renderer, opts, onEnd){
   function updateSpaceShipMovement(p, dt){
     if (!SPACE || !p.spaceProfile || p.speed <= 0) return;
     const target = nearestLandshipTarget(p, Infinity, true);
-    if (!target){ p.vel.multiplyScalar(1 - Math.min(1, 2 * dt)); return; }
+    if (!target){
+      p.spaceTravelMode = 'idle';
+      p.propulsionEngaged = false;
+      p.headingError = null;
+      p.vel.multiplyScalar(1 - Math.min(1, 2 * dt));
+      return;
+    }
     const offset = stv1.subVectors(target.root.position, p.root.position);
     const distance = offset.length();
     const direction = offset.multiplyScalar(1 / Math.max(1, distance));
     const targetYaw = Math.atan2(direction.x, direction.z);
+    p.spaceTravelMode = spaceShipTravelMode(distance, p.standoff, p.spaceTravelMode);
     const attackHeading = spaceShipAttackHeading({
       team: p.team,
       turretCount: p.turrets?.length || 0,
@@ -6685,14 +6697,20 @@ export function startBattle(renderer, opts, onEnd){
       currentYaw: p.root.rotation.y,
       targetYaw,
       broadsideSide: p.broadsideSide,
+      travelMode: p.spaceTravelMode,
     });
     p.broadside = attackHeading.broadside;
     p.broadsideSide = attackHeading.side;
     p.attackYaw = attackHeading.yaw;
     const dyaw = wrapAngle(attackHeading.yaw - p.root.rotation.y);
     p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
-    if (distance <= p.standoff){ p.vel.multiplyScalar(1 - Math.min(1, 3 * dt)); return; }
-    const moveSpeed = p.speed * clamp(1 - Math.abs(dyaw) / Math.PI, 0.35, 1);
+    p.headingError = Math.abs(wrapAngle(attackHeading.yaw - p.root.rotation.y));
+    p.propulsionEngaged = spaceShipPropulsionEngaged(p.spaceTravelMode, p.headingError);
+    if (!p.propulsionEngaged){
+      p.vel.multiplyScalar(1 - Math.min(1, 3 * dt));
+      return;
+    }
+    const moveSpeed = p.speed;
     p.vel.copy(direction).multiplyScalar(moveSpeed);
     p.root.position.addScaledVector(p.vel, dt);
   }
@@ -8252,6 +8270,9 @@ export function startBattle(renderer, opts, onEnd){
           speed: p.speed || 0, velocity: p.vel?.toArray?.() || null,
           broadside: !!p.broadside, broadsideSide: p.broadsideSide || 0,
           attackYaw: p.attackYaw == null ? null : +p.attackYaw.toFixed(3),
+          spaceTravelMode: p.spaceTravelMode || null,
+          propulsionEngaged: !!p.propulsionEngaged,
+          headingError: p.headingError == null ? null : +p.headingError.toFixed(3),
           carrierLaunchT: p.carrierLaunchT == null ? null : +p.carrierLaunchT.toFixed(2),
           carrierLaunchCycles: p.carrierLaunchCycles || 0,
           carrierLaunches: p.carrierLaunches?.slice(-8) || [],

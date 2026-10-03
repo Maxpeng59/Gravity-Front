@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   spaceShipAttackHeading,
+  spaceShipPropulsionEngaged,
+  spaceShipTravelMode,
   sweptHeavyCollisionFraction,
   wrapNavalAngle,
 } from '../js/naval-combat.js';
@@ -10,7 +12,7 @@ import {
 test('Federation gunships choose the shorter broadside inside battery range', () => {
   const port = spaceShipAttackHeading({
     team: 'FED', turretCount: 3, distance: 900, gunRange: 1400,
-    currentYaw: 1.2, targetYaw: 0,
+    currentYaw: 1.2, targetYaw: 0, travelMode: 'hold',
   });
   assert.equal(port.broadside, true);
   assert.equal(port.side, 1);
@@ -18,10 +20,30 @@ test('Federation gunships choose the shorter broadside inside battery range', ()
 
   const starboard = spaceShipAttackHeading({
     team: 'FED', turretCount: 4, distance: 900, gunRange: 1600,
-    currentYaw: -1.2, targetYaw: 0,
+    currentYaw: -1.2, targetYaw: 0, travelMode: 'hold',
   });
   assert.equal(starboard.side, -1);
   assert.ok(Math.abs(wrapNavalAngle(starboard.yaw + Math.PI / 2)) < 1e-9);
+});
+
+test('a Federation gunship turns bow-on whenever it needs to move', () => {
+  const result = spaceShipAttackHeading({
+    team: 'FED', turretCount: 3, distance: 900, gunRange: 1400,
+    currentYaw: Math.PI / 2, targetYaw: 0, travelMode: 'move', broadsideSide: 1,
+  });
+  assert.equal(result.broadside, false);
+  assert.equal(result.side, 0);
+  assert.equal(result.yaw, 0);
+  assert.equal(spaceShipPropulsionEngaged('move', Math.PI / 2), false);
+  assert.equal(spaceShipPropulsionEngaged('move', 0.17), true);
+  assert.equal(spaceShipPropulsionEngaged('hold', 0), false);
+});
+
+test('ship hold range uses hysteresis before switching back to travel', () => {
+  assert.equal(spaceShipTravelMode(1100, 1000, 'move'), 'move');
+  assert.equal(spaceShipTravelMode(1000, 1000, 'move'), 'hold');
+  assert.equal(spaceShipTravelMode(1040, 1000, 'hold'), 'hold');
+  assert.equal(spaceShipTravelMode(1056, 1000, 'hold'), 'move');
 });
 
 test('ships stay bow-on outside range and carriers do not fake a three-turret broadside', () => {
@@ -58,6 +80,8 @@ test('runtime tags only heavy ordnance for interception and reports broadside st
   assert.match(battle, /heavy: w\.type === 'bazooka' \|\| !!w\.shell/);
   assert.match(battle, /heavy: true, collisionRadius: p\.spaceProfile \? 2\.6 : p\.battery \? 1\.8 : 2\.1/);
   assert.match(battle, /spaceShipAttackHeading\(/);
+  assert.match(battle, /if \(!p\.propulsionEngaged\)/);
+  assert.match(battle, /p\.root\.position\.addScaledVector\(p\.vel, dt\)/);
   assert.match(battle, /heavyProjectileInterceptions/);
   assert.match(battle, /t\.shotsFired = \(t\.shotsFired \|\| 0\) \+ \(t\.shots \|\| 1\)/);
 });
