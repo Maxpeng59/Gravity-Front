@@ -17,6 +17,18 @@ test('custom space battle exposes the five faction-correct fleet hulls', () => {
   assert.ok(spaceShipProfile('columbus').standoff > spaceShipProfile('salamis').standoff);
 });
 
+test('capital ships cross space at the accelerated travel speeds', () => {
+  assert.deepEqual(Object.fromEntries(Object.entries(SPACE_SHIP_PROFILES)
+    .map(([id, profile]) => [id, profile.speed])), {
+    salamis: 56,
+    magellan: 42,
+    columbus: 32,
+    musai: 60,
+    chivvay: 44,
+  });
+  assert.ok(Object.values(SPACE_SHIP_PROFILES).every(profile => profile.speed >= 32));
+});
+
 test('every fleet hull is routed through a dedicated complex silhouette builder', () => {
   const source = readFileSync(new URL('../js/canonical-space-ships.js', import.meta.url), 'utf8');
   assert.match(source, /function longitudinalHull/);

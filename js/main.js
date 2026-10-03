@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=55playership1';
+import { startBattle } from './battle.js?v=56shipspeed1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
 import { MAPS } from './maps.js';
@@ -21,7 +21,7 @@ import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
-import { spaceShipProfile } from './space-ship-balance.js';
+import { spaceShipProfile } from './space-ship-balance.js?v=56shipspeed1';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import {
   CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,

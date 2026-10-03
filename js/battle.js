@@ -13,7 +13,7 @@ import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
-import { spaceShipProfile } from './space-ship-balance.js';
+import { spaceShipProfile } from './space-ship-balance.js?v=56shipspeed1';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
   FEDERATION_RAM_CHANCE_PER_SECOND,
