@@ -2,6 +2,7 @@ const PI = Math.PI;
 
 export const SPACE_SHIP_TURN_ALIGNMENT = 0.18;
 export const SPACE_SHIP_HOLD_HYSTERESIS = 55;
+export const FEDERATION_RAM_CHANCE_PER_SECOND = 0.08;
 
 export function wrapNavalAngle(angle){
   while (angle > PI) angle -= PI * 2;
@@ -41,7 +42,30 @@ export function spaceShipTravelMode(distance, standoff, previous = 'move'){
 }
 
 export function spaceShipPropulsionEngaged(travelMode, headingError){
-  return travelMode === 'move' && Math.abs(headingError) <= SPACE_SHIP_TURN_ALIGNMENT;
+  return (travelMode === 'move' || travelMode === 'charge')
+    && Math.abs(headingError) <= SPACE_SHIP_TURN_ALIGNMENT;
+}
+
+export function federationRamEligible({ team, kind, distance, standoff, cooldown = 0 }){
+  return team === 'FED'
+    && (kind === 'salamis' || kind === 'magellan')
+    && cooldown <= 0
+    && distance > 120
+    && distance <= standoff + 180;
+}
+
+export function spaceShipVelocityToward(offset, speed, horizontal = true, verticalFactor = 0.68){
+  const planar = Math.hypot(offset.x, offset.z);
+  const maxVertical = speed * verticalFactor;
+  const vertical = Math.max(-maxVertical, Math.min(maxVertical, offset.y * 0.32));
+  if (!horizontal) return { x: 0, y: vertical, z: 0 };
+  if (planar <= 1e-9) return { x: 0, y: vertical, z: 0 };
+  const planarSpeed = Math.sqrt(Math.max(0, speed * speed - vertical * vertical));
+  return {
+    x: offset.x / planar * planarSpeed,
+    y: vertical,
+    z: offset.z / planar * planarSpeed,
+  };
 }
 
 // Continuous point-against-point sweep expanded by both collision radii. The

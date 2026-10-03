@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=52shipremodel5';
+import { startBattle } from './battle.js?v=53fedram1';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
@@ -24,7 +24,7 @@ import { spaceShipProfile } from './space-ship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import {
   CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,
-} from './custom-roster.js?v=52shipremodel5';
+} from './custom-roster.js?v=53fedram1';
 import {
   STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
 } from './stationary-batteries.js';
@@ -319,6 +319,9 @@ function runBattle(opts, after){
     const fireOn = () => battleHandle?._debugInput({ fire: true });
     const fireOff = () => battleHandle?._debugInput({ fire: false });
     const viewShip = kind => battleHandle?._debugViewShip?.(kind);
+    const forceFedRam = () => {
+      document.documentElement.dataset.gravityFedRam = JSON.stringify(battleHandle?._debugForceFedShipCharge?.() || null);
+    };
     const publishState = () => {
       document.documentElement.dataset.gravityBattleState = JSON.stringify(battleHandle?._debugState?.() || null);
     };
@@ -331,6 +334,7 @@ function runBattle(opts, after){
     const qaFireOn = document.createElement('button');
     const qaFireOff = document.createElement('button');
     const qaState = document.createElement('button');
+    const qaFedRam = document.createElement('button');
     const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
       const button = document.createElement('button');
       button.id = `gravity-debug-view-${kind}`;
@@ -348,7 +352,12 @@ function runBattle(opts, after){
     qaFireOn.id = 'gravity-debug-fire-on';
     qaFireOff.id = 'gravity-debug-fire-off';
     qaState.id = 'gravity-debug-state';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, ...qaShipViews]) {
+    qaState.textContent = 'QA STATE';
+    qaState.dataset.qaShipIndex = '4';
+    qaFedRam.id = 'gravity-debug-fed-ram';
+    qaFedRam.textContent = 'QA FED RAM';
+    qaFedRam.dataset.qaShipIndex = '3';
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, ...qaShipViews]) {
       button.type = 'button';
       if (button.dataset.qaShipIndex) {
         const top = 8 + Number(button.dataset.qaShipIndex) * 32;
@@ -369,6 +378,7 @@ function runBattle(opts, after){
     qaFireOn.onclick = fireOn;
     qaFireOff.onclick = fireOff;
     qaState.onclick = publishState;
+    qaFedRam.onclick = forceFedRam;
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
     clearLocalBattleDebug = () => {
@@ -383,8 +393,10 @@ function runBattle(opts, after){
       qaFireOn.remove();
       qaFireOff.remove();
       qaState.remove();
+      qaFedRam.remove();
       for (const button of qaShipViews) button.remove();
       delete document.documentElement.dataset.gravityBattleState;
+      delete document.documentElement.dataset.gravityFedRam;
       delete globalThis.__gravityBattle;
     };
   }

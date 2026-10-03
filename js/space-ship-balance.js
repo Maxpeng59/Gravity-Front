@@ -4,11 +4,13 @@ export const SPACE_SHIP_PROFILES = Object.freeze({
   salamis: Object.freeze({
     name: 'Salamis-class', faction: 'FED', hp: 36000, speed: 14, turnRate: 0.13, standoff: 620,
     mainDamage: 360, mainSplash: 12, mainRof: [2.6, 4.2], mainRange: 1400,
+    ramSpeedMultiplier: 2.8, ramDuration: 30, ramCooldown: 38,
     role: 'SPACE CRUISER', code: 'EFSF mass-production cruiser',
   }),
   magellan: Object.freeze({
     name: 'Magellan-class', faction: 'FED', hp: 52000, speed: 10.5, turnRate: 0.095, standoff: 700,
     mainDamage: 440, mainSplash: 15, mainRof: [2.8, 4.4], mainRange: 1600, gunShots: 2,
+    ramSpeedMultiplier: 2.65, ramDuration: 34, ramCooldown: 44,
     role: 'SPACE BATTLESHIP', code: 'EFSF fleet flagship',
   }),
   columbus: Object.freeze({

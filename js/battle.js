@@ -12,13 +12,16 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=52shipremodel5';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=53fedram1';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
+  FEDERATION_RAM_CHANCE_PER_SECOND,
+  federationRamEligible,
   spaceShipAttackHeading,
   spaceShipPropulsionEngaged,
   spaceShipTravelMode,
+  spaceShipVelocityToward,
   sweptHeavyCollisionFraction,
 } from './naval-combat.js';
 import { applyAnimeLook, inkInstancedMesh } from './anime-render.js';
@@ -1321,6 +1324,7 @@ export function startBattle(renderer, opts, onEnd){
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
       carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
       carrierLaunchCycles: 0, carrierLaunches: [],
+      ramChargeT: 0, ramCooldown: 0, ramTarget: null, ramImpacts: 0, ramming: false,
       goal: null, arrived: false, escaped: false };
     // landships are long hulls — swap the single fat ball for a chain of spheres along the keel
     // (local: x=beam, z=prow) so both the damage hitbox and the physical block match the silhouette.
@@ -6528,8 +6532,9 @@ export function startBattle(renderer, opts, onEnd){
   const stv1 = new THREE.Vector3(), stv2 = new THREE.Vector3(), stv3 = new THREE.Vector3();
   function updateShipTurrets(p, dt){
     p.root.updateMatrixWorld(true);
-    const rangeSq = p.gunRange * p.gunRange;
     for (const t of p.turrets){
+      const turretRange = p.gunRange * (t.rangeScale || 1);
+      const rangeSq = turretRange * turretRange;
       const tw = t.yaw.getWorldPosition(stv1);
       let best = null, bd = rangeSq;
       for (const e of mechs){ if (!e.alive || e.team === p.team) continue; const d2 = e.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = e; } }
@@ -6555,12 +6560,12 @@ export function startBattle(renderer, opts, onEnd){
       t.gun.rotation.x = lerp(t.gun.rotation.x, clamp(-Math.atan2(dy, Math.hypot(dx, dz)), -0.5, 0.55), 3 * dt); // elevate
       t.cd -= dt;
       if (t.cd <= 0 && inArc && Math.abs(dyaw) < 0.16){                          // fire only once roughly lined up
-        t.cd = rng.range(p.gunRof[0], p.gunRof[1]);
+        t.cd = rng.range(p.gunRof[0], p.gunRof[1]) * (t.rofScale || 1);
         t.yaw.updateMatrixWorld(true);                                          // refresh so the muzzle reflects this frame's aim
         const muzzleNodes = t.muzzles?.length ? t.muzzles : [t.muzzle];
         const shellSpeed = p.landProfile?.shellSpeed || p.shellSpeed || 420;
         const shellLife = p.landProfile?.shellLife || p.shellLife || 5.5;
-        const shellScale = p.landProfile?.shellScale || p.shellScale || 1.05;
+        const shellScale = (p.landProfile?.shellScale || p.shellScale || 1.05) * (t.shellScale || 1);
         const muzzleStart = t.muzzleCursor || 0;
         for (let shot = 0; shot < (t.shots || 1); shot++){
           const mw = muzzleNodes[(muzzleStart + shot) % muzzleNodes.length].getWorldPosition(new THREE.Vector3());
@@ -6572,10 +6577,11 @@ export function startBattle(renderer, opts, onEnd){
           const mesh = p.spaceProfile
             ? new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat)
             : makeShell(shellScale, false);
+          if (p.spaceProfile && t.shellScale) mesh.scale.setScalar(t.shellScale);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg, splash: p.gunSplash, team: p.team, owner: p,
-            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? 'SHIP MAIN BATTERY' : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
-            heavy: true, collisionRadius: p.spaceProfile ? 2.6 : p.battery ? 1.8 : 2.1 });
+          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg * (t.damageScale || 1), splash: p.gunSplash * (t.splashScale || 1), team: p.team, owner: p,
+            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? (t.weaponName || 'SHIP MAIN BATTERY') : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
+            heavy: t.heavy ?? true, collisionRadius: t.collisionRadius ?? (p.spaceProfile ? 2.6 : p.battery ? 1.8 : 2.1) });
         }
         t.shotsFired = (t.shotsFired || 0) + (t.shots || 1);
         t.muzzleCursor = (muzzleStart + (t.shots || 1)) % muzzleNodes.length;
@@ -6594,6 +6600,16 @@ export function startBattle(renderer, opts, onEnd){
     }
     if (ships) for (const q of props){
       if (!q.alive || q === p || q.team === p.team || !q.isShip) continue;
+      const d2 = q.root.position.distanceToSquared(p.root.position);
+      if (d2 < bestSq){ bestSq = d2; best = q; }
+    }
+    return best;
+  }
+
+  function nearestHostileShip(p, range = Infinity){
+    let best = null, bestSq = range * range;
+    for (const q of props){
+      if (!q.alive || q === p || q.team === p.team || !q.spaceProfile) continue;
       const d2 = q.root.position.distanceToSquared(p.root.position);
       if (d2 < bestSq){ bestSq = d2; best = q; }
     }
@@ -6678,22 +6694,44 @@ export function startBattle(renderer, opts, onEnd){
 
   function updateSpaceShipMovement(p, dt){
     if (!SPACE || !p.spaceProfile || p.speed <= 0) return;
-    const target = nearestLandshipTarget(p, Infinity, true);
+    p.ramCooldown = Math.max(0, (p.ramCooldown || 0) - dt);
+    if (p.ramChargeT > 0) p.ramChargeT = Math.max(0, p.ramChargeT - dt);
+    if (!p.ramTarget?.alive || p.ramChargeT <= 0) p.ramTarget = null;
+    const hostileShip = nearestHostileShip(p);
+    if (!p.ramTarget && hostileShip){
+      const hostileDistance = hostileShip.root.position.distanceTo(p.root.position);
+      const canRam = federationRamEligible({
+        team: p.team, kind: p.kind, distance: hostileDistance,
+        standoff: p.standoff, cooldown: p.ramCooldown,
+      });
+      const pressure = p.hp / Math.max(1, p.maxHp) < 0.48 ? 1.8 : 1;
+      if (canRam && rng.chance(dt * FEDERATION_RAM_CHANCE_PER_SECOND * pressure)){
+        p.ramTarget = hostileShip;
+        p.ramChargeT = p.spaceProfile.ramDuration;
+      }
+    }
+    const ramming = !!(p.ramTarget?.alive && p.ramChargeT > 0);
+    const target = ramming ? p.ramTarget : nearestLandshipTarget(p, Infinity, true);
     if (!target){
       p.spaceTravelMode = 'idle';
+      p.ramming = false;
       p.propulsionEngaged = false;
       p.headingError = null;
       p.vel.multiplyScalar(1 - Math.min(1, 2 * dt));
       return;
     }
-    const offset = stv1.subVectors(target.root.position, p.root.position);
+    p.ramming = ramming;
+    const offset = stv1.subVectors(target.root.position, p.root.position).clone();
     const distance = offset.length();
-    const direction = offset.multiplyScalar(1 / Math.max(1, distance));
-    const targetYaw = Math.atan2(direction.x, direction.z);
-    p.spaceTravelMode = spaceShipTravelMode(distance, p.standoff, p.spaceTravelMode);
+    const planarDistance = Math.hypot(offset.x, offset.z);
+    const targetYaw = Math.atan2(offset.x, offset.z);
+    p.spaceTravelMode = ramming
+      ? 'charge'
+      : spaceShipTravelMode(planarDistance, p.standoff, p.spaceTravelMode);
+    const mainTurretCount = p.turrets?.filter(t => !t.secondary).length || 0;
     const attackHeading = spaceShipAttackHeading({
       team: p.team,
-      turretCount: p.turrets?.length || 0,
+      turretCount: mainTurretCount,
       distance,
       gunRange: p.gunRange,
       currentYaw: p.root.rotation.y,
@@ -6708,13 +6746,35 @@ export function startBattle(renderer, opts, onEnd){
     p.root.rotation.y += clamp(dyaw, -p.turnRate * dt, p.turnRate * dt);
     p.headingError = Math.abs(wrapAngle(attackHeading.yaw - p.root.rotation.y));
     p.propulsionEngaged = spaceShipPropulsionEngaged(p.spaceTravelMode, p.headingError);
+    const moveSpeed = p.speed * (ramming ? p.spaceProfile.ramSpeedMultiplier : 1);
+    const desired = spaceShipVelocityToward(offset, moveSpeed, p.propulsionEngaged, ramming ? 0.82 : 0.68);
     if (!p.propulsionEngaged){
-      p.vel.multiplyScalar(1 - Math.min(1, 3 * dt));
-      return;
+      // Height-control verniers may work while broadside, but the ship does not
+      // translate horizontally until its bow is back on the travel heading.
+      p.vel.x = 0;
+      p.vel.z = 0;
     }
-    const moveSpeed = p.speed;
-    p.vel.copy(direction).multiplyScalar(moveSpeed);
+    p.vel.x = p.propulsionEngaged ? desired.x : p.vel.x;
+    p.vel.z = p.propulsionEngaged ? desired.z : p.vel.z;
+    p.vel.y = Math.abs(offset.y) < 1.5 ? 0 : desired.y;
+    p.verticalThrust = Math.abs(p.vel.y) > 0.2;
     p.root.position.addScaledVector(p.vel, dt);
+
+    if (ramming && target.alive){
+      const contact = (p.radius + target.radius) * 0.68;
+      if (p.root.position.distanceTo(target.root.position) <= contact){
+        const impact = p.root.position.clone().lerp(target.root.position, 0.5);
+        const ramDamage = Math.max(6500, Math.min(target.maxHp * 0.42, p.maxHp * 0.38));
+        p.ramImpacts = (p.ramImpacts || 0) + 1;
+        p.ramChargeT = 0;
+        p.ramCooldown = p.spaceProfile.ramCooldown;
+        p.ramTarget = null;
+        p.ramming = false;
+        explosion(impact, 36, clamp(700 / impact.distanceTo(player.root.position), 0.14, 0.48));
+        damageProp(target, ramDamage, impact, p, 'BOW RAM');
+        damageProp(p, ramDamage * 0.38, impact, target, 'RAMMING COLLISION');
+      }
+    }
   }
 
   function launchColumbusReinforcement(carrier, suitId, slotIndex){
@@ -8018,6 +8078,25 @@ export function startBattle(renderer, opts, onEnd){
       renderer.render(scene, camera);
       return { kind, silhouette: ship.root.children[0]?.userData?.silhouette || null };
     },
+    _debugForceFedShipCharge(){
+      const fed = props.find(p => p.alive && p.team === 'FED' && p.spaceProfile?.ramDuration);
+      const foe = fed ? props.find(p => p.alive && p.team !== 'FED' && p.spaceProfile) : null;
+      if (!fed || !foe) return null;
+      const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(fed.root.quaternion).normalize();
+      foe.root.position.copy(fed.root.position).addScaledVector(forward, 340);
+      foe.root.position.y += 140;
+      fed.ramTarget = foe;
+      fed.ramChargeT = fed.spaceProfile.ramDuration;
+      fed.ramCooldown = 0;
+      fed.root.rotation.y = Math.atan2(
+        foe.root.position.x - fed.root.position.x,
+        foe.root.position.z - fed.root.position.z,
+      );
+      paused = false;
+      started = true;
+      setMsg('FEDERATION BOW CHARGE', 2);
+      return { attacker: fed.kind, target: foe.kind, heightDelta: foe.root.position.y - fed.root.position.y };
+    },
     _debugState(){
       const selectedWeapon = player.suit.weapons[player.wi];
       const activeMuzzle = selectedWeapon ? activeMuzzleNode(player) : null;
@@ -8293,11 +8372,18 @@ export function startBattle(renderer, opts, onEnd){
           attackYaw: p.attackYaw == null ? null : +p.attackYaw.toFixed(3),
           spaceTravelMode: p.spaceTravelMode || null,
           propulsionEngaged: !!p.propulsionEngaged,
+          verticalThrust: !!p.verticalThrust,
           headingError: p.headingError == null ? null : +p.headingError.toFixed(3),
+          ramming: !!p.ramming,
+          ramChargeT: +(p.ramChargeT || 0).toFixed(2),
+          ramCooldown: +(p.ramCooldown || 0).toFixed(2),
+          ramImpacts: p.ramImpacts || 0,
           carrierLaunchT: p.carrierLaunchT == null ? null : +p.carrierLaunchT.toFixed(2),
           carrierLaunchCycles: p.carrierLaunchCycles || 0,
           carrierLaunches: p.carrierLaunches?.slice(-8) || [],
-          mainTurrets: p.turrets?.length || 0, fixedGuns: p.fixedMuzzles?.length || 0,
+          mainTurrets: p.turrets?.filter(t => !t.secondary).length || 0,
+          sideTurrets: p.turrets?.filter(t => t.secondary).length || 0,
+          fixedGuns: p.fixedMuzzles?.length || 0,
           turretShots: p.turrets?.map(t => t.shotsFired || 0) || [],
           secondaryStations: p.secondaryMuzzles?.length || 0 })),
         missionType: mission.type, missionT, outcome, ended, wavesQueued: waveQueue.length,

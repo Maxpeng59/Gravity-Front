@@ -64,8 +64,13 @@ function addWindows(parent, glow, xs, y, z, width = 1.5){
 }
 
 function addTurret(root, turrets, armor, dark, cooldown, spec){
-  const { x = 0, y, z, width, offsets, length, rear = false, arc = PI } = spec;
-  const yaw = new THREE.Group(); yaw.position.set(x, y, z); yaw.rotation.y = rear ? PI : 0; root.add(yaw);
+  const {
+    x = 0, y, z, width, offsets, length, rear = false, arc = PI,
+    restYaw = rear ? PI : 0, secondary = false, damageScale = 1,
+    splashScale = 1, rofScale = 1, rangeScale = 1, shellScale = 1,
+    heavy = true, collisionRadius = 2.6, weaponName = 'SHIP MAIN BATTERY',
+  } = spec;
+  const yaw = new THREE.Group(); yaw.position.set(x, y, z); yaw.rotation.y = restYaw; root.add(yaw);
   yaw.add(cyl(width * 0.5, width * 0.62, width * 0.28, dark, 0, 0, 0, 14));
   const gun = new THREE.Group(); gun.position.y = width * 0.18; yaw.add(gun);
   gun.add(chamferBox(width, width * 0.48, width * 0.88, armor, 0, width * 0.16, 0, width * 0.08));
@@ -77,8 +82,29 @@ function addTurret(root, turrets, armor, dark, cooldown, spec){
   }
   turrets.push({
     yaw, gun, muzzle: muzzles[0], muzzles, cd: cooldown(),
-    restYaw: rear ? PI : 0, arc, shots: offsets.length,
+    restYaw, arc, shots: offsets.length, secondary, damageScale, splashScale,
+    rofScale, rangeScale, shellScale, heavy, collisionRadius, weaponName,
   });
+}
+
+const FEDERATION_SIDE_BATTERY_Z = Object.freeze([-34, -17, 0, 17, 34]);
+
+function addFederationSideBatteries(root, turrets, armor, dark, cooldown, {
+  x, y, zStations = FEDERATION_SIDE_BATTERY_Z, width = 2.35, length = 5.6,
+  damageScale = 0.34, rangeScale = 0.68,
+}){
+  // Five light defensive stations on both port and starboard. Their pivots rest
+  // facing outboard, so the silhouette reads as side-mounted armament even idle.
+  for (const side of [-1, 1]) for (const z of zStations) addTurret(
+    root, turrets, armor, dark, cooldown,
+    {
+      x: side * x, y, z, width, offsets: [0], length,
+      restYaw: side * PI / 2, arc: PI * 0.62,
+      secondary: true, damageScale, splashScale: 0.22,
+      rofScale: 0.46, rangeScale, shellScale: 0.48,
+      heavy: false, collisionRadius: 0.65, weaponName: 'SHIP SIDE BATTERY',
+    },
+  );
 }
 
 function buildMusai(glow, thrust, cooldown){
@@ -188,6 +214,8 @@ function buildSalamis(glow, thrust, cooldown){
   for (const ex of [-7, 0, 7]) addEngine(staticHull, blue, dark, thrust, ex, 10, -64, ex ? 2.8 : 3.5);
   for (const [z, rear] of [[39, false], [21, false], [-27, true]]) addTurret(root, turrets, yellow, dark, cooldown,
     { y: 20.5, z, width: 4.8, offsets: [-1.05, 1.05], length: 9.5, rear, arc: PI * 0.8 });
+  addFederationSideBatteries(root, turrets, light, dark, cooldown,
+    { x: 11.4, y: 16.8, width: 2.25, length: 5.5 });
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'salamis-triangle-waist-box-drive';
   return { root, turrets };
@@ -223,6 +251,8 @@ function buildMagellan(glow, thrust, cooldown){
   for (const ex of [-9.5, -3.2, 3.2, 9.5]) addEngine(staticHull, teal, dark, thrust, ex, 10, -77, 3.4);
   for (const [z, rear] of [[48, false], [27, false], [-24, true], [-43, true]]) addTurret(root, turrets, yellow, dark, cooldown,
     { y: 26.5, z, width: 6.1, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.76 });
+  addFederationSideBatteries(root, turrets, light, dark, cooldown,
+    { x: 14.8, y: 18.5, zStations: [-42, -21, 0, 21, 42], width: 2.6, length: 6.2, damageScale: 0.38, rangeScale: 0.72 });
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'magellan-long-wedge-heavy-drive';
   return { root, turrets };
@@ -245,6 +275,8 @@ function buildColumbus(glow, thrust, cooldown){
   staticHull.add(chamferBox(14, 1.2, 16, dark, 0, 5, 31, 0.2)); // forward loading ramp
   for (const sx of [-1, 1]) addTurret(root, turrets, light, dark, cooldown,
     { x: sx * 10, y: 25, z: 29, width: 4.1, offsets: [0], length: 7, arc: PI * 0.7 });
+  addFederationSideBatteries(root, turrets, light, dark, cooldown,
+    { x: 18.8, y: 17.5, zStations: [-30, -15, 0, 15, 30], width: 2.05, length: 4.7, damageScale: 0.28, rangeScale: 0.6 });
   compactGroup(staticHull); root.add(staticHull);
   return { root, turrets };
 }

@@ -35,6 +35,15 @@ test('every fleet hull is routed through a dedicated complex silhouette builder'
   assert.match(source, /Swan-neck command tower and hammerhead bridge/);
 });
 
+test('each Federation hull mounts five light batteries on both sides', () => {
+  const source = readFileSync(new URL('../js/canonical-space-ships.js', import.meta.url), 'utf8');
+  assert.match(source, /FEDERATION_SIDE_BATTERY_Z = Object\.freeze\(\[-34, -17, 0, 17, 34\]\)/);
+  assert.equal((source.match(/addFederationSideBatteries\(root, turrets/g) || []).length, 4);
+  assert.match(source, /for \(const side of \[-1, 1\]\) for \(const z of zStations\)/);
+  assert.match(source, /secondary: true/);
+  assert.match(source, /weaponName: 'SHIP SIDE BATTERY'/);
+});
+
 test('space hulls appear only in space rosters and actively maneuver and fire', () => {
   const menu = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
@@ -47,5 +56,6 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
   assert.match(battle, /_debugViewShip\(kind = 'salamis'/);
   assert.match(battle, /\[\.\.\.props, \.\.\.missionProps\]\.find/);
   assert.match(battle, /if \(p\.alive && p\.spaceProfile\)\{[\s\S]*?updateSpaceShipMovement\(p, dt\)/);
-  assert.match(battle, /p\.spaceProfile \? 'SHIP MAIN BATTERY'/);
+  assert.match(battle, /t\.weaponName \|\| 'SHIP MAIN BATTERY'/);
+  assert.match(battle, /sideTurrets: p\.turrets\?\.filter\(t => t\.secondary\)\.length/);
 });

@@ -2,9 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
+  federationRamEligible,
   spaceShipAttackHeading,
   spaceShipPropulsionEngaged,
   spaceShipTravelMode,
+  spaceShipVelocityToward,
   sweptHeavyCollisionFraction,
   wrapNavalAngle,
 } from '../js/naval-combat.js';
@@ -37,6 +39,38 @@ test('a Federation gunship turns bow-on whenever it needs to move', () => {
   assert.equal(spaceShipPropulsionEngaged('move', Math.PI / 2), false);
   assert.equal(spaceShipPropulsionEngaged('move', 0.17), true);
   assert.equal(spaceShipPropulsionEngaged('hold', 0), false);
+});
+
+test('Federation combat ships can commit to a bow-first charge but the carrier and Zeon cannot', () => {
+  assert.equal(federationRamEligible({
+    team: 'FED', kind: 'salamis', distance: 720, standoff: 620, cooldown: 0,
+  }), true);
+  assert.equal(federationRamEligible({
+    team: 'FED', kind: 'magellan', distance: 820, standoff: 700, cooldown: 0,
+  }), true);
+  assert.equal(federationRamEligible({
+    team: 'FED', kind: 'columbus', distance: 720, standoff: 900, cooldown: 0,
+  }), false);
+  assert.equal(federationRamEligible({
+    team: 'ZEON', kind: 'musai', distance: 720, standoff: 620, cooldown: 0,
+  }), false);
+  const heading = spaceShipAttackHeading({
+    team: 'FED', turretCount: 4, distance: 500, gunRange: 1600,
+    currentYaw: Math.PI / 2, targetYaw: 0, travelMode: 'charge', broadsideSide: 1,
+  });
+  assert.equal(heading.broadside, false);
+  assert.equal(heading.yaw, 0);
+  assert.equal(spaceShipPropulsionEngaged('charge', 0.1), true);
+});
+
+test('space ships climb and descend without exceeding their commanded speed', () => {
+  const climb = spaceShipVelocityToward({ x: 100, y: 500, z: 0 }, 20, true, 0.68);
+  const descend = spaceShipVelocityToward({ x: 0, y: -80, z: 100 }, 20, false, 0.68);
+  assert.ok(climb.y > 0 && climb.y <= 13.600001);
+  assert.ok(Math.hypot(climb.x, climb.y, climb.z) <= 20 + 1e-9);
+  assert.equal(descend.x, 0);
+  assert.ok(descend.y < 0);
+  assert.equal(descend.z, 0);
 });
 
 test('ship hold range uses hysteresis before switching back to travel', () => {
@@ -78,9 +112,11 @@ test('runtime tags only heavy ordnance for interception and reports broadside st
   assert.match(battle, /function detonateHeavyProjectileCollisions/);
   assert.match(battle, /a\.owner === b\.owner/);
   assert.match(battle, /heavy: w\.type === 'bazooka' \|\| !!w\.shell/);
-  assert.match(battle, /heavy: true, collisionRadius: p\.spaceProfile \? 2\.6 : p\.battery \? 1\.8 : 2\.1/);
+  assert.match(battle, /heavy: t\.heavy \?\? true/);
   assert.match(battle, /spaceShipAttackHeading\(/);
-  assert.match(battle, /if \(!p\.propulsionEngaged\)/);
+  assert.match(battle, /federationRamEligible\(/);
+  assert.match(battle, /damageProp\(target, ramDamage, impact, p, 'BOW RAM'\)/);
+  assert.match(battle, /spaceShipVelocityToward\(/);
   assert.match(battle, /p\.root\.position\.addScaledVector\(p\.vel, dt\)/);
   assert.match(battle, /heavyProjectileInterceptions/);
   assert.match(battle, /t\.shotsFired = \(t\.shotsFired \|\| 0\) \+ \(t\.shots \|\| 1\)/);
