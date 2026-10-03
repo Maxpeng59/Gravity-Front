@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=50fleetcap';
+import { startBattle } from './battle.js?v=52shipremodel5';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
@@ -24,7 +24,7 @@ import { spaceShipProfile } from './space-ship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import {
   CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,
-} from './custom-roster.js?v=50fleetcap';
+} from './custom-roster.js?v=52shipremodel5';
 import {
   STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
 } from './stationary-batteries.js';
@@ -318,6 +318,7 @@ function runBattle(opts, after){
     const missileRack = () => battleHandle?._debugInput({ weapon: 2, ready: true });
     const fireOn = () => battleHandle?._debugInput({ fire: true });
     const fireOff = () => battleHandle?._debugInput({ fire: false });
+    const viewShip = kind => battleHandle?._debugViewShip?.(kind);
     const publishState = () => {
       document.documentElement.dataset.gravityBattleState = JSON.stringify(battleHandle?._debugState?.() || null);
     };
@@ -330,6 +331,14 @@ function runBattle(opts, after){
     const qaFireOn = document.createElement('button');
     const qaFireOff = document.createElement('button');
     const qaState = document.createElement('button');
+    const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
+      const button = document.createElement('button');
+      button.id = `gravity-debug-view-${kind}`;
+      button.textContent = `QA ${kind.toUpperCase()}`;
+      button.dataset.qaShipIndex = String(index);
+      button.onclick = () => viewShip(kind);
+      return button;
+    });
     qaUnpause.id = 'gravity-debug-unpause';
     qaColonyFlight.id = 'gravity-debug-colony-flight';
     qaColonySurface.id = 'gravity-debug-colony-surface';
@@ -339,11 +348,16 @@ function runBattle(opts, after){
     qaFireOn.id = 'gravity-debug-fire-on';
     qaFireOff.id = 'gravity-debug-fire-off';
     qaState.id = 'gravity-debug-state';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState]) {
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, ...qaShipViews]) {
       button.type = 'button';
-      button.tabIndex = -1;
-      button.setAttribute('aria-hidden', 'true');
-      button.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1';
+      if (button.dataset.qaShipIndex) {
+        const top = 8 + Number(button.dataset.qaShipIndex) * 32;
+        button.style.cssText = `position:fixed;left:8px;top:${top}px;width:120px;height:26px;opacity:.85;z-index:99999`;
+      } else {
+        button.tabIndex = -1;
+        button.setAttribute('aria-hidden', 'true');
+        button.style.cssText = 'position:fixed;left:0;top:0;width:1px;height:1px;opacity:0;z-index:-1';
+      }
       document.body.appendChild(button);
     }
     qaUnpause.onclick = unpause;
@@ -369,6 +383,7 @@ function runBattle(opts, after){
       qaFireOn.remove();
       qaFireOff.remove();
       qaState.remove();
+      for (const button of qaShipViews) button.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete globalThis.__gravityBattle;
     };

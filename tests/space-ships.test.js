@@ -26,8 +26,13 @@ test('every fleet hull is routed through a dedicated complex silhouette builder'
   assert.match(source, /kind === 'salamis'.*buildSalamis/);
   assert.match(source, /kind === 'magellan'.*buildMagellan/);
   assert.match(source, /kind === 'columbus'.*buildColumbus/);
-  assert.match(source, /separated twin engine nacelles/);
+  assert.match(source, /separated .*nacelles/);
   assert.match(source, /Broad twin cargo bodies/);
+  assert.match(source, /salamis-triangle-waist-box-drive/);
+  assert.match(source, /magellan-long-wedge-heavy-drive/);
+  assert.match(source, /musai-swan-neck-twin-nacelle/);
+  assert.match(source, /triangular prow, a visible inward waist/);
+  assert.match(source, /Swan-neck command tower and hammerhead bridge/);
 });
 
 test('space hulls appear only in space rosters and actively maneuver and fire', () => {
@@ -39,6 +44,8 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
   assert.match(menu, /custom\.env === 'space' \? 'salamis'/);
   assert.match(battle, /buildCanonicalSpaceShip\(kind, glow, thrust/);
   assert.match(battle, /function updateSpaceShipMovement/);
+  assert.match(battle, /_debugViewShip\(kind = 'salamis'/);
+  assert.match(battle, /\[\.\.\.props, \.\.\.missionProps\]\.find/);
   assert.match(battle, /if \(p\.alive && p\.spaceProfile\)\{[\s\S]*?updateSpaceShipMovement\(p, dt\)/);
   assert.match(battle, /p\.spaceProfile \? 'SHIP MAIN BATTERY'/);
 });

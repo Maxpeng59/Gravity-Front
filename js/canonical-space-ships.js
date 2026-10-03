@@ -83,29 +83,52 @@ function addTurret(root, turrets, armor, dark, cooldown, spec){
 
 function buildMusai(glow, thrust, cooldown){
   const root = new THREE.Group(), staticHull = new THREE.Group(), turrets = [];
-  const green = std(0x657b59), light = std(0x839271), dark = std(0x2e3b31, { metalness: 0.58 });
-  staticHull.add(longitudinalHull([
-    [-35, 6.4, 17, 7], [-10, 7.2, 18, 5.5], [26, 6.1, 17, 6.5], [48, 2.1, 13, 9],
-  ], green));
-  staticHull.add(longitudinalHull([[-30, 4.4, 20, 16], [22, 4.8, 21, 15], [39, 2.2, 17, 13]], light));
-  staticHull.add(longitudinalHull([[-28, 2.3, 8, 2], [22, 3.5, 8, 2.5], [43, 1.2, 10, 7]], dark));
+  const green = std(0x5f7855), light = std(0x849773), dark = std(0x28382d, { metalness: 0.58 });
+  const red = std(0x7c2d2d, { emissive: 0x3b0909, emissiveIntensity: 0.45 });
 
-  // The Musai silhouette is defined by its separated twin engine nacelles.
+  // Organic Zeon prow: a low pointed body beneath the raised command neck.
+  staticHull.add(longitudinalHull([
+    [-31, 7.2, 17, 6], [-12, 9.5, 20, 4], [15, 11.4, 19, 3],
+    [37, 7.2, 15, 5.5], [55, 1.3, 10.5, 7.5],
+  ], green));
+  staticHull.add(longitudinalHull([
+    [-24, 5.4, 22, 16], [12, 7.8, 23, 15], [35, 4.2, 18, 13], [48, 1.5, 13, 10],
+  ], light));
+  staticHull.add(longitudinalHull([[-30, 3.4, 7, 1], [18, 5.5, 7, 1.5], [47, 1.2, 10, 7]], dark));
+  const roundedProw = sph(6.5, light, 0, 13.5, 29, 18, 10);
+  roundedProw.scale.set(1.45, 0.62, 2.35); staticHull.add(roundedProw);
+
+  // The Musai silhouette is defined by its widely separated teardrop nacelles.
   for (const sx of [-1, 1]){
     staticHull.add(longitudinalHull([
-      [-49, 4.8, 15, 6], [-31, 5.4, 17, 5], [-7, 4.4, 15, 7], [7, 2.2, 12, 9],
-    ], green, sx * 13));
-    staticHull.add(chamferBox(9.5, 2.8, 6.5, dark, sx * 8.5, 11, -12, 0.36));
-    addEngine(staticHull, green, dark, thrust, sx * 13, 10.5, -50, 3.8);
+      [-57, 6.2, 15, 4], [-42, 7.4, 17, 2], [-18, 7.1, 16, 3],
+      [5, 5.3, 13, 5], [27, 1.8, 10, 7],
+    ], green, sx * 16));
+    const nacelleShoulder = sph(5.4, light, sx * 16, 10, -17, 16, 10);
+    nacelleShoulder.scale.set(1.25, 0.72, 2.7); staticHull.add(nacelleShoulder);
+    staticHull.add(chamferBox(13, 2.4, 7, dark, sx * 10.5, 10, -18, 0.34));
+    const tailFin = profile([[-8, 0], [-3, 9], [2, 14], [5, 2], [8, 0]], [], 0.85,
+      green, sx * 16, 15, -45);
+    staticHull.add(tailFin);
+    addEngine(staticHull, green, dark, thrust, sx * 16, 9.5, -59, 4.8);
   }
-  staticHull.add(chamferBox(4.8, 7, 7, dark, 0, 21, -5, 0.5));
-  staticHull.add(sph(3.4, light, 0, 25.5, -4, 18, 12));
-  staticHull.add(chamferBox(4.4, 1.2, 0.35, glow, 0, 25.5, -0.6, 0.08));
-  staticHull.add(cyl(0.28, 0.28, 8, dark, 0, 32, -5, 8));
+
+  // Swan-neck command tower and hammerhead bridge distinguish it at a glance.
+  staticHull.add(profile([
+    [-13, 0], [-10, 10], [-4, 18], [3, 22], [9, 20], [5, 13], [0, 9], [-3, 0],
+  ], [], 7.2, green, 0, 17, -13));
+  staticHull.add(longitudinalHull([
+    [-17, 5.4, 38, 31], [-5, 6.8, 40, 30], [8, 5.8, 38, 30], [16, 2.4, 34, 31],
+  ], light));
+  staticHull.add(chamferBox(9.5, 3.2, 8.5, dark, 0, 39.5, -7, 0.4));
+  staticHull.add(chamferBox(6.2, 1.1, 0.4, glow, 0, 40, -2.55, 0.06));
+  staticHull.add(sph(0.85, red, 0, 43.2, -6.5, 12, 8));
+  staticHull.add(cyl(0.28, 0.28, 9, dark, 0, 47, -8, 8));
   staticHull.add(chamferBox(6.5, 1.0, 8.5, dark, 0, 5.8, 19, 0.18)); // ventral MS hatch
-  for (const z of [29, 14, -2]) addTurret(root, turrets, light, dark, cooldown,
-    { y: 20.5, z, width: 5.1, offsets: [-1.25, 0, 1.25], length: 9.5, arc: PI * 0.78 });
+  for (const z of [32, 15, -5]) addTurret(root, turrets, light, dark, cooldown,
+    { y: 22.5, z, width: 5.1, offsets: [-1.25, 0, 1.25], length: 9.5, arc: PI * 0.78 });
   compactGroup(staticHull); root.add(staticHull);
+  root.userData.silhouette = 'musai-swan-neck-twin-nacelle';
   return { root, turrets };
 }
 
@@ -135,22 +158,38 @@ function buildSalamis(glow, thrust, cooldown){
   const root = new THREE.Group(), staticHull = new THREE.Group(), turrets = [];
   const blue = std(0x778a99), light = std(0x9aa8b0), red = std(0x8d4047), dark = std(0x38434c, { metalness: 0.6 });
   const yellow = std(0xc7a64d, { metalness: 0.34 });
+
+  // Salamis: triangular prow, a visible inward waist, then a rectangular drive block.
   staticHull.add(longitudinalHull([
-    [-48, 8.2, 17, 6], [-20, 9.2, 18, 4], [22, 8.4, 18, 5], [45, 5.2, 15, 7], [57, 1.6, 12, 9],
+    [-48, 11.4, 18, 2], [-31, 11.8, 19, 1], [-15, 9.1, 17, 3],
+    [5, 8.2, 17, 3.5], [20, 10.2, 18, 4], [38, 8.2, 16, 5.5],
+    [54, 4.5, 13, 7], [64, 0.75, 10, 8],
   ], blue));
-  staticHull.add(longitudinalHull([[-42, 5.8, 7, 1], [12, 6.5, 7, 0], [43, 3.8, 9, 4]], red));
-  staticHull.add(chamferBox(10, 6, 15, blue, 0, 21, -4, 0.7));
-  staticHull.add(chamferBox(7.2, 5, 9, light, 0, 26, -5, 0.55));
-  staticHull.add(chamferBox(5.2, 3.6, 6, dark, 0, 30, -5, 0.4));
-  addWindows(staticHull, glow, [-1.8, 0, 1.8], 30, -1.9, 1.15);
+  staticHull.add(longitudinalHull([
+    [-42, 7.4, 7, 0], [-14, 6.4, 7, -0.5], [9, 5.2, 7, 0],
+    [36, 4.8, 9, 4], [56, 1.1, 9, 7],
+  ], red));
+  staticHull.add(chamferBox(23.5, 16, 21, blue, 0, 10, -50, 0.65));
+  staticHull.add(chamferBox(20.5, 10, 8, dark, 0, 10, -61.5, 0.32));
+  for (const sx of [-1, 1]){
+    staticHull.add(longitudinalHull([
+      [-31, 3.2, 16, 5], [-11, 2.7, 15, 5], [7, 1.5, 13, 6], [29, 0.7, 11, 7],
+    ], light, sx * 9.2));
+    staticHull.add(chamferBox(2.8, 3.5, 19, dark, sx * 9.4, 10, -2, 0.25));
+  }
+  staticHull.add(chamferBox(11, 6, 15, blue, 0, 21.5, -5, 0.7));
+  staticHull.add(chamferBox(7.8, 5.2, 10, light, 0, 27, -6, 0.55));
+  staticHull.add(chamferBox(5.4, 3.8, 6.5, dark, 0, 31.2, -6, 0.4));
+  addWindows(staticHull, glow, [-1.9, 0, 1.9], 31.3, -2.7, 1.2);
   for (const sx of [-1, 1]){
     const fin = profile([[-1.2, 0], [-0.7, 9], [0.7, 12], [1.2, 0]], [], 0.65, yellow, sx * 4.2, 29, -8);
     staticHull.add(fin);
   }
-  for (const ex of [-5.2, 0, 5.2]) addEngine(staticHull, blue, dark, thrust, ex, 10, -50, ex ? 2.6 : 3.4);
-  for (const [z, rear] of [[34, false], [20, false], [-28, true]]) addTurret(root, turrets, yellow, dark, cooldown,
-    { y: 20, z, width: 4.8, offsets: [-1.05, 1.05], length: 9.5, rear, arc: PI * 0.8 });
+  for (const ex of [-7, 0, 7]) addEngine(staticHull, blue, dark, thrust, ex, 10, -64, ex ? 2.8 : 3.5);
+  for (const [z, rear] of [[39, false], [21, false], [-27, true]]) addTurret(root, turrets, yellow, dark, cooldown,
+    { y: 20.5, z, width: 4.8, offsets: [-1.05, 1.05], length: 9.5, rear, arc: PI * 0.8 });
   compactGroup(staticHull); root.add(staticHull);
+  root.userData.silhouette = 'salamis-triangle-waist-box-drive';
   return { root, turrets };
 }
 
@@ -158,21 +197,34 @@ function buildMagellan(glow, thrust, cooldown){
   const root = new THREE.Group(), staticHull = new THREE.Group(), turrets = [];
   const teal = std(0x657d7c), light = std(0x829898), dark = std(0x344849, { metalness: 0.62 });
   const yellow = std(0xc8a753, { metalness: 0.36 });
+
+  // Magellan: a longer, heavier armored wedge with a broad squared engine house.
   staticHull.add(longitudinalHull([
-    [-55, 10.5, 18, 4], [-32, 13, 21, 2], [15, 14, 23, 2], [43, 9.5, 18, 5], [59, 2.2, 13, 9],
+    [-60, 14.2, 20, 0], [-43, 14.8, 21, -1], [-23, 13.8, 22, 0],
+    [7, 14.2, 24, 1], [33, 11.4, 22, 3], [55, 6.2, 16, 7], [72, 1.1, 11, 8],
   ], teal));
-  staticHull.add(longitudinalHull([[-46, 7, 28, 17], [15, 8.2, 29, 18], [37, 4.4, 23, 17]], light));
-  staticHull.add(chamferBox(9.5, 8, 15, teal, 0, 32, -4, 0.8));
-  staticHull.add(chamferBox(6.5, 5, 8, dark, 0, 38, -5, 0.5));
-  addWindows(staticHull, glow, [-2, 0, 2], 38, -0.8, 1.2);
+  staticHull.add(longitudinalHull([
+    [-45, 8.5, 30, 17], [-10, 10, 33, 17], [17, 10.5, 34, 18],
+    [38, 6.2, 28, 17], [54, 2.4, 20, 15],
+  ], light));
+  staticHull.add(chamferBox(29, 18, 24, teal, 0, 10, -61, 0.75));
+  staticHull.add(chamferBox(26, 12, 8, dark, 0, 10, -74, 0.38));
+  staticHull.add(chamferBox(11.5, 9, 17, teal, 0, 35, -6, 0.8));
+  staticHull.add(chamferBox(8, 5.5, 10, dark, 0, 42, -7, 0.5));
+  addWindows(staticHull, glow, [-2.5, 0, 2.5], 42, -1.7, 1.35);
+  for (const sx of [-1, 1]) for (const z of [-25, -7, 11, 29]){
+    staticHull.add(chamferBox(0.7, 2.3, 8.5, dark, sx * 14.25, 12, z, 0.1));
+    staticHull.add(chamferBox(0.78, 0.55, 5.6, yellow, sx * 14.65, 12.2, z, 0.05));
+  }
   for (const sx of [-1, 1]){
-    const fin = profile([[-1.4, 0], [-0.7, 11], [0.8, 15], [1.4, 0]], [], 0.7, yellow, sx * 5.2, 35, -10);
+    const fin = profile([[-1.6, 0], [-0.8, 12], [0.8, 17], [1.6, 0]], [], 0.75, yellow, sx * 5.6, 39, -11);
     staticHull.add(fin);
   }
-  for (const ex of [-7.5, -2.5, 2.5, 7.5]) addEngine(staticHull, teal, dark, thrust, ex, 10, -57, 3.1);
-  for (const [z, rear] of [[39, false], [24, false], [-25, true], [-39, true]]) addTurret(root, turrets, yellow, dark, cooldown,
-    { y: 25, z, width: 6.1, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.76 });
+  for (const ex of [-9.5, -3.2, 3.2, 9.5]) addEngine(staticHull, teal, dark, thrust, ex, 10, -77, 3.4);
+  for (const [z, rear] of [[48, false], [27, false], [-24, true], [-43, true]]) addTurret(root, turrets, yellow, dark, cooldown,
+    { y: 26.5, z, width: 6.1, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.76 });
   compactGroup(staticHull); root.add(staticHull);
+  root.userData.silhouette = 'magellan-long-wedge-heavy-drive';
   return { root, turrets };
 }
 

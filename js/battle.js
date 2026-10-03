@@ -12,7 +12,7 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=52shipremodel5';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
@@ -1340,10 +1340,10 @@ export function startBattle(renderer, opts, onEnd){
         { x: 0, y: 2.6, z: 9, hx: 3, hy: 1.5, hz: 2.5 },
       ],
       musai: [
-        { x: 0, y: 12, z: 8, hx: 7, hy: 6, hz: 38 },
-        { x: 0, y: 11, z: 46, hx: 5, hy: 5, hz: 11 },
-        { x: -12.5, y: 11, z: -30, hx: 3, hy: 3, hz: 12 },
-        { x: 12.5, y: 11, z: -30, hx: 3, hy: 3, hz: 12 },
+        { x: 0, y: 12, z: 10, hx: 12, hy: 10, hz: 45 },
+        { x: 0, y: 32, z: -4, hx: 7, hy: 12, hz: 17 },
+        { x: -16, y: 10, z: -15, hx: 8, hy: 8, hz: 43 },
+        { x: 16, y: 10, z: -15, hx: 8, hy: 8, hz: 43 },
       ],
       chivvay: [
         { x: 0, y: 14, z: -4, hx: 15, hy: 8, hz: 46 },
@@ -1351,14 +1351,14 @@ export function startBattle(renderer, opts, onEnd){
         { x: 0, y: 14, z: 46, hx: 9, hy: 5, hz: 13 },
       ],
       salamis: [
-        { x: 0, y: 12, z: 7, hx: 9, hy: 6, hz: 46 },
-        { x: 0, y: 23, z: 1, hx: 5, hy: 10, hz: 8 },
-        { x: 0, y: 14, z: -32, hx: 9, hy: 5, hz: 14 },
+        { x: 0, y: 10, z: 5, hx: 12, hy: 10, hz: 59 },
+        { x: 0, y: 24, z: -5, hx: 6, hy: 11, hz: 10 },
+        { x: 0, y: 10, z: -55, hx: 12, hy: 8, hz: 13 },
       ],
       magellan: [
-        { x: 0, y: 13, z: 2, hx: 12, hy: 7, hz: 52 },
-        { x: 0, y: 29, z: -3, hx: 5, hy: 13, hz: 8 },
-        { x: 0, y: 12, z: -45, hx: 10, hy: 6, hz: 10 },
+        { x: 0, y: 11, z: 5, hx: 15, hy: 12, hz: 67 },
+        { x: 0, y: 33, z: -6, hx: 6, hy: 14, hz: 10 },
+        { x: 0, y: 10, z: -68, hx: 15, hy: 9, hz: 12 },
       ],
       columbus: [
         { x: 0, y: 14, z: 0, hx: 14, hy: 9, hz: 40 },
@@ -1380,10 +1380,11 @@ export function startBattle(renderer, opts, onEnd){
       dabude:  [{ x: -5, y: 37, z: -13, r: 8, mult: 2.5 }],
       gallop:  [{ x: -9, y: 14, z: 16, r: 5, mult: 2.5 }, { x: 9, y: 14, z: 16, r: 5, mult: 2.5 },
                 { x: -23, y: 13, z: -2, r: 5, mult: 2.0 }, { x: 23, y: 13, z: -2, r: 5, mult: 2.0 }],
-      musai:   [{ x: 0, y: 17, z: -6, r: 6, mult: 2.5 }, { x: 0, y: 11, z: -28, r: 7, mult: 2.5 }],
+      musai:   [{ x: 0, y: 40, z: -7, r: 7, mult: 2.5 }, { x: -16, y: 10, z: -57, r: 7, mult: 2.5 },
+                { x: 16, y: 10, z: -57, r: 7, mult: 2.5 }],
       chivvay: [{ x: 0, y: 36, z: -12, r: 7, mult: 2.5 }, { x: 0, y: 14, z: -50, r: 9, mult: 2.5 }],
-      salamis: [{ x: 0, y: 28, z: 1, r: 6, mult: 2.5 }, { x: 0, y: 11, z: -50, r: 9, mult: 2.5 }],
-      magellan: [{ x: 0, y: 33, z: -3, r: 7, mult: 2.5 }, { x: 0, y: 12, z: -50, r: 9, mult: 2.5 }],
+      salamis: [{ x: 0, y: 30, z: -6, r: 6, mult: 2.5 }, { x: 0, y: 10, z: -62, r: 10, mult: 2.5 }],
+      magellan: [{ x: 0, y: 41, z: -7, r: 7, mult: 2.5 }, { x: 0, y: 10, z: -75, r: 11, mult: 2.5 }],
       columbus: [{ x: 0, y: 25, z: 20, r: 6, mult: 2.5 }, { x: 0, y: 13, z: -43, r: 9, mult: 2.5 }],
       solfortress: [{ x: 0, y: 16, z: 40, r: 12, mult: 2.5 }],
     };
@@ -3640,6 +3641,7 @@ export function startBattle(renderer, opts, onEnd){
   const keys = new Set();
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
+  let debugShipCamera = null;
   let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
   let sniperHoldingBreath = false, sniperBreathBlocked = false;
@@ -7997,6 +7999,25 @@ export function startBattle(renderer, opts, onEnd){
       camera.fov = 40; camera.updateProjectionMatrix();
       renderer.render(scene, camera);
     },
+    // Static three-quarter ship view for local roster QA; does not advance combat.
+    _debugViewShip(kind = 'salamis', theta = 0.72){
+      const ship = [...props, ...missionProps].find(p => p.alive && p.isShip && p.kind === kind);
+      if (!ship) return null;
+      const bounds = new THREE.Box3().setFromObject(ship.root);
+      const center = bounds.getCenter(new THREE.Vector3());
+      const size = bounds.getSize(new THREE.Vector3());
+      const span = Math.max(size.x, size.y, size.z);
+      const dist = Math.max(130, span / (2 * Math.tan(THREE.MathUtils.degToRad(38 / 2))) * 1.35);
+      const direction = new THREE.Vector3(Math.sin(theta), 0.42, -Math.cos(theta)).normalize();
+      camera.position.copy(center).addScaledVector(direction, dist);
+      camera.lookAt(center);
+      camera.fov = 38; camera.updateProjectionMatrix();
+      debugShipCamera = { position: camera.position.clone(), center: center.clone() };
+      const hud = document.getElementById('hud');
+      if (hud) hud.style.visibility = 'hidden';
+      renderer.render(scene, camera);
+      return { kind, silhouette: ship.root.children[0]?.userData?.silhouette || null };
+    },
     _debugState(){
       const selectedWeapon = player.suit.weapons[player.wi];
       const activeMuzzle = selectedWeapon ? activeMuzzleNode(player) : null;
@@ -8342,6 +8363,12 @@ export function startBattle(renderer, opts, onEnd){
       for (const a of spinners) a.rotation.y += a.userData.spin * dt;
       hudUpdate(dt);
       cameraUpdate(paused ? 0.016 : dt);
+      if (debugShipCamera){
+        camera.position.copy(debugShipCamera.position);
+        camera.lookAt(debugShipCamera.center);
+        camera.fov = 38;
+        camera.updateProjectionMatrix();
+      }
       renderer.render(scene, camera);
       drawHudOverlay(); // lock reticle + hit-prediction overlay on top of the rendered frame
     },
