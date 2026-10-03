@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=50turnfirst';
+import { startBattle } from './battle.js?v=50fleetcap';
 import { buildMech } from './mecha.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
@@ -22,7 +22,9 @@ import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './
 import { landshipProfile } from './landship-balance.js';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
-import { customSquadTraits as customSquadTraitsForUnit } from './custom-roster.js';
+import {
+  CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,
+} from './custom-roster.js?v=50fleetcap';
 import {
   STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
 } from './stationary-batteries.js';
@@ -918,7 +920,7 @@ addEventListener('beforeunload', () => pvpSession.room?.close());
 // enemies/allies: each entry is a { id, n, dist } — a unit TYPE, how many, and its spawn
 // range from the player (near | normal | far)
 // EACH enemy/ally entry carries its OWN deployment point (pos {x,z}; +z = front); the player has one marker.
-const PER_SIDE_CAP = 200, ENTRY_MAX = 200, LANDSHIP_CAP = 12, CUSTOM_SQUAD_COUNT = 40; // 12 Big Trays fought at Odessa; capital props have no mech LOD
+const PER_SIDE_CAP = CUSTOM_SIDE_CAP, ENTRY_MAX = CUSTOM_SIDE_CAP, CUSTOM_SQUAD_COUNT = 40;
 const customSquadTraits = id => customSquadTraitsForUnit(suitById(id));
 // localhost-only: ?qa-objectives=fast compresses objective timers for automated walkthroughs
 function localQaTuning(){
@@ -1186,7 +1188,7 @@ function renderCustom(){
         o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
-      const maxForEntry = () => SHIP_IDS.has(entry.id) ? LANDSHIP_CAP : ENTRY_MAX;
+      const maxForEntry = () => ENTRY_MAX;
       sel.onchange = () => {
         entry.id = sel.value; entry.n = Math.min(entry.n, maxForEntry());
         renderCustom();
@@ -1194,6 +1196,10 @@ function renderCustom(){
       row.appendChild(sel);
       const cnt = document.createElement('input');               // how many of this unit to field
       cnt.type = 'number'; cnt.min = '1'; cnt.max = '' + maxForEntry(); cnt.value = Math.min(entry.n, maxForEntry()); cnt.title = 'count';
+      cnt.oninput = () => {
+        const next = Math.round(Number(cnt.value));
+        if (Number.isFinite(next) && next >= 1) entry.n = Math.min(maxForEntry(), next);
+      };
       cnt.onchange = () => { entry.n = Math.max(1, Math.min(maxForEntry(), Math.round(+cnt.value || 1))); renderCustom(); };
       row.appendChild(cnt);
       const suit = CUSTOM_PROP_IDS.has(entry.id) ? null : suitById(entry.id);
@@ -1243,7 +1249,6 @@ function renderCustom(){
     squadWarning.textContent = massBattle ? 'Mass Battle uses automatic 5–7 MS squads.'
       : 'Manual squads have no member cap. AUTO examines the formation and builds balanced squads of no more than 7 units.';
   }
-  const capitalCount = list => list.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
   const capitalAllowed = custom.env === 'ground' || custom.env === 'space';
   const enemyCapitalButton = $('btn-add-enemy-landships');
   const allyCapitalButton = $('btn-add-ally-landships');
@@ -1251,8 +1256,8 @@ function renderCustom(){
   allyCapitalButton.textContent = custom.env === 'space' ? '+ EFSF SPACE SHIP GROUP ×3' : '+ BIG TRAY GROUP ×3';
   enemyCapitalButton.hidden = !capitalAllowed;
   allyCapitalButton.hidden = !capitalAllowed;
-  enemyCapitalButton.disabled = !capitalAllowed || capitalCount(custom.enemies) >= LANDSHIP_CAP || custom.enemies.length >= ROWS_MAX;
-  allyCapitalButton.disabled = !capitalAllowed || capitalCount(custom.allies) >= LANDSHIP_CAP || custom.allies.length >= ROWS_MAX;
+  enemyCapitalButton.disabled = !capitalAllowed || custom.enemies.length >= ROWS_MAX;
+  allyCapitalButton.disabled = !capitalAllowed || custom.allies.length >= ROWS_MAX;
   $('btn-add-enemy').disabled = custom.enemies.length >= ROWS_MAX;
   $('btn-add-ally').disabled = custom.allies.length >= ROWS_MAX;
   $('btn-launch-custom').disabled = custom.army === 0 && !custom.enemies.length;
@@ -1285,20 +1290,18 @@ $('btn-custom').onclick = () => { music.play('requiem'); show('menu-custom'); re
 $('btn-custom-back').onclick = () => show('menu-main');
 $('btn-add-enemy').onclick = () => { if (custom.enemies.length < ROWS_MAX){ custom.enemies.push({ id: 'zaku2', n: 1, pos: defaultPos('enemy', custom.enemies.length) }); renderCustom(); } };
 $('btn-add-enemy-landships').onclick = () => {
-  const used = custom.enemies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
   const kind = custom.env === 'space' ? 'musai' : custom.env === 'ground' ? 'dabude' : null;
-  if (kind && custom.enemies.length < ROWS_MAX && used < LANDSHIP_CAP){
-    custom.enemies.push({ id: kind, n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('enemy', custom.enemies.length) });
+  if (kind && custom.enemies.length < ROWS_MAX){
+    custom.enemies.push({ id: kind, n: 3, pos: defaultPos('enemy', custom.enemies.length) });
     renderCustom();
   }
 };
 $('btn-clear-enemy').onclick = () => { custom.enemies = []; renderCustom(); };
 $('btn-add-ally').onclick = () => { if (custom.allies.length < ROWS_MAX){ custom.allies.push({ id: 'gm', n: 1, pos: defaultPos('ally', custom.allies.length) }); renderCustom(); } };
 $('btn-add-ally-landships').onclick = () => {
-  const used = custom.allies.reduce((sum, entry) => sum + (SHIP_IDS.has(entry.id) ? entry.n : 0), 0);
   const kind = custom.env === 'space' ? 'salamis' : custom.env === 'ground' ? 'bigtray' : null;
-  if (kind && custom.allies.length < ROWS_MAX && used < LANDSHIP_CAP){
-    custom.allies.push({ id: kind, n: Math.min(3, LANDSHIP_CAP - used), pos: defaultPos('ally', custom.allies.length) });
+  if (kind && custom.allies.length < ROWS_MAX){
+    custom.allies.push({ id: kind, n: 3, pos: defaultPos('ally', custom.allies.length) });
     renderCustom();
   }
 };
@@ -1327,13 +1330,7 @@ $('btn-launch-custom').onclick = () => {
   // mass battle: generate N-per-side armies from random pools; otherwise use the manual lists
   const zPool = ['zaku2', 'zaku2b', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)
-  const expand = list => {
-    const out = [];
-    for (const e of list) for (let k = 0; k < e.n; k++)
-      out.push({ id: e.id, pos: e.pos, formationIndex: k, requestedSquad: e.squad || 0 });
-    return out.slice(0, PER_SIDE_CAP);
-  };
-  const enemyEx = expand(custom.enemies), allyEx = expand(custom.allies);
+  const enemyEx = expandCustomRoster(custom.enemies), allyEx = expandCustomRoster(custom.allies);
   const assignGroundSquads = (specs, faction) => {
     const ground = assignRequestedSquadIds(specs.filter(spec => !suitById(spec.suitId).air)
       .map(spec => ({ ...spec, ...customSquadTraits(spec.suitId) })), faction);
@@ -1349,10 +1346,10 @@ $('btn-launch-custom').onclick = () => {
   const enemies = assignGroundSquads(enemySpecs, 'ZEON');
   const allies = assignGroundSquads(allySpecs, 'FED');
   // Capital hulls retain canonical faction identity; the picker exposes Zeon hulls only to the enemy
-  // list and Federation hulls only to the ally list. Cap them because they do not use mech LOD.
+  // list and Federation hulls only to the ally list. They share the normal per-side deployment cap.
   const customShips = custom.army > 0 ? [] : [
-    ...enemyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP),
-    ...allyEx.filter(o => SHIP_IDS.has(o.id)).slice(0, LANDSHIP_CAP),
+    ...enemyEx.filter(o => SHIP_IDS.has(o.id)),
+    ...allyEx.filter(o => SHIP_IDS.has(o.id)),
   ].map(o => ({
     kind: o.id,
     team: shipById(o.id).faction,
