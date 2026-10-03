@@ -12,8 +12,8 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
-import { spaceShipProfile } from './space-ship-balance.js?v=56shipspeed1';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
+import { spaceShipProfile } from './space-ship-balance.js?v=57shipordnance1';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
   FEDERATION_RAM_CHANCE_PER_SECOND,
@@ -464,7 +464,7 @@ export function startBattle(renderer, opts, onEnd){
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
-  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
+  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · F 2×3 MISSILES · T FORWARD TORPEDO · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
   hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
   let msgT = 0;
@@ -1332,6 +1332,8 @@ export function startBattle(renderer, opts, onEnd){
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
       carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
       carrierLaunchCycles: 0, carrierLaunches: [],
+      missileT: rng.range(0.8, 2.4), torpedoT: rng.range(1.5, 3.5),
+      missileSalvosFired: 0, missilesFired: 0, torpedoesFired: 0,
       ramChargeT: 0, ramCooldown: 0, ramTarget: null, ramImpacts: 0, ramming: false,
       goal: null, arrived: false, escaped: false };
     // landships are long hulls — swap the single fat ball for a chain of spheres along the keel
@@ -2541,6 +2543,21 @@ export function startBattle(renderer, opts, onEnd){
   const beamMatF = new THREE.MeshBasicMaterial({ color: 0xff9ae0 });   // FED ship shells keep their pink tint
   const bzMat = new THREE.MeshBasicMaterial({ color: 0xff8844 });
   const missileMat = new THREE.MeshBasicMaterial({ color: 0xffe9b0 });
+  const torpedoMatF = new THREE.MeshStandardMaterial({ color: 0xbecbd8, emissive: 0x244d72, emissiveIntensity: 0.55, roughness: 0.36, metalness: 0.72 });
+  const torpedoDarkMat = new THREE.MeshStandardMaterial({ color: 0x364451, roughness: 0.48, metalness: 0.76 });
+  function makeShipTorpedo(){
+    const g = new THREE.Group();
+    g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.82, 0.94, 6.2, 12), torpedoMatF));
+    const nose = new THREE.Mesh(new THREE.ConeGeometry(0.82, 2.1, 12), torpedoMatF);
+    nose.position.y = 4.15; g.add(nose);
+    const collar = new THREE.Mesh(new THREE.CylinderGeometry(1.04, 1.04, 0.55, 12), torpedoDarkMat);
+    collar.position.y = -2.45; g.add(collar);
+    for (const rotation of [0, Math.PI / 2]){
+      const fin = new THREE.Mesh(new THREE.BoxGeometry(2.8, 1.7, 0.16), torpedoDarkMat);
+      fin.position.y = -3.35; fin.rotation.y = rotation; g.add(fin);
+    }
+    return g;
+  }
   // beam bolts and tracers are glowing cel effects (white core + faction halo); rockets stay physical
   const projectileMesh = (type, faction) => type === 'beam' ? fx.beamMesh(faction)
     : type === 'mg' || type === 'tracer' ? fx.tracerMesh() : type === 'ball' ? fx.ballMesh()
@@ -3663,6 +3680,7 @@ export function startBattle(renderer, opts, onEnd){
   const keys = new Set();
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
+  let shipCameraYaw = 0, shipCameraPitch = 0.35;
   let debugShipCamera = null;
   let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
@@ -3760,6 +3778,8 @@ export function startBattle(renderer, opts, onEnd){
     if (!SPACE || PVP || !ship?.alive || !ship.spaceProfile || ship.team !== player.team) return false;
     commandedShip = ship;
     debugShipCamera = null;
+    shipCameraYaw = 0;
+    shipCameraPitch = 0.35;
     firstPerson = false;
     if (sniperMode) setSniperMode(false, true);
     player.blocking = false;
@@ -3811,6 +3831,14 @@ export function startBattle(renderer, opts, onEnd){
     if (PVP && !locked) return;
     const k = e.key.toLowerCase();
     keys.add(k);
+    if (commandedShip?.alive){
+      if (k.startsWith('arrow')) e.preventDefault();
+      if (k === 'f' && !e.repeat) fireShipMissileSalvo(commandedShip, nearestLandshipTarget(commandedShip, commandedShip.spaceProfile.missileRange, true));
+      if (k === 't' && !e.repeat) fireShipTorpedo(commandedShip);
+      if (k === 'h' && !e.repeat) toggleCommandedShip();
+      if (k === 'x' && paused && started) finish({ victory: false, retreat: true });
+      return;
+    }
     if (k === 'r' && player.wi !== SABER_SLOT && player.clip < player.suit.weapons[player.wi].clip && player.reloadT <= 0)
       player.reloadT = player.suit.weapons[player.wi].reload, player.clip = 0;
     if (k === 'tab'){
@@ -6676,6 +6704,96 @@ export function startBattle(renderer, opts, onEnd){
     return best;
   }
 
+  function fireShipMissileSalvo(p, target = null, quiet = false){
+    const profile = p?.spaceProfile;
+    if (!p?.alive || !profile?.missileCount) return false;
+    if ((p.missileT || 0) > 0){
+      if (!quiet && p === commandedShip) setMsg(`MISSILE RACKS RELOADING · ${p.missileT.toFixed(1)}s`, 1.3);
+      return false;
+    }
+    const count = profile.missileCount;
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
+    p.root.updateMatrixWorld(true);
+    for (let i = 0; i < count; i++){
+      const side = i < count / 2 ? -1 : 1;
+      const rackSlot = i % (count / 2);
+      const muzzle = p.root.localToWorld(new THREE.Vector3(
+        side * p.radius * 0.3,
+        p.hitY + 3 + (rackSlot - 1) * 2.1,
+        p.radius * 0.32 + rackSlot * 1.2,
+      ));
+      const dir = forward.clone();
+      dir.x += side * (0.025 + rackSlot * 0.006);
+      dir.y += (rackSlot - 1) * 0.012;
+      dir.normalize();
+      const mesh = new THREE.Mesh(missileGeo, missileMat);
+      mesh.scale.setScalar(1.45);
+      mesh.position.copy(muzzle);
+      mesh.quaternion.setFromUnitVectors(UP, dir);
+      scene.add(mesh);
+      projectiles.push({
+        pos: muzzle.clone(), vel: dir.multiplyScalar(profile.missileSpeed),
+        dmg: profile.missileDamage, splash: profile.missileSplash,
+        team: p.team, owner: p, weaponName: 'SHIP MISSILE',
+        life: profile.missileRange / profile.missileSpeed + 2.2,
+        mesh, homing: target?.alive ? target : null, turn: 1.35,
+        heavy: true, collisionRadius: 1.9,
+      });
+    }
+    p.missileT = profile.missileCooldown;
+    p.missileSalvosFired = (p.missileSalvosFired || 0) + 1;
+    p.missilesFired = (p.missilesFired || 0) + count;
+    sfx('bazooka', clamp(440 / p.root.position.distanceTo(player.root.position), 0.05, 0.24));
+    if (!quiet && p === commandedShip) setMsg(`2×3 MISSILE SALVO${target ? ' — SEEKING TARGET' : ' — FORWARD LAUNCH'}`, 1.7);
+    return true;
+  }
+
+  function fireShipTorpedo(p, quiet = false){
+    const profile = p?.spaceProfile;
+    if (!p?.alive || !profile?.torpedo){
+      if (!quiet && p === commandedShip) setMsg('THIS SHIP HAS NO TORPEDO TUBE', 1.5);
+      return false;
+    }
+    if ((p.torpedoT || 0) > 0){
+      if (!quiet && p === commandedShip) setMsg(`TORPEDO TUBE RELOADING · ${p.torpedoT.toFixed(1)}s`, 1.3);
+      return false;
+    }
+    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
+    p.root.updateMatrixWorld(true);
+    const muzzle = p.root.localToWorld(new THREE.Vector3(0, Math.max(6, p.hitY * 0.7), p.radius * 1.28));
+    const mesh = makeShipTorpedo();
+    mesh.position.copy(muzzle);
+    mesh.quaternion.setFromUnitVectors(UP, dir);
+    scene.add(mesh);
+    projectiles.push({
+      pos: muzzle.clone(), vel: dir.multiplyScalar(profile.torpedoSpeed),
+      dmg: profile.torpedoDamage, splash: profile.torpedoSplash,
+      team: p.team, owner: p, weaponName: 'FEDERATION SHIP TORPEDO',
+      life: profile.torpedoRange / profile.torpedoSpeed + 2.5,
+      mesh, homing: null, heavy: true, collisionRadius: 4.2,
+    });
+    p.torpedoT = profile.torpedoCooldown;
+    p.torpedoesFired = (p.torpedoesFired || 0) + 1;
+    sfx('bazooka', clamp(520 / p.root.position.distanceTo(player.root.position), 0.08, 0.3));
+    if (!quiet && p === commandedShip) setMsg('HEAVY TORPEDO AWAY — FORWARD COURSE', 1.7);
+    return true;
+  }
+
+  function updateShipOrdnance(p, dt){
+    const profile = p.spaceProfile;
+    p.missileT = Math.max(0, (p.missileT || 0) - dt);
+    p.torpedoT = Math.max(0, (p.torpedoT || 0) - dt);
+    if (p === commandedShip) return;
+    const target = nearestLandshipTarget(p, profile.missileRange, true);
+    if (!target) return;
+    if (p.missileT <= 0) fireShipMissileSalvo(p, target, true);
+    if (!profile.torpedo || p.torpedoT > 0) return;
+    const forward = stv1.set(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
+    const toward = stv2.subVectors(target.root.position, p.root.position).normalize();
+    if (p.root.position.distanceTo(target.root.position) <= profile.torpedoRange && forward.dot(toward) >= 0.96)
+      fireShipTorpedo(p, true);
+  }
+
   function launchLandshipRound(p, muzzle, target, damageAmount, splash, name, speed = 620, spread = 0.015, life = 7, style = 'shell'){
     const aim = target.root.position.clone(); aim.y += aimHeight(target);
     const lead = aim.addScaledVector(target.vel || stv3.set(0, 0, 0), muzzle.distanceTo(aim) / speed);
@@ -6953,6 +7071,7 @@ export function startBattle(renderer, opts, onEnd){
     for (const p of props) if (p.alive && p.spaceProfile){
       if (p === commandedShip) updateCommandedShip(p, dt);
       else updateSpaceShipMovement(p, dt);
+      updateShipOrdnance(p, dt);
       updateColumbusCarrier(p, dt);
     }
     // Landships maneuver as capital combatants in every ground battle, then fire
@@ -7162,14 +7281,18 @@ export function startBattle(renderer, opts, onEnd){
     if (commandedShip?.alive){
       const ship = commandedShip;
       const frac = clamp(ship.hp / ship.maxHp, 0, 1);
+      const missileStatus = ship.missileT > 0 ? `${ship.missileT.toFixed(1)}s` : 'READY';
+      const torpedoStatus = !ship.spaceProfile.torpedo ? 'NOT FITTED' : ship.torpedoT > 0 ? `${ship.torpedoT.toFixed(1)}s` : 'READY';
       hpBar.style.width = frac * 100 + '%';
       hpBar.classList.toggle('low', frac < 0.3);
       hpNum.textContent = ` ${Math.max(0, Math.round(ship.hp))} / ${ship.maxHp}`;
       boostBar.style.width = clamp(Math.abs(ship.helmForward || 0) / Math.max(1, ship.speed * 1.7), 0, 1) * 100 + '%';
       wEl.innerHTML = `${ship.kind.toUpperCase()} HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · AUTO BATTERIES ACTIVE</span>`
-        + `<br>VERTICAL VERNIERS <span class="ammo" style="color:${ship.verticalThrust ? 'var(--ok)' : 'var(--dim)'}">${ship.helmVertical >= 0 ? '+' : ''}${(ship.helmVertical || 0).toFixed(1)} m/s · SPACE/C</span>`;
+        + `<br>VERTICAL VERNIERS <span class="ammo" style="color:${ship.verticalThrust ? 'var(--ok)' : 'var(--dim)'}">${ship.helmVertical >= 0 ? '+' : ''}${(ship.helmVertical || 0).toFixed(1)} m/s · SPACE/C</span>`
+        + `<br>2×3 MISSILES <span class="ammo" style="color:${ship.missileT > 0 ? 'var(--dim)' : 'var(--ok)'}">${missileStatus} · F</span>`
+        + `<br>FORWARD TORPEDO <span class="ammo" style="color:${ship.spaceProfile.torpedo && ship.torpedoT <= 0 ? 'var(--ok)' : 'var(--dim)'}">${torpedoStatus} · T</span>`;
       objEl.textContent = objectiveText();
-      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT'}`;
+      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · ARROWS CAMERA · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT'}`;
       msgT -= dt;
       if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
       radarT -= dt;
@@ -7302,18 +7425,27 @@ export function startBattle(renderer, opts, onEnd){
   const cameraAimDirection = new THREE.Vector3(0, 0, 1);
   const cameraChaseDirection = new THREE.Vector3(0, 0, 1);
   const cameraFocusPoint = new THREE.Vector3();
+  const shipCameraOrbit = new THREE.Vector3(0, 0, 1);
   function commandedShipCameraUpdate(dt){
     const ship = commandedShip;
     const radius = ship.radius || 42;
     const forward = cameraFrameForward.set(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
     const center = cameraFocusPoint.copy(ship.root.position).addScaledVector(UP, ship.hitY + radius * 0.18);
+    shipCameraYaw = wrapAngle(shipCameraYaw
+      + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
+    shipCameraPitch = clamp(shipCameraPitch
+      + ((keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0)) * 0.9 * dt,
+      -0.12, 1.08);
+    const orbitYaw = ship.root.rotation.y + shipCameraYaw;
+    shipCameraOrbit.set(Math.sin(orbitYaw), 0, Math.cos(orbitYaw));
+    const distance = radius * 3.25;
     const desired = cameraAimFlat.copy(center)
-      .addScaledVector(forward, -radius * 3.1)
-      .addScaledVector(UP, radius * 1.25);
+      .addScaledVector(shipCameraOrbit, -distance * Math.cos(shipCameraPitch))
+      .addScaledVector(UP, distance * Math.sin(shipCameraPitch));
     camera.up.copy(UP);
     if (camera.position.distanceToSquared(desired) > radius * radius * 100) camera.position.copy(desired);
     else camera.position.lerp(desired, Math.min(1, 6 * dt));
-    camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 1.05));
+    camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 0.55));
     camera.fov = lerp(camera.fov, 58, Math.min(1, 5 * dt));
     camera.updateProjectionMatrix();
     player.root.visible = false;
@@ -8242,6 +8374,35 @@ export function startBattle(renderer, opts, onEnd){
       setMsg(`${ship.kind.toUpperCase()} HELM QA — ${drive ? 'FLANK CLIMB' : 'IDLE'}`, 2);
       return { kind: ship.kind, drive, sideTurrets: ship.turrets?.filter(t => t.secondary).length || 0 };
     },
+    _debugShipCombat(){
+      const ship = commandedShip?.alive ? commandedShip
+        : props.find(p => p.alive && p.team === player.team && p.spaceProfile);
+      if (!ship || !setCommandedShip(ship, true)) return null;
+      paused = false;
+      started = true;
+      keys.clear();
+      shipCameraYaw = 0;
+      shipCameraPitch = 0.35;
+      keys.add('arrowright');
+      commandedShipCameraUpdate(0.6);
+      keys.clear();
+      keys.add('arrowup');
+      commandedShipCameraUpdate(0.255);
+      keys.clear();
+      ship.missileT = 0;
+      ship.torpedoT = 0;
+      const target = nearestLandshipTarget(ship, ship.spaceProfile.missileRange, true);
+      const missile = fireShipMissileSalvo(ship, target, true);
+      const torpedo = fireShipTorpedo(ship, true);
+      setMsg('SHIP ORDNANCE QA — 2×3 MISSILES + FORWARD TORPEDO', 2);
+      return {
+        kind: ship.kind, missile, torpedo,
+        missilesFired: ship.missilesFired,
+        torpedoesFired: ship.torpedoesFired,
+        cameraYaw: shipCameraYaw,
+        cameraPitch: shipCameraPitch,
+      };
+    },
     _debugForceFedShipCharge(){
       const fed = props.find(p => p.alive && p.team === 'FED' && p.spaceProfile?.ramDuration);
       const foe = fed ? props.find(p => p.alive && p.team !== 'FED' && p.spaceProfile) : null;
@@ -8315,7 +8476,22 @@ export function startBattle(renderer, opts, onEnd){
           verticalThrust: !!commandedShip.verticalThrust,
           sideTurrets: commandedShip.turrets?.filter(t => t.secondary).length || 0,
           cameraDistance: camera.position.distanceTo(commandedShip.root.position),
+          cameraYaw: +shipCameraYaw.toFixed(3),
+          cameraPitch: +shipCameraPitch.toFixed(3),
+          missileCooldown: +(commandedShip.missileT || 0).toFixed(3),
+          torpedoCooldown: +(commandedShip.torpedoT || 0).toFixed(3),
+          missileSalvosFired: commandedShip.missileSalvosFired || 0,
+          missilesFired: commandedShip.missilesFired || 0,
+          torpedoesFired: commandedShip.torpedoesFired || 0,
+          torpedoFitted: !!commandedShip.spaceProfile.torpedo,
         } : null,
+        shipOrdnance: {
+          activeMissiles: projectiles.filter(p => p.weaponName === 'SHIP MISSILE').length,
+          activeTorpedoes: projectiles.filter(p => p.weaponName === 'FEDERATION SHIP TORPEDO').length,
+          alliedTorpedoesFired: props.filter(p => p.alive && p.team === player.team && p.spaceProfile)
+            .reduce((sum, p) => sum + (p.torpedoesFired || 0), 0),
+          zeonTorpedoCapable: props.some(p => p.alive && p.team === 'ZEON' && !!p.spaceProfile?.torpedo),
+        },
         colony: COLONY ? {
           radius: COLONY_RADIUS,
           gravityScale: COLONY_GRAVITY_SCALE,

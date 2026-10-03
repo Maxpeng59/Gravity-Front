@@ -4,9 +4,9 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=56shipspeed1';
+import { startBattle } from './battle.js?v=57shipordnance1';
 import { buildMech } from './mecha.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=55playership1';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
 import { enterBridge, leaveBridge } from './bridge.js';
@@ -21,7 +21,7 @@ import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';
 import { landshipProfile } from './landship-balance.js';
-import { spaceShipProfile } from './space-ship-balance.js?v=56shipspeed1';
+import { spaceShipProfile } from './space-ship-balance.js?v=57shipordnance1';
 import { assignRequestedSquadIds } from './squad-doctrine.js';
 import {
   CUSTOM_SIDE_CAP, customSquadTraits as customSquadTraitsForUnit, expandCustomRoster,
@@ -362,6 +362,7 @@ function runBattle(opts, after){
     const qaState = document.createElement('button');
     const qaFedRam = document.createElement('button');
     const qaHelm = document.createElement('button');
+    const qaShipCombat = document.createElement('button');
     const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
       const button = document.createElement('button');
       button.id = `gravity-debug-view-${kind}`;
@@ -387,7 +388,10 @@ function runBattle(opts, after){
     qaHelm.id = 'gravity-debug-ship-helm';
     qaHelm.textContent = 'QA HELM';
     qaHelm.dataset.qaShipIndex = '5';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, ...qaShipViews]) {
+    qaShipCombat.id = 'gravity-debug-ship-combat';
+    qaShipCombat.textContent = 'QA SHIP ARMS';
+    qaShipCombat.dataset.qaShipIndex = '6';
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, qaShipCombat, ...qaShipViews]) {
       button.type = 'button';
       if (button.dataset.qaShipIndex) {
         const top = 8 + Number(button.dataset.qaShipIndex) * 32;
@@ -412,6 +416,9 @@ function runBattle(opts, after){
     qaHelm.onclick = () => {
       document.documentElement.dataset.gravityHelm = JSON.stringify(battleHandle?._debugCommandShip?.('salamis', true) || null);
     };
+    qaShipCombat.onclick = () => {
+      document.documentElement.dataset.gravityShipCombat = JSON.stringify(battleHandle?._debugShipCombat?.() || null);
+    };
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
     clearLocalBattleDebug = () => {
@@ -428,10 +435,12 @@ function runBattle(opts, after){
       qaState.remove();
       qaFedRam.remove();
       qaHelm.remove();
+      qaShipCombat.remove();
       for (const button of qaShipViews) button.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete document.documentElement.dataset.gravityFedRam;
       delete document.documentElement.dataset.gravityHelm;
+      delete document.documentElement.dataset.gravityShipCombat;
       delete globalThis.__gravityBattle;
     };
   }
@@ -1155,13 +1164,20 @@ function renderCustom(){
     card.appendChild(statBar('HULL', profile.hp / 52000));
     card.appendChild(statBar('SPD', profile.speed / 15));
     card.appendChild(statBar('PWR', profile.mainDamage / 440));
-    card.onclick = () => {
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Pilot ${ship.name}`);
+    const selectShip = () => {
       custom.playerShip = ship.id;
       custom.op = 'sortie';
       normalizeCustomSidesForPlayer();
       sfx('ui', 0.1);
       renderCustom();
       setFold('readout', true);
+    };
+    card.onclick = selectShip;
+    card.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' '){ event.preventDefault(); selectShip(); }
     };
     grid.appendChild(card);
   }

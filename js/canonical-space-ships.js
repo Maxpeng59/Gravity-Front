@@ -63,6 +63,22 @@ function addWindows(parent, glow, xs, y, z, width = 1.5){
   for (const x of xs) parent.add(chamferBox(width, 0.58, 0.24, glow, x, y, z, 0.06));
 }
 
+// Every cruiser carries two compact three-tube missile boxes.  The paired
+// housings make the requested 2 x 3 salvo readable on the hull without adding
+// costly detail across the rest of the model.
+function addMissileRacks(parent, armor, dark, x, y, z){
+  for (const side of [-1, 1]){
+    const rackX = side * x;
+    parent.add(chamferBox(3.4, 4.8, 4.2, armor, rackX, y, z, 0.25));
+    for (const tubeY of [-1.3, 0, 1.3]) parent.add(forwardCylinder(0.42, 2.3, dark, rackX, y + tubeY, z + 1.8));
+  }
+}
+
+function addFederationTorpedoTube(parent, armor, dark, y, z){
+  parent.add(forwardCylinder(1.15, 4.8, armor, 0, y, z));
+  parent.add(forwardCylinder(0.72, 1.2, dark, 0, y, z + 4.2));
+}
+
 function addTurret(root, turrets, armor, dark, cooldown, spec){
   const {
     x = 0, y, z, width, offsets, length, rear = false, arc = PI,
@@ -156,6 +172,7 @@ function buildMusai(glow, thrust, cooldown){
   staticHull.add(chamferBox(6.5, 1.0, 8.5, dark, 0, 5.8, 19, 0.18)); // ventral MS hatch
   for (const z of [32, 15, -5]) addTurret(root, turrets, light, dark, cooldown,
     { y: 22.5, z, width: 5.1, offsets: [-1.25, 0, 1.25], length: 9.5, arc: PI * 0.78 });
+  addMissileRacks(staticHull, green, dark, 9.2, 18.2, 7);
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'musai-swan-neck-twin-nacelle';
   return { root, turrets };
@@ -179,6 +196,7 @@ function buildChivvay(glow, thrust, cooldown){
   addEngine(staticHull, light, dark, thrust, 0, 12, -55, 4.8);
   for (const [z, rear] of [[34, false], [18, false], [-26, true]]) addTurret(root, turrets, light, dark, cooldown,
     { y: 25, z, width: 6.2, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.72 });
+  addMissileRacks(staticHull, red, dark, 10.8, 22.2, 7);
   compactGroup(staticHull); root.add(staticHull);
   return { root, turrets };
 }
@@ -219,6 +237,8 @@ function buildSalamis(glow, thrust, cooldown){
     { y: 20.5, z, width: 4.8, offsets: [-1.05, 1.05], length: 9.5, rear, arc: PI * 0.8 });
   addFederationSideBatteries(root, turrets, light, dark, cooldown,
     { x: 11.4, y: 16.8, width: 2.25, length: 5.5 });
+  addMissileRacks(staticHull, blue, dark, 7.4, 18.2, 9);
+  addFederationTorpedoTube(staticHull, blue, dark, 8.5, 57);
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'salamis-triangle-waist-box-drive';
   return { root, turrets };
@@ -256,6 +276,8 @@ function buildMagellan(glow, thrust, cooldown){
     { y: 26.5, z, width: 6.1, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.76 });
   addFederationSideBatteries(root, turrets, light, dark, cooldown,
     { x: 14.8, y: 18.5, zStations: [-16, -8, 0, 8, 16], width: 2.6, length: 6.2, damageScale: 0.38, rangeScale: 0.72 });
+  addMissileRacks(staticHull, teal, dark, 11.2, 23.5, 12);
+  addFederationTorpedoTube(staticHull, teal, dark, 9.5, 65);
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'magellan-long-wedge-heavy-drive';
   return { root, turrets };
@@ -280,6 +302,8 @@ function buildColumbus(glow, thrust, cooldown){
     { x: sx * 10, y: 25, z: 29, width: 4.1, offsets: [0], length: 7, arc: PI * 0.7 });
   addFederationSideBatteries(root, turrets, light, dark, cooldown,
     { x: 18.8, y: 17.5, zStations: [-12, -6, 0, 6, 12], width: 2.05, length: 4.7, damageScale: 0.28, rangeScale: 0.6 });
+  addMissileRacks(staticHull, grey, dark, 10, 26.2, 8);
+  addFederationTorpedoTube(staticHull, grey, dark, 6, 35);
   compactGroup(staticHull); root.add(staticHull);
   return { root, turrets };
 }

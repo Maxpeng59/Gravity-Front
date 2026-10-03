@@ -132,5 +132,7 @@ test('runtime tags only heavy ordnance for interception and reports broadside st
   assert.match(battle, /H CAPITAL SHIP HELM/);
   assert.match(battle, /p\.root\.position\.addScaledVector\(p\.vel, dt\)/);
   assert.match(battle, /heavyProjectileInterceptions/);
+  assert.match(battle, /FEDERATION SHIP TORPEDO/);
+  assert.match(battle, /homing: null, heavy: true, collisionRadius: 4\.2/);
   assert.match(battle, /t\.shotsFired = \(t\.shotsFired \|\| 0\) \+ \(t\.shots \|\| 1\)/);
 });
