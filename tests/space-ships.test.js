@@ -37,7 +37,9 @@ test('every fleet hull is routed through a dedicated complex silhouette builder'
 
 test('each Federation hull mounts five light batteries on both sides', () => {
   const source = readFileSync(new URL('../js/canonical-space-ships.js', import.meta.url), 'utf8');
-  assert.match(source, /FEDERATION_SIDE_BATTERY_Z = Object\.freeze\(\[-34, -17, 0, 17, 34\]\)/);
+  assert.match(source, /FEDERATION_SIDE_BATTERY_Z = Object\.freeze\(\[-14, -7, 0, 7, 14\]\)/);
+  assert.match(source, /zStations: \[-16, -8, 0, 8, 16\]/);
+  assert.match(source, /zStations: \[-12, -6, 0, 6, 12\]/);
   assert.equal((source.match(/addFederationSideBatteries\(root, turrets/g) || []).length, 4);
   assert.match(source, /for \(const side of \[-1, 1\]\) for \(const z of zStations\)/);
   assert.match(source, /secondary: true/);

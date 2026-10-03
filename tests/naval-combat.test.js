@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import {
   federationRamEligible,
   spaceShipAttackHeading,
+  spaceShipHelmVelocity,
   spaceShipPropulsionEngaged,
   spaceShipTravelMode,
   spaceShipVelocityToward,
@@ -73,6 +74,15 @@ test('space ships climb and descend without exceeding their commanded speed', ()
   assert.equal(descend.z, 0);
 });
 
+test('manual helm velocity follows hull yaw and keeps height control independent', () => {
+  const ahead = spaceShipHelmVelocity(0, 24, 7);
+  assert.deepEqual(ahead, { x: 0, y: 7, z: 24 });
+  const starboard = spaceShipHelmVelocity(Math.PI / 2, 24, -5);
+  assert.ok(Math.abs(starboard.x - 24) < 1e-9);
+  assert.equal(starboard.y, -5);
+  assert.ok(Math.abs(starboard.z) < 1e-9);
+});
+
 test('ship hold range uses hysteresis before switching back to travel', () => {
   assert.equal(spaceShipTravelMode(1100, 1000, 'move'), 'move');
   assert.equal(spaceShipTravelMode(1000, 1000, 'move'), 'hold');
@@ -117,6 +127,9 @@ test('runtime tags only heavy ordnance for interception and reports broadside st
   assert.match(battle, /federationRamEligible\(/);
   assert.match(battle, /damageProp\(target, ramDamage, impact, p, 'BOW RAM'\)/);
   assert.match(battle, /spaceShipVelocityToward\(/);
+  assert.match(battle, /spaceShipHelmVelocity\(/);
+  assert.match(battle, /function updateCommandedShip\(/);
+  assert.match(battle, /H CAPITAL SHIP HELM/);
   assert.match(battle, /p\.root\.position\.addScaledVector\(p\.vel, dt\)/);
   assert.match(battle, /heavyProjectileInterceptions/);
   assert.match(battle, /t\.shotsFired = \(t\.shotsFired \|\| 0\) \+ \(t\.shots \|\| 1\)/);

@@ -87,7 +87,10 @@ function addTurret(root, turrets, armor, dark, cooldown, spec){
   });
 }
 
-const FEDERATION_SIDE_BATTERY_Z = Object.freeze([-34, -17, 0, 17, 34]);
+// Federation close-defense batteries are grouped around the armored waist.
+// Keeping the five mounts tight makes them read as a deliberate amidships bank
+// instead of unrelated guns scattered from bow to engine house.
+const FEDERATION_SIDE_BATTERY_Z = Object.freeze([-14, -7, 0, 7, 14]);
 
 function addFederationSideBatteries(root, turrets, armor, dark, cooldown, {
   x, y, zStations = FEDERATION_SIDE_BATTERY_Z, width = 2.35, length = 5.6,
@@ -252,7 +255,7 @@ function buildMagellan(glow, thrust, cooldown){
   for (const [z, rear] of [[48, false], [27, false], [-24, true], [-43, true]]) addTurret(root, turrets, yellow, dark, cooldown,
     { y: 26.5, z, width: 6.1, offsets: [-1.4, 1.4], length: 12, rear, arc: PI * 0.76 });
   addFederationSideBatteries(root, turrets, light, dark, cooldown,
-    { x: 14.8, y: 18.5, zStations: [-42, -21, 0, 21, 42], width: 2.6, length: 6.2, damageScale: 0.38, rangeScale: 0.72 });
+    { x: 14.8, y: 18.5, zStations: [-16, -8, 0, 8, 16], width: 2.6, length: 6.2, damageScale: 0.38, rangeScale: 0.72 });
   compactGroup(staticHull); root.add(staticHull);
   root.userData.silhouette = 'magellan-long-wedge-heavy-drive';
   return { root, turrets };
@@ -276,7 +279,7 @@ function buildColumbus(glow, thrust, cooldown){
   for (const sx of [-1, 1]) addTurret(root, turrets, light, dark, cooldown,
     { x: sx * 10, y: 25, z: 29, width: 4.1, offsets: [0], length: 7, arc: PI * 0.7 });
   addFederationSideBatteries(root, turrets, light, dark, cooldown,
-    { x: 18.8, y: 17.5, zStations: [-30, -15, 0, 15, 30], width: 2.05, length: 4.7, damageScale: 0.28, rangeScale: 0.6 });
+    { x: 18.8, y: 17.5, zStations: [-12, -6, 0, 6, 12], width: 2.05, length: 4.7, damageScale: 0.28, rangeScale: 0.6 });
   compactGroup(staticHull); root.add(staticHull);
   return { root, turrets };
 }

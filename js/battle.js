@@ -12,13 +12,14 @@ import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
-import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=53fedram1';
+import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=54shiphelm1';
 import { spaceShipProfile } from './space-ship-balance.js';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
   FEDERATION_RAM_CHANCE_PER_SECOND,
   federationRamEligible,
   spaceShipAttackHeading,
+  spaceShipHelmVelocity,
   spaceShipPropulsionEngaged,
   spaceShipTravelMode,
   spaceShipVelocityToward,
@@ -456,10 +457,12 @@ export function startBattle(renderer, opts, onEnd){
     : hintGroundManeuver
     ? `WASD MOVE · ${hintHoverProfile} · Q SAND-KICK · K KNEEL · SHIFT BOOST · TAB/1-4 WEAPON · V CAMERA · F GUARD · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · J STOMP · M MUTE ALL · ESC PAUSE`
     : `WASD MOVE · MOUSE AIM · LMB FIRE · RMB HOLD AIM (RMB SABER WHEN SELECTED) · N LATCH AIM · F GUARD/PARRY · K KNEEL · J STOMP (air) · V CAMERA · SPACE ASCEND · SHIFT BOOST · C DESCEND · R RELOAD · ${freeFlightWeaponHint} · P AIM ASSIST · M MUTE ALL · ESC PAUSE`;
-  hintEl.textContent = baseHint
+  const pilotHint = baseHint
     + (COLONY ? ` · COLONY 0.20G · BOOST ABOVE ${COLONY_FLIGHT_ENTER_HEIGHT}m FOR FREE-FLIGHT` : '')
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
+    + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
+  hintEl.textContent = pilotHint;
 
   let msgT = 0;
   const setMsg = (t, dur = 2.6) => { msgEl.textContent = t; msgT = dur; };
@@ -1505,6 +1508,7 @@ export function startBattle(renderer, opts, onEnd){
         return;
       }
       if (p.isShip){
+        if (p === commandedShip) releaseCommandedShip(true);
         for (let i = 0; i < 4; i++)
           explosion(p.root.position.clone().add(tmpV.set(rng.range(-30, 30), rng.range(4, 20), rng.range(-40, 40))), 32,
             clamp(700 / p.root.position.distanceTo(player.root.position), 0.12, 0.45));
@@ -3271,6 +3275,9 @@ export function startBattle(renderer, opts, onEnd){
 
   function damage(m, dmg, hitPoint, attacker, melee, weaponName = null){
     if (!m.alive) return;
+    // The pilot is aboard the commanded hull. Ship HP is the active health pool
+    // until helm control is released, so the hidden mobile suit cannot be hit.
+    if (m === player && commandedShip?.alive) return;
     // PvP uses shooter-side hit detection but victim-side health. The local rival is
     // therefore a visual/collision proxy: report a bounded raw hit to its owning peer
     // and let that peer run the ordinary armor, guard, weak-point and death logic.
@@ -3646,6 +3653,7 @@ export function startBattle(renderer, opts, onEnd){
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
   let debugShipCamera = null;
+  let commandedShip = null;
   let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
   let sniperHoldingBreath = false, sniperBreathBlocked = false;
@@ -3722,6 +3730,46 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  function releaseCommandedShip(quiet = false){
+    if (!commandedShip) return false;
+    const ship = commandedShip;
+    commandedShip = null;
+    keys.clear();
+    player.root.position.copy(ship.root.position)
+      .add(new THREE.Vector3(ship.radius + 18, ship.hitY + 8, 0).applyQuaternion(ship.root.quaternion));
+    player.vel.copy(ship.vel);
+    player.root.visible = true;
+    if (playerHoverCraft?.alive && player.hoverCraft === playerHoverCraft) playerHoverCraft.root.visible = true;
+    hintEl.textContent = pilotHint;
+    if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM RELEASED — MOBILE SUIT CONTROL RESTORED`, 2.2);
+    return true;
+  }
+
+  function setCommandedShip(ship, quiet = false){
+    if (!SPACE || PVP || !ship?.alive || !ship.spaceProfile || ship.team !== player.team) return false;
+    commandedShip = ship;
+    debugShipCamera = null;
+    firstPerson = false;
+    if (sniperMode) setSniperMode(false, true);
+    player.blocking = false;
+    player.vel.set(0, 0, 0);
+    player.root.visible = false;
+    if (playerHoverCraft?.alive && player.hoverCraft === playerHoverCraft) playerHoverCraft.root.visible = false;
+    hintEl.textContent = 'SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · SHIFT FLANK SPEED · H EXIT HELM · AUTO BATTERIES ACTIVE';
+    if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM CONTROL — BATTERIES REMAIN AUTOMATIC`, 2.6);
+    return true;
+  }
+
+  function toggleCommandedShip(){
+    if (!SPACE || PVP){ setMsg('CAPITAL SHIP HELM IS AVAILABLE IN SOLO SPACE BATTLES', 2); return; }
+    if (commandedShip){ releaseCommandedShip(); return; }
+    const allies = props.filter(p => p.alive && p.spaceProfile && p.team === player.team)
+      .sort((a, b) => a.root.position.distanceToSquared(player.root.position)
+        - b.root.position.distanceToSquared(player.root.position));
+    if (!allies.length){ setMsg('NO ALLIED CAPITAL SHIP AVAILABLE', 2); return; }
+    setCommandedShip(allies[0]);
+  }
+
   const onMouseMove = e => {
     if (!locked) return;
     const aim = activeAimProfile();
@@ -3768,6 +3816,7 @@ export function startBattle(renderer, opts, onEnd){
       if (player.suit.weapons[idx] || (hasSaber && idx === SABER_SLOT)) switchWeapon(idx);
     }
     if (k === 'v' && !e.repeat) cycleCameraView();
+    if (k === 'h' && !e.repeat) toggleCommandedShip();
     if (k === 'n' && !e.repeat){
       if (sniperMode && sniperRmbHeld && !sniperLatched) sniperLatched = true;
       else if (sniperMode){ sniperLatched = false; setSniperMode(false); }
@@ -4556,7 +4605,7 @@ export function startBattle(renderer, opts, onEnd){
     ai.tThink -= dt;
     if (ai.tThink <= 0){
       ai.tThink = 1.2;
-      const foes = mechs.filter(o => o.alive && o.team !== m.team);
+      const foes = mechs.filter(o => o.alive && o.team !== m.team && !(o.isPlayer && commandedShip));
       const hostileProps = props.filter(p => p.alive && p.team !== m.team && !p.scenery);
       const hostileLandships = hostileProps.filter(p => p.landProfile);
       if (!foes.length && !hostileProps.length){ ai.target = null; setKneelTarget(m, false); return; }
@@ -5858,7 +5907,7 @@ export function startBattle(renderer, opts, onEnd){
     if (ai.tThink <= 0){
       ai.tThink = 0.7;
       // aircraft strafe/bomb ground targets too — include hostile props (landships, ships, bases)
-      const foes = mechs.filter(o => o.alive && o.team !== m.team)
+      const foes = mechs.filter(o => o.alive && o.team !== m.team && !(o.isPlayer && commandedShip))
         .concat(props.filter(p => p.alive && p.team !== m.team && !p.scenery));
       ai.target = foes.length
         ? foes.reduce((a, b) => a.root.position.distanceToSquared(pos) < b.root.position.distanceToSquared(pos) ? a : b)
@@ -6498,7 +6547,7 @@ export function startBattle(renderer, opts, onEnd){
 
   // ---------- mission tick: waves, convoys, hold-out timer, ship batteries ----------
   function shipFire(p){
-    const foes = mechs.filter(m => m.alive && m.team !== p.team);
+    const foes = mechs.filter(m => m.alive && m.team !== p.team && !(m.isPlayer && commandedShip));
     // capital ships DUEL: enemy hulls in extended gun reach are priority targets — the fleets
     // actually fight each other instead of leaving every ship kill to the player
     const foeShips = props.filter(q => q.alive && q.isShip && q.team !== p.team
@@ -6537,7 +6586,7 @@ export function startBattle(renderer, opts, onEnd){
       const rangeSq = turretRange * turretRange;
       const tw = t.yaw.getWorldPosition(stv1);
       let best = null, bd = rangeSq;
-      for (const e of mechs){ if (!e.alive || e.team === p.team) continue; const d2 = e.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = e; } }
+      for (const e of mechs){ if (!e.alive || e.team === p.team || (e.isPlayer && commandedShip)) continue; const d2 = e.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = e; } }
       for (const q of props){
         if (!q.alive || q === p || q.team === p.team || (!q.isShip && !q.battery)) continue;
         const d2 = q.root.position.distanceToSquared(tw); if (d2 < bd){ bd = d2; best = q; }
@@ -6777,6 +6826,50 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  function updateCommandedShip(p, dt){
+    if (!SPACE || !p?.alive || !p.spaceProfile) return;
+    p.ramCooldown = Math.max(0, (p.ramCooldown || 0) - dt);
+    p.ramTarget = null;
+    p.ramChargeT = 0;
+    p.ramming = false;
+    p.broadside = false;
+    p.broadsideSide = 0;
+    p.spaceTravelMode = 'helm';
+
+    const turn = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0);
+    const throttle = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 0.48 : 0);
+    const lift = (keys.has(' ') ? 1 : 0) - (keys.has('c') ? 1 : 0);
+    const flank = keys.has('shift') ? 1.7 : 1;
+    p.root.rotation.y = wrapAngle(p.root.rotation.y + turn * p.turnRate * 2.8 * dt);
+
+    const forwardTarget = throttle * p.speed * flank;
+    const verticalTarget = lift * p.speed * 0.72 * flank;
+    p.helmForward = lerp(p.helmForward || 0, forwardTarget, Math.min(1, (throttle ? 1.8 : 1.35) * dt));
+    p.helmVertical = lerp(p.helmVertical || 0, verticalTarget, Math.min(1, (lift ? 2.4 : 1.8) * dt));
+    const velocity = spaceShipHelmVelocity(p.root.rotation.y, p.helmForward, p.helmVertical);
+    p.vel.set(velocity.x, velocity.y, velocity.z);
+    p.root.position.addScaledVector(p.vel, dt);
+    p.propulsionEngaged = Math.abs(p.helmForward) > 0.2;
+    p.verticalThrust = Math.abs(p.helmVertical) > 0.2;
+    p.headingError = 0;
+    p.attackYaw = p.root.rotation.y;
+
+    // Manual flank speed is also a real physical bow charge. Contact damages
+    // both capitals, while the ship's automatic batteries continue tracking.
+    if (p.ramCooldown <= 0 && Math.abs(p.helmForward) >= p.speed * 0.85){
+      const target = nearestHostileShip(p);
+      if (target && p.root.position.distanceTo(target.root.position) <= (p.radius + target.radius) * 0.68){
+        const impact = p.root.position.clone().lerp(target.root.position, 0.5);
+        const ramDamage = Math.max(6500, Math.min(target.maxHp * 0.42, p.maxHp * 0.38));
+        p.ramImpacts = (p.ramImpacts || 0) + 1;
+        p.ramCooldown = p.spaceProfile.ramCooldown || 14;
+        explosion(impact, 36, clamp(700 / impact.distanceTo(player.root.position), 0.14, 0.48));
+        damageProp(target, ramDamage, impact, p, 'MANUAL BOW RAM');
+        damageProp(p, ramDamage * 0.38, impact, target, 'RAMMING COLLISION');
+      }
+    }
+  }
+
   function launchColumbusReinforcement(carrier, suitId, slotIndex){
     // The two side-bay exits sit clear of the Columbus collision hull. Multiple
     // successes in one cycle alternate sides and rows instead of overlapping.
@@ -6847,7 +6940,8 @@ export function startBattle(renderer, opts, onEnd){
     // Campaign and custom fleets use the same class-specific cruise and standoff
     // behavior, so custom capital ships actively close and duel instead of hovering.
     for (const p of props) if (p.alive && p.spaceProfile){
-      updateSpaceShipMovement(p, dt);
+      if (p === commandedShip) updateCommandedShip(p, dt);
+      else updateSpaceShipMovement(p, dt);
       updateColumbusCarrier(p, dt);
     }
     // Landships maneuver as capital combatants in every ground battle, then fire
@@ -7054,6 +7148,23 @@ export function startBattle(renderer, opts, onEnd){
           x: +p.root.position.x.toFixed(2), y: +p.root.position.y.toFixed(2), z: +p.root.position.z.toFixed(2),
           turrets: p.turrets?.length || 0 })));
     }
+    if (commandedShip?.alive){
+      const ship = commandedShip;
+      const frac = clamp(ship.hp / ship.maxHp, 0, 1);
+      hpBar.style.width = frac * 100 + '%';
+      hpBar.classList.toggle('low', frac < 0.3);
+      hpNum.textContent = ` ${Math.max(0, Math.round(ship.hp))} / ${ship.maxHp}`;
+      boostBar.style.width = clamp(Math.abs(ship.helmForward || 0) / Math.max(1, ship.speed * 1.7), 0, 1) * 100 + '%';
+      wEl.innerHTML = `${ship.kind.toUpperCase()} HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · AUTO BATTERIES ACTIVE</span>`
+        + `<br>VERTICAL VERNIERS <span class="ammo" style="color:${ship.verticalThrust ? 'var(--ok)' : 'var(--dim)'}">${ship.helmVertical >= 0 ? '+' : ''}${(ship.helmVertical || 0).toFixed(1)} m/s · SPACE/C</span>`;
+      objEl.textContent = objectiveText();
+      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · SHIFT FLANK SPEED · H EXIT`;
+      msgT -= dt;
+      if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
+      radarT -= dt;
+      if (radarT <= 0){ radarT = 0.08; drawRadar(); }
+      return;
+    }
     const frac = clamp(player.hp / player.maxHp, 0, 1);
     hpBar.style.width = frac * 100 + '%';
     hpBar.classList.toggle('low', frac < 0.3);
@@ -7139,14 +7250,16 @@ export function startBattle(renderer, opts, onEnd){
 
   function drawRadar(){
     const R = 90, range = 3500;
+    const radarCenter = commandedShip?.root.position || player.root.position;
+    const radarYaw = commandedShip?.root.rotation.y ?? camYaw;
     rctx.clearRect(0, 0, 180, 180);
     rctx.strokeStyle = 'rgba(60,110,160,.5)';
     rctx.beginPath(); rctx.arc(R, R, 88, 0, 7); rctx.stroke();
     rctx.beginPath(); rctx.arc(R, R, 44, 0, 7); rctx.stroke();
     const put = (pos, color, size) => {
-      tmpV.subVectors(pos, player.root.position);
-      const rx = tmpV.x * Math.cos(-camYaw) - tmpV.z * Math.sin(-camYaw);
-      const rz = tmpV.x * Math.sin(-camYaw) + tmpV.z * Math.cos(-camYaw);
+      tmpV.subVectors(pos, radarCenter);
+      const rx = tmpV.x * Math.cos(-radarYaw) - tmpV.z * Math.sin(-radarYaw);
+      const rz = tmpV.x * Math.sin(-radarYaw) + tmpV.z * Math.cos(-radarYaw);
       const d = Math.hypot(rx, rz);
       if (d > range) return;
       rctx.fillStyle = color;
@@ -7178,7 +7291,29 @@ export function startBattle(renderer, opts, onEnd){
   const cameraAimDirection = new THREE.Vector3(0, 0, 1);
   const cameraChaseDirection = new THREE.Vector3(0, 0, 1);
   const cameraFocusPoint = new THREE.Vector3();
+  function commandedShipCameraUpdate(dt){
+    const ship = commandedShip;
+    const radius = ship.radius || 42;
+    const forward = cameraFrameForward.set(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
+    const center = cameraFocusPoint.copy(ship.root.position).addScaledVector(UP, ship.hitY + radius * 0.18);
+    const desired = cameraAimFlat.copy(center)
+      .addScaledVector(forward, -radius * 3.1)
+      .addScaledVector(UP, radius * 1.25);
+    camera.up.copy(UP);
+    if (camera.position.distanceToSquared(desired) > radius * radius * 100) camera.position.copy(desired);
+    else camera.position.lerp(desired, Math.min(1, 6 * dt));
+    camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 1.05));
+    camera.fov = lerp(camera.fov, 58, Math.min(1, 5 * dt));
+    camera.updateProjectionMatrix();
+    player.root.visible = false;
+    viewGun.visible = false;
+    viewShield.visible = false;
+    cockpitInterior.visible = false;
+    cockpitEl.classList.add('hidden');
+    hud.classList.remove('sniper-mode', 'aim-mode', 'cockpit-view');
+  }
   function cameraUpdate(dt){
+    if (commandedShip?.alive){ commandedShipCameraUpdate(dt); return; }
     const p = player.root.position;
     const motion = player.vel.length();
     const aimProfile = activeAimProfile();
@@ -7817,7 +7952,7 @@ export function startBattle(renderer, opts, onEnd){
     collisionGrid.clear();
     const live = [];
     for (const m of mechs){
-      if (!m.alive || m.carrierRide?.carrier?.alive) continue;
+      if (!m.alive || m.carrierRide?.carrier?.alive || (m.isPlayer && commandedShip)) continue;
       m._ci = live.length; m._r = bodyRadius(m); live.push(m);
       enforceTerrainSlope(m);
       const key = Math.floor(m.root.position.x / CELL) + ',' + Math.floor(m.root.position.z / CELL);
@@ -8078,6 +8213,17 @@ export function startBattle(renderer, opts, onEnd){
       renderer.render(scene, camera);
       return { kind, silhouette: ship.root.children[0]?.userData?.silhouette || null };
     },
+    _debugCommandShip(kind = 'salamis', drive = false){
+      const ship = props.find(p => p.alive && p.team === player.team && p.spaceProfile && p.kind === kind)
+        || props.find(p => p.alive && p.team === player.team && p.spaceProfile);
+      if (!ship || !setCommandedShip(ship, true)) return null;
+      paused = false;
+      started = true;
+      keys.clear();
+      if (drive){ keys.add('w'); keys.add('d'); keys.add(' '); keys.add('shift'); }
+      setMsg(`${ship.kind.toUpperCase()} HELM QA — ${drive ? 'FLANK CLIMB' : 'IDLE'}`, 2);
+      return { kind: ship.kind, drive, sideTurrets: ship.turrets?.filter(t => t.secondary).length || 0 };
+    },
     _debugForceFedShipCharge(){
       const fed = props.find(p => p.alive && p.team === 'FED' && p.spaceProfile?.ramDuration);
       const foe = fed ? props.find(p => p.alive && p.team !== 'FED' && p.spaceProfile) : null;
@@ -8138,6 +8284,19 @@ export function startBattle(renderer, opts, onEnd){
         .project(camera);
       return {
         kills, playerHp: player.hp, cam: camera.position.toArray(), env, space: SPACE, paused,
+        commandedShip: commandedShip?.alive ? {
+          kind: commandedShip.kind,
+          hp: commandedShip.hp,
+          maxHp: commandedShip.maxHp,
+          position: commandedShip.root.position.toArray(),
+          velocity: commandedShip.vel.toArray(),
+          yaw: +commandedShip.root.rotation.y.toFixed(3),
+          mode: commandedShip.spaceTravelMode || null,
+          propulsionEngaged: !!commandedShip.propulsionEngaged,
+          verticalThrust: !!commandedShip.verticalThrust,
+          sideTurrets: commandedShip.turrets?.filter(t => t.secondary).length || 0,
+          cameraDistance: camera.position.distanceTo(commandedShip.root.position),
+        } : null,
         colony: COLONY ? {
           radius: COLONY_RADIUS,
           gravityScale: COLONY_GRAVITY_SCALE,
@@ -8365,6 +8524,7 @@ export function startBattle(renderer, opts, onEnd){
           .map(m => ({ wingId: m.wingId, alive: m.alive, hp: m.hp })),
         props: props.map(p => ({ kind: p.kind, team: p.team, p: p.root.position.toArray(),
           rotY: +p.root.rotation.y.toFixed(3), isShip: p.isShip,
+          commanded: p === commandedShip,
           label: p.label || null, hitBoxes: p.hitBoxes?.length || 0, hitSpheres: p.hitSpheres?.length || 0,
           hp: p.hp, maxHp: p.maxHp, alive: p.alive, arrived: p.arrived, escaped: p.escaped,
           speed: p.speed || 0, velocity: p.vel?.toArray?.() || null,
@@ -8426,9 +8586,15 @@ export function startBattle(renderer, opts, onEnd){
           m._collisionPrev.copy(m.root.position);
         }
         if (outcome === null) battleClock += dt;
-        updatePrediction(dt); // P aim-assist: maintain the 0.5s lock before the player fires
-        playerUpdate(dt);
-        updatePlayerHoverCraft();
+        if (commandedShip?.alive){
+          player.root.position.copy(commandedShip.root.position);
+          player.vel.set(0, 0, 0);
+          player.root.visible = false;
+        } else {
+          updatePrediction(dt); // P aim-assist: maintain the 0.5s lock before the player fires
+          playerUpdate(dt);
+          updatePlayerHoverCraft();
+        }
         lodTimer -= dt;
         if (lodTimer <= 0){ lodRepartition(); lodTimer = 0.2; } // re-pick the near set ~5x/sec
         for (let i = 0, n = mechs.length; i < n; i++) mechUpdate(mechs[i], dt); // cached length: carrier-dropped mechs join next frame, not mid-loop
@@ -8439,6 +8605,7 @@ export function startBattle(renderer, opts, onEnd){
         particlesUpdate(dt);
         blipsUpdate(dt);
         missionUpdate(dt);
+        if (commandedShip?.alive) player.root.position.copy(commandedShip.root.position);
         supportUpdate(dt);
         pvpConnectionWatchdog();
         pvpStateUpdate(dt);

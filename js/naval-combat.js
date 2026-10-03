@@ -68,6 +68,14 @@ export function spaceShipVelocityToward(offset, speed, horizontal = true, vertic
   };
 }
 
+export function spaceShipHelmVelocity(yaw, forwardSpeed, verticalSpeed = 0){
+  return {
+    x: Math.sin(yaw) * forwardSpeed,
+    y: verticalSpeed,
+    z: Math.cos(yaw) * forwardSpeed,
+  };
+}
+
 // Continuous point-against-point sweep expanded by both collision radii. The
 // return value is the first contact as a fraction of the current frame.
 export function sweptHeavyCollisionFraction(a, b, dt){
