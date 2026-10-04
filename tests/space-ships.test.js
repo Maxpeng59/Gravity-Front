@@ -41,16 +41,21 @@ test('every ship carries paired three-round missile racks and only Federation hu
   assert.equal((models.match(/addFederationTorpedoTube\(staticHull/g) || []).length, 3);
 });
 
-test('helm camera orbits independently and manual ship weapons use F and T', () => {
+test('helm camera orbits independently while ship weapons use 1/2, LMB, and hull aim', () => {
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
-  assert.match(battle, /ARROWS CAMERA · F 2×3 MISSILES · T FORWARD TORPEDO/);
+  assert.match(battle, /ARROWS CAMERA · 1\/2 SELECT WEAPON · LMB FIRE ALONG HULL AIM/);
   assert.match(battle, /keys\.has\('arrowright'\)/);
   assert.match(battle, /shipCameraYaw = wrapAngle/);
-  assert.match(battle, /if \(k === 'f' && !e\.repeat\) fireShipMissileSalvo/);
-  assert.match(battle, /if \(k === 't' && !e\.repeat\) fireShipTorpedo/);
+  assert.match(battle, /if \(\(k === '1' \|\| k === '2'\) && !e\.repeat\) switchShipWeapon/);
+  assert.match(battle, /if \(mouseDown\) fireSelectedShipWeapon\(p\)/);
+  assert.match(battle, /function shipHullAimPoint/);
+  assert.match(battle, /function drawShipHullReticle/);
+  assert.match(battle, /LMB FIRE · NO AUTO-TRACK/);
   assert.match(battle, /weaponName: 'SHIP MISSILE'/);
   assert.match(battle, /weaponName: 'FEDERATION SHIP TORPEDO'/);
+  assert.match(battle, /mesh, homing: null,[\s\S]*?collisionRadius: 1\.9/);
   assert.match(battle, /homing: null, heavy: true, collisionRadius: 4\.2/);
+  assert.doesNotMatch(battle, /SEEKING TARGET/);
   assert.match(battle, /if \(p === commandedShip\) return/);
   assert.match(battle, /updateShipOrdnance\(p, dt\)/);
 });
