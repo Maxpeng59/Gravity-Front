@@ -41,9 +41,9 @@ test('every ship carries paired three-round missile racks and only Federation hu
   assert.equal((models.match(/addFederationTorpedoTube\(staticHull/g) || []).length, 3);
 });
 
-test('ship weapons use 1/2 and LMB, N hull aim, and optional U missile auto-lock', () => {
+test('ship weapons use an MS-style centred N hull view with optional U missile auto-lock', () => {
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
-  assert.match(battle, /ARROWS CAMERA · N HULL AIM · U MISSILE AUTO-LOCK · 1\/2 SELECT WEAPON · LMB FIRE/);
+  assert.match(battle, /ARROWS CAMERA · N AIM FROM HULL VIEW · U MISSILE AUTO-LOCK · 1\/2 SELECT WEAPON · LMB FIRE/);
   assert.match(battle, /keys\.has\('arrowright'\)/);
   assert.match(battle, /shipCameraYaw = wrapAngle/);
   assert.match(battle, /if \(\(k === '1' \|\| k === '2'\) && !e\.repeat\) switchShipWeapon/);
@@ -51,9 +51,16 @@ test('ship weapons use 1/2 and LMB, N hull aim, and optional U missile auto-lock
   assert.match(battle, /if \(k === 'u' && !e\.repeat\) toggleShipMissileAutoLock\(\)/);
   assert.match(battle, /if \(mouseDown\) fireSelectedShipWeapon\(p\)/);
   assert.match(battle, /function shipHullAimPoint/);
+  assert.match(battle, /function shipHullAimOrigin/);
   assert.match(battle, /function drawShipHullReticle/);
   assert.match(battle, /function acquireShipMissileLock/);
   assert.match(battle, /shipAimMode \? 46 : 58/);
+  assert.match(battle, /const x = innerWidth \* 0\.5/);
+  assert.match(battle, /const y = innerHeight \* 0\.5/);
+  assert.match(battle, /desired = cameraAimFlat\.copy\(shipHullAimOrigin\(ship\)\)/);
+  assert.match(battle, /camera\.lookAt\(cameraChaseDirection\.copy\(camera\.position\)\.addScaledVector\(forward, 2000\)\)/);
+  assert.match(battle, /sightPoint\.sub\(muzzle\)\.normalize\(\)/);
+  assert.match(battle, /const spreadScale = p === commandedShip && shipAimMode \? 0 : 1/);
   assert.match(battle, /U AUTO-LOCK OFF · HULL-FORWARD SHOT/);
   assert.match(battle, /weaponName: 'SHIP MISSILE'/);
   assert.match(battle, /weaponName: 'FEDERATION SHIP TORPEDO'/);

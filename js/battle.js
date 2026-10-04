@@ -464,7 +464,7 @@ export function startBattle(renderer, opts, onEnd){
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
-  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N HULL AIM · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
+  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N AIM FROM HULL VIEW · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
   hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
   let msgT = 0;
@@ -5585,19 +5585,24 @@ export function startBattle(renderer, opts, onEnd){
     drawCritFlash();
     drawObjectiveMarkers();
   }
+  function shipHullAimOrigin(ship = commandedShip){
+    if (!ship?.alive || !ship.spaceProfile) return null;
+    const radius = ship.radius || 42;
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
+    return ship.root.position.clone()
+      .addScaledVector(UP, (ship.hitY || 0) + radius * 0.55)
+      .addScaledVector(forward, -radius * 0.18);
+  }
   function shipHullAimPoint(ship = commandedShip){
     if (!ship?.alive || !ship.spaceProfile) return null;
     const range = shipWeaponIndex === 1
       ? ship.spaceProfile.torpedoRange
       : ship.spaceProfile.missileRange;
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
-    return ship.root.position.clone()
-      .add(new THREE.Vector3(0, ship.hitY || 0, 0))
-      .addScaledVector(forward, range);
+    return shipHullAimOrigin(ship).addScaledVector(forward, range);
   }
-  // Ship ordnance is aimed by the hull, not the orbiting camera. This pipper
-  // stays on the bow's projected course so arrow-key camera movement never
-  // suggests that missiles or torpedoes will steer toward the view direction.
+  // Ship ordnance is aimed by the hull. In N mode the camera and pipper share
+  // the same straight-ahead ray; arrow-key orbit resumes after leaving N mode.
   function drawShipHullReticle(){
     const ship = commandedShip;
     const aim = shipHullAimPoint(ship);
@@ -5605,31 +5610,16 @@ export function startBattle(renderer, opts, onEnd){
     const selectedTorpedo = shipWeaponIndex === 1;
     const color = selectedTorpedo ? '#55e8ff' : '#ffd34f';
     const label = selectedTorpedo ? '2 · FORWARD TORPEDO' : '1 · 2×3 MISSILES';
-    const aimNdc = aim.clone().project(camera);
-    let x = (aimNdc.x * 0.5 + 0.5) * innerWidth;
-    let y = (-aimNdc.y * 0.5 + 0.5) * innerHeight;
-    const behind = aimNdc.z > 1;
-    if (behind){ x = innerWidth - x; y = innerHeight - y; }
-    const pad = 58;
-    x = clamp(x, pad, innerWidth - pad);
-    y = clamp(y, pad, innerHeight - pad);
-
-    const bow = ship.root.position.clone()
-      .add(new THREE.Vector3(0, ship.hitY || 0, 0))
-      .add(new THREE.Vector3(0, 0, Math.max(10, ship.radius * 1.25)).applyQuaternion(ship.root.quaternion))
-      .project(camera);
+    // N uses the same sight rule as a mobile suit: the weapon path is the
+    // camera's exact centre ray. The only difference is that the eye is mounted
+    // above the capital ship's hull instead of at an MS sensor/head node.
+    const x = innerWidth * 0.5;
+    const y = innerHeight * 0.5;
     loCtx.save();
     loCtx.strokeStyle = color;
     loCtx.fillStyle = color;
     loCtx.lineWidth = 2.2;
-    loCtx.globalAlpha = behind ? 0.62 : 0.95;
-    if (bow.z <= 1){
-      const bx = clamp((bow.x * 0.5 + 0.5) * innerWidth, pad, innerWidth - pad);
-      const by = clamp((-bow.y * 0.5 + 0.5) * innerHeight, pad, innerHeight - pad);
-      loCtx.setLineDash([7, 6]);
-      loCtx.beginPath(); loCtx.moveTo(bx, by); loCtx.lineTo(x, y); loCtx.stroke();
-      loCtx.setLineDash([]);
-    }
+    loCtx.globalAlpha = 0.95;
     const r = selectedTorpedo ? 25 : 20;
     loCtx.beginPath(); loCtx.arc(x, y, r, 0, Math.PI * 2); loCtx.stroke();
     loCtx.beginPath();
@@ -5640,7 +5630,7 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.stroke();
     loCtx.font = 'bold 13px monospace';
     loCtx.textAlign = 'center';
-    loCtx.fillText(`${behind ? 'BOW COURSE BEHIND VIEW · ' : 'HULL AIM · '}${label}`, x, y - r - 18);
+    loCtx.fillText(`HULL SIGHT · ${label}`, x, y - r - 18);
     loCtx.font = '11px monospace';
     const lockText = selectedTorpedo ? 'TORPEDO FOLLOWS HULL COURSE'
       : shipMissileAutoLock
@@ -6831,11 +6821,11 @@ export function startBattle(renderer, opts, onEnd){
     shipAimMode = !shipAimMode;
     if (shipAimMode){
       shipCameraYaw = 0;
-      shipCameraPitch = 0.16;
+      shipCameraPitch = 0;
     }
     if (!quiet) setMsg(shipAimMode
-      ? `N · HULL AIM ACTIVE · ${shipWeaponName()} · LMB FIRE`
-      : 'N · HULL AIM DISENGAGED · ARROW CAMERA FREE', 1.7);
+      ? `N · HULL VIEW AIM ACTIVE · ${shipWeaponName()} · CENTRE SIGHT · LMB FIRE`
+      : 'N · HULL VIEW AIM DISENGAGED · ARROW CAMERA FREE', 1.7);
     return shipAimMode;
   }
 
@@ -6873,15 +6863,19 @@ export function startBattle(renderer, opts, onEnd){
       // Manual salvos follow the bow exactly. AI calculates only an initial
       // firing solution; a player missile gains homing only after U enables
       // auto-lock and a live target is acquired in the forward hull arc.
+      const sightPoint = p === commandedShip && shipAimMode ? shipHullAimPoint(p) : null;
       const baseDir = target?.alive
         ? target.root.position.clone()
           .add(new THREE.Vector3(0, aimHeight(target), 0))
           .addScaledVector(target.vel || new THREE.Vector3(), p.root.position.distanceTo(target.root.position) / profile.missileSpeed)
           .sub(muzzle).normalize()
+        : sightPoint
+          ? sightPoint.sub(muzzle).normalize()
         : forward;
+      const spreadScale = p === commandedShip && shipAimMode ? 0 : 1;
       const dir = baseDir.clone()
-        .addScaledVector(right, side * (0.006 + rackSlot * 0.002))
-        .addScaledVector(up, (rackSlot - 1) * 0.004)
+        .addScaledVector(right, side * (0.006 + rackSlot * 0.002) * spreadScale)
+        .addScaledVector(up, (rackSlot - 1) * 0.004 * spreadScale)
         .normalize();
       const mesh = new THREE.Mesh(missileGeo, missileMat);
       mesh.scale.setScalar(1.45);
@@ -6917,9 +6911,12 @@ export function startBattle(renderer, opts, onEnd){
       if (!quiet && p === commandedShip) setMsg(`TORPEDO TUBE RELOADING · ${p.torpedoT.toFixed(1)}s`, 1.3);
       return false;
     }
-    const dir = new THREE.Vector3(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
     p.root.updateMatrixWorld(true);
     const muzzle = p.root.localToWorld(new THREE.Vector3(0, Math.max(6, p.hitY * 0.7), p.radius * 1.28));
+    const sightPoint = p === commandedShip && shipAimMode ? shipHullAimPoint(p) : null;
+    const dir = sightPoint
+      ? sightPoint.sub(muzzle).normalize()
+      : new THREE.Vector3(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
     const mesh = makeShipTorpedo();
     mesh.position.copy(muzzle);
     mesh.quaternion.setFromUnitVectors(UP, dir);
@@ -7633,34 +7630,42 @@ export function startBattle(renderer, opts, onEnd){
     const radius = ship.radius || 42;
     const forward = cameraFrameForward.set(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
     const center = cameraFocusPoint.copy(ship.root.position).addScaledVector(UP, ship.hitY + radius * 0.18);
+    let desired;
     if (shipAimMode){
-      shipCameraYaw = wrapAngle(shipCameraYaw + wrapAngle(-shipCameraYaw) * Math.min(1, 10 * dt));
-      shipCameraPitch = lerp(shipCameraPitch, 0.16, Math.min(1, 10 * dt));
+      // Same as MS weapon aim, relocated to a hull-mounted optical position:
+      // the camera looks exactly down +Z of the ship and the centred reticle is
+      // therefore the actual straight-ahead projectile path.
+      shipCameraYaw = 0;
+      shipCameraPitch = 0;
+      desired = cameraAimFlat.copy(shipHullAimOrigin(ship));
     } else {
       shipCameraYaw = wrapAngle(shipCameraYaw
         + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
       shipCameraPitch = clamp(shipCameraPitch
         + ((keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0)) * 0.9 * dt,
         -0.12, 1.08);
+      const orbitYaw = ship.root.rotation.y + shipCameraYaw;
+      shipCameraOrbit.set(Math.sin(orbitYaw), 0, Math.cos(orbitYaw));
+      const distance = radius * 3.25;
+      desired = cameraAimFlat.copy(center)
+        .addScaledVector(shipCameraOrbit, -distance * Math.cos(shipCameraPitch))
+        .addScaledVector(UP, distance * Math.sin(shipCameraPitch));
     }
-    const orbitYaw = ship.root.rotation.y + shipCameraYaw;
-    shipCameraOrbit.set(Math.sin(orbitYaw), 0, Math.cos(orbitYaw));
-    const distance = radius * 3.25;
-    const desired = cameraAimFlat.copy(center)
-      .addScaledVector(shipCameraOrbit, -distance * Math.cos(shipCameraPitch))
-      .addScaledVector(UP, distance * Math.sin(shipCameraPitch));
     camera.up.copy(UP);
     if (camera.position.distanceToSquared(desired) > radius * radius * 100) camera.position.copy(desired);
-    else camera.position.lerp(desired, Math.min(1, 6 * dt));
-    camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 0.55));
+    else camera.position.lerp(desired, Math.min(1, (shipAimMode ? 18 : 6) * dt));
+    if (shipAimMode) camera.lookAt(cameraChaseDirection.copy(camera.position).addScaledVector(forward, 2000));
+    else camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 0.55));
     camera.fov = lerp(camera.fov, shipAimMode ? 46 : 58, Math.min(1, 5 * dt));
     camera.updateProjectionMatrix();
+    camera.updateMatrixWorld(true);
     player.root.visible = false;
     viewGun.visible = false;
     viewShield.visible = false;
     cockpitInterior.visible = false;
     cockpitEl.classList.add('hidden');
-    hud.classList.remove('sniper-mode', 'aim-mode', 'cockpit-view');
+    hud.classList.remove('sniper-mode', 'cockpit-view');
+    hud.classList.toggle('aim-mode', shipAimMode);
   }
   function cameraUpdate(dt){
     if (commandedShip?.alive){ commandedShipCameraUpdate(dt); return; }
@@ -8600,7 +8605,8 @@ export function startBattle(renderer, opts, onEnd){
       ship.torpedoT = 0;
       shipAimMode = true;
       shipCameraYaw = 0;
-      shipCameraPitch = 0.16;
+      shipCameraPitch = 0;
+      commandedShipCameraUpdate(1);
       shipMissileAutoLock = true;
       shipMissileLockTarget = acquireShipMissileLock(ship);
       switchShipWeapon(0, true);
@@ -8618,6 +8624,9 @@ export function startBattle(renderer, opts, onEnd){
         aimMode: shipAimMode,
         missileAutoLock: shipMissileAutoLock,
         lockAcquired: !!shipMissileLockTarget?.alive,
+        aimNdc: shipHullAimPoint(ship)?.project(camera).toArray() || null,
+        cameraAimAlignment: camera.getWorldDirection(new THREE.Vector3())
+          .dot(new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize()),
         selectedWeapon: shipWeaponIndex + 1,
         cameraYaw: shipCameraYaw,
         cameraPitch: shipCameraPitch,
@@ -8708,6 +8717,8 @@ export function startBattle(renderer, opts, onEnd){
           missileLockTarget: shipMissileLockTarget?.alive
             ? shipMissileLockTarget.kind || shipMissileLockTarget.suit?.id || 'target'
             : null,
+          aimCameraPosition: shipHullAimOrigin(commandedShip)?.toArray() || null,
+          cameraAimAlignment: shipForwardDbg ? cameraForwardDbg.dot(shipForwardDbg) : null,
           weaponIndex: shipWeaponIndex,
           weaponSlot: shipWeaponIndex + 1,
           weaponName: shipWeaponName(),
