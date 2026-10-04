@@ -464,7 +464,7 @@ export function startBattle(renderer, opts, onEnd){
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
-  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · 1/2 SELECT WEAPON · LMB FIRE ALONG HULL AIM · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
+  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N HULL AIM · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
   hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
   let msgT = 0;
@@ -3682,6 +3682,7 @@ export function startBattle(renderer, opts, onEnd){
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
   let shipCameraYaw = 0, shipCameraPitch = 0.35;
   let shipWeaponIndex = 0;
+  let shipAimMode = false, shipMissileAutoLock = false, shipMissileLockTarget = null;
   let debugShipCamera = null;
   let locked = false, firstPerson = false, thirdPersonView = 'pursuit', sniperMode = false, sniperPreviousView = false;
   let sniperSteady = 0, sniperZoom = 0, sniperBreath = 1;
@@ -3764,6 +3765,9 @@ export function startBattle(renderer, opts, onEnd){
     if (playerShipLocked && !quiet){ setMsg('THIS SORTIE BEGAN AT THE CAPITAL-SHIP HELM', 1.8); return false; }
     const ship = commandedShip;
     commandedShip = null;
+    shipAimMode = false;
+    shipMissileAutoLock = false;
+    shipMissileLockTarget = null;
     keys.clear();
     player.root.position.copy(ship.root.position)
       .add(new THREE.Vector3(ship.radius + 18, ship.hitY + 8, 0).applyQuaternion(ship.root.quaternion));
@@ -3782,6 +3786,9 @@ export function startBattle(renderer, opts, onEnd){
     shipCameraYaw = 0;
     shipCameraPitch = 0.35;
     shipWeaponIndex = 0;
+    shipAimMode = false;
+    shipMissileAutoLock = false;
+    shipMissileLockTarget = null;
     firstPerson = false;
     if (sniperMode) setSniperMode(false, true);
     player.blocking = false;
@@ -3837,6 +3844,8 @@ export function startBattle(renderer, opts, onEnd){
       if (k.startsWith('arrow')) e.preventDefault();
       if ((k === '1' || k === '2') && !e.repeat) switchShipWeapon(Number(k) - 1);
       if (k === 'tab' && !e.repeat){ e.preventDefault(); switchShipWeapon(shipWeaponIndex === 0 ? 1 : 0); }
+      if (k === 'n' && !e.repeat) toggleShipAimMode();
+      if (k === 'u' && !e.repeat) toggleShipMissileAutoLock();
       if (k === 'h' && !e.repeat) toggleCommandedShip();
       if (k === 'x' && paused && started) finish({ victory: false, retreat: true });
       return;
@@ -5560,7 +5569,7 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.clearRect(0, 0, innerWidth, innerHeight);
     if (!player.alive) return;
     if (commandedShip?.alive){
-      drawShipHullReticle();
+      if (shipAimMode) drawShipHullReticle();
       drawCritFlash();
       drawObjectiveMarkers();
       return;
@@ -5633,7 +5642,32 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.textAlign = 'center';
     loCtx.fillText(`${behind ? 'BOW COURSE BEHIND VIEW · ' : 'HULL AIM · '}${label}`, x, y - r - 18);
     loCtx.font = '11px monospace';
-    loCtx.fillText('LMB FIRE · NO AUTO-TRACK', x, y + r + 26);
+    const lockText = selectedTorpedo ? 'TORPEDO FOLLOWS HULL COURSE'
+      : shipMissileAutoLock
+        ? shipMissileLockTarget?.alive ? `U AUTO-LOCK · ${shipMissileLockTarget.kind?.toUpperCase?.() || 'TARGET'} ACQUIRED` : 'U AUTO-LOCK · SEARCHING FORWARD ARC'
+        : 'U AUTO-LOCK OFF · HULL-FORWARD SHOT';
+    loCtx.fillText(`LMB FIRE · ${lockText}`, x, y + r + 26);
+
+    if (!selectedTorpedo && shipMissileAutoLock && shipMissileLockTarget?.alive){
+      const targetNdc = shipMissileLockTarget.root.position.clone()
+        .add(new THREE.Vector3(0, aimHeight(shipMissileLockTarget), 0))
+        .project(camera);
+      if (targetNdc.z <= 1){
+        const tx = (targetNdc.x * 0.5 + 0.5) * innerWidth;
+        const ty = (-targetNdc.y * 0.5 + 0.5) * innerHeight;
+        const s = 34, l = 12;
+        loCtx.strokeStyle = '#ff5b55'; loCtx.fillStyle = '#ff5b55'; loCtx.lineWidth = 2.4;
+        for (const sx of [-1, 1]) for (const sy of [-1, 1]){
+          loCtx.beginPath();
+          loCtx.moveTo(tx + sx * s, ty + sy * (s - l));
+          loCtx.lineTo(tx + sx * s, ty + sy * s);
+          loCtx.lineTo(tx + sx * (s - l), ty + sy * s);
+          loCtx.stroke();
+        }
+        loCtx.font = 'bold 12px monospace'; loCtx.textAlign = 'center';
+        loCtx.fillText('MISSILE AUTO-LOCK', tx, ty - s - 10);
+      }
+    }
     loCtx.restore();
   }
   // objective beacons on the HUD: diamond + label + range, pinned to the screen edge when off-view
@@ -6772,6 +6806,49 @@ export function startBattle(renderer, opts, onEnd){
     return best;
   }
 
+  function acquireShipMissileLock(ship = commandedShip){
+    if (!ship?.alive || !ship.spaceProfile) return null;
+    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
+    const range = ship.spaceProfile.missileRange;
+    let best = null, bestScore = -Infinity;
+    const consider = target => {
+      if (!target?.alive || target.team === ship.team || target === ship) return;
+      const toward = target.root.position.clone().sub(ship.root.position);
+      const distance = toward.length();
+      if (distance <= 1 || distance > range) return;
+      const alignment = forward.dot(toward.multiplyScalar(1 / distance));
+      if (alignment < 0.72) return;
+      const score = alignment * 2.2 - distance / range;
+      if (score > bestScore){ best = target; bestScore = score; }
+    };
+    for (const mech of mechs) consider(mech);
+    for (const prop of props) if (prop.isShip) consider(prop);
+    return best;
+  }
+
+  function toggleShipAimMode(quiet = false){
+    if (!commandedShip?.alive) return false;
+    shipAimMode = !shipAimMode;
+    if (shipAimMode){
+      shipCameraYaw = 0;
+      shipCameraPitch = 0.16;
+    }
+    if (!quiet) setMsg(shipAimMode
+      ? `N · HULL AIM ACTIVE · ${shipWeaponName()} · LMB FIRE`
+      : 'N · HULL AIM DISENGAGED · ARROW CAMERA FREE', 1.7);
+    return shipAimMode;
+  }
+
+  function toggleShipMissileAutoLock(quiet = false){
+    if (!commandedShip?.alive) return false;
+    shipMissileAutoLock = !shipMissileAutoLock;
+    shipMissileLockTarget = shipMissileAutoLock ? acquireShipMissileLock(commandedShip) : null;
+    if (!quiet) setMsg(shipMissileAutoLock
+      ? `U · MISSILE AUTO-LOCK ON · ${shipMissileLockTarget ? 'TARGET ACQUIRED' : 'SEARCHING FORWARD ARC'}`
+      : 'U · MISSILE AUTO-LOCK OFF · MISSILES FOLLOW HULL AIM', 1.9);
+    return shipMissileAutoLock;
+  }
+
   function fireShipMissileSalvo(p, target = null, quiet = false){
     const profile = p?.spaceProfile;
     if (!p?.alive || !profile?.missileCount) return false;
@@ -6783,6 +6860,7 @@ export function startBattle(renderer, opts, onEnd){
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(p.root.quaternion).normalize();
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(p.root.quaternion).normalize();
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(p.root.quaternion).normalize();
+    const homingTarget = p === commandedShip && shipMissileAutoLock && target?.alive ? target : null;
     p.root.updateMatrixWorld(true);
     for (let i = 0; i < count; i++){
       const side = i < count / 2 ? -1 : 1;
@@ -6792,9 +6870,9 @@ export function startBattle(renderer, opts, onEnd){
         p.hitY + 3 + (rackSlot - 1) * 2.1,
         p.radius * 0.32 + rackSlot * 1.2,
       ));
-      // Player salvos follow the bow exactly. AI may calculate a firing
-      // solution before launch, but the missile never homes after leaving the
-      // rack: it is a conventional hull-aimed weapon, not an auto-tracker.
+      // Manual salvos follow the bow exactly. AI calculates only an initial
+      // firing solution; a player missile gains homing only after U enables
+      // auto-lock and a live target is acquired in the forward hull arc.
       const baseDir = target?.alive
         ? target.root.position.clone()
           .add(new THREE.Vector3(0, aimHeight(target), 0))
@@ -6815,7 +6893,7 @@ export function startBattle(renderer, opts, onEnd){
         dmg: profile.missileDamage, splash: profile.missileSplash,
         team: p.team, owner: p, weaponName: 'SHIP MISSILE',
         life: profile.missileRange / profile.missileSpeed + 2.2,
-        mesh, homing: null,
+        mesh, homing: homingTarget, turn: 1.35,
         heavy: true, collisionRadius: 1.9,
       });
     }
@@ -6823,7 +6901,9 @@ export function startBattle(renderer, opts, onEnd){
     p.missileSalvosFired = (p.missileSalvosFired || 0) + 1;
     p.missilesFired = (p.missilesFired || 0) + count;
     sfx('bazooka', clamp(440 / p.root.position.distanceTo(player.root.position), 0.05, 0.24));
-    if (!quiet && p === commandedShip) setMsg('2×3 MISSILE SALVO — HULL-AIMED', 1.7);
+    if (!quiet && p === commandedShip) setMsg(homingTarget
+      ? '2×3 MISSILE SALVO — AUTO-LOCK TRACKING'
+      : '2×3 MISSILE SALVO — HULL-AIMED', 1.7);
     return true;
   }
 
@@ -6876,13 +6956,18 @@ export function startBattle(renderer, opts, onEnd){
 
   function fireSelectedShipWeapon(p = commandedShip, quiet = false){
     if (!p?.alive || p !== commandedShip) return false;
+    const missileTarget = shipMissileAutoLock
+      ? shipMissileLockTarget?.alive ? shipMissileLockTarget : acquireShipMissileLock(p)
+      : null;
     const fired = shipWeaponIndex === 1
       ? fireShipTorpedo(p, true)
-      : fireShipMissileSalvo(p, null, true);
+      : fireShipMissileSalvo(p, missileTarget, true);
     if (fired && !quiet) setMsg(
       shipWeaponIndex === 1
         ? '2 · HEAVY TORPEDO AWAY — HULL COURSE'
-        : '1 · 2×3 MISSILE SALVO — HULL-AIMED',
+        : missileTarget
+          ? '1 · 2×3 MISSILE SALVO — AUTO-LOCK TRACKING'
+          : '1 · 2×3 MISSILE SALVO — HULL-AIMED',
       1.7,
     );
     return fired;
@@ -7091,6 +7176,7 @@ export function startBattle(renderer, opts, onEnd){
     p.verticalThrust = Math.abs(p.helmVertical) > 0.2;
     p.headingError = 0;
     p.attackYaw = p.root.rotation.y;
+    shipMissileLockTarget = shipMissileAutoLock ? acquireShipMissileLock(p) : null;
     if (mouseDown) fireSelectedShipWeapon(p);
 
     // Manual flank speed is also a real physical bow charge. Contact damages
@@ -7394,6 +7480,8 @@ export function startBattle(renderer, opts, onEnd){
       const missileStatus = ship.missileT > 0 ? `${ship.missileT.toFixed(1)}s` : 'READY';
       const torpedoStatus = !ship.spaceProfile.torpedo ? 'NOT FITTED' : ship.torpedoT > 0 ? `${ship.torpedoT.toFixed(1)}s` : 'READY';
       const selectedStatus = shipWeaponIndex === 1 ? torpedoStatus : missileStatus;
+      const missileLockStatus = !shipMissileAutoLock ? 'OFF'
+        : shipMissileLockTarget?.alive ? 'LOCKED' : 'SEARCHING';
       hpBar.style.width = frac * 100 + '%';
       hpBar.classList.toggle('low', frac < 0.3);
       hpNum.textContent = ` ${Math.max(0, Math.round(ship.hp))} / ${ship.maxHp}`;
@@ -7403,9 +7491,10 @@ export function startBattle(renderer, opts, onEnd){
         + `<br><span style="color:${shipWeaponIndex === 1 ? 'var(--ok)' : 'var(--dim)'}">[2] FORWARD TORPEDO</span> <span class="ammo">${torpedoStatus}</span>`
         + `<br>${ship.kind.toUpperCase()} HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · AUTO BATTERIES ACTIVE</span>`
         + `<br>VERTICAL VERNIERS <span class="ammo" style="color:${ship.verticalThrust ? 'var(--ok)' : 'var(--dim)'}">${ship.helmVertical >= 0 ? '+' : ''}${(ship.helmVertical || 0).toFixed(1)} m/s · SPACE/C</span>`
-        + '<br>HULL AIM <span class="ammo">NO AUTO-TRACK · ARROWS CAMERA ONLY</span>';
+        + `<br>N HULL AIM <span class="ammo" style="color:${shipAimMode ? 'var(--ok)' : 'var(--dim)'}">${shipAimMode ? 'ACTIVE' : 'OFF'}</span>`
+        + `<br>U MISSILE AUTO-LOCK <span class="ammo" style="color:${shipMissileLockTarget?.alive ? 'var(--ok)' : shipMissileAutoLock ? '#ffd34f' : 'var(--dim)'}">${missileLockStatus}</span>`;
       objEl.textContent = objectiveText();
-      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · 1/2 WEAPON · LMB FIRE · HULL AIM · ARROWS CAMERA${playerShipLocked ? '' : ' · H EXIT'}`;
+      simEl.textContent = `CAPITAL SHIP HELM · ${ship.kind.toUpperCase()} · N AIM · U MISSILE LOCK · 1/2 WEAPON · LMB FIRE · ARROWS CAMERA${playerShipLocked ? '' : ' · H EXIT'}`;
       msgT -= dt;
       if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
       radarT -= dt;
@@ -7544,11 +7633,16 @@ export function startBattle(renderer, opts, onEnd){
     const radius = ship.radius || 42;
     const forward = cameraFrameForward.set(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
     const center = cameraFocusPoint.copy(ship.root.position).addScaledVector(UP, ship.hitY + radius * 0.18);
-    shipCameraYaw = wrapAngle(shipCameraYaw
-      + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
-    shipCameraPitch = clamp(shipCameraPitch
-      + ((keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0)) * 0.9 * dt,
-      -0.12, 1.08);
+    if (shipAimMode){
+      shipCameraYaw = wrapAngle(shipCameraYaw + wrapAngle(-shipCameraYaw) * Math.min(1, 10 * dt));
+      shipCameraPitch = lerp(shipCameraPitch, 0.16, Math.min(1, 10 * dt));
+    } else {
+      shipCameraYaw = wrapAngle(shipCameraYaw
+        + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
+      shipCameraPitch = clamp(shipCameraPitch
+        + ((keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0)) * 0.9 * dt,
+        -0.12, 1.08);
+    }
     const orbitYaw = ship.root.rotation.y + shipCameraYaw;
     shipCameraOrbit.set(Math.sin(orbitYaw), 0, Math.cos(orbitYaw));
     const distance = radius * 3.25;
@@ -7559,7 +7653,7 @@ export function startBattle(renderer, opts, onEnd){
     if (camera.position.distanceToSquared(desired) > radius * radius * 100) camera.position.copy(desired);
     else camera.position.lerp(desired, Math.min(1, 6 * dt));
     camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 0.55));
-    camera.fov = lerp(camera.fov, 58, Math.min(1, 5 * dt));
+    camera.fov = lerp(camera.fov, shipAimMode ? 46 : 58, Math.min(1, 5 * dt));
     camera.updateProjectionMatrix();
     player.root.visible = false;
     viewGun.visible = false;
@@ -8504,18 +8598,26 @@ export function startBattle(renderer, opts, onEnd){
       keys.clear();
       ship.missileT = 0;
       ship.torpedoT = 0;
+      shipAimMode = true;
+      shipCameraYaw = 0;
+      shipCameraPitch = 0.16;
+      shipMissileAutoLock = true;
+      shipMissileLockTarget = acquireShipMissileLock(ship);
       switchShipWeapon(0, true);
       const missile = fireSelectedShipWeapon(ship, true);
       const missileTracking = projectiles.filter(p => p.owner === ship && p.weaponName === 'SHIP MISSILE' && p.homing).length;
       const torpedoSelected = switchShipWeapon(1, true);
       const torpedo = torpedoSelected ? fireSelectedShipWeapon(ship, true) : false;
       switchShipWeapon(0, true);
-      setMsg('SHIP ORDNANCE QA — 1/2 SELECT · HULL AIM · NO AUTO-TRACK', 2);
+      setMsg('SHIP ORDNANCE QA — N AIM · U MISSILE AUTO-LOCK · 1/2 SELECT', 2);
       return {
         kind: ship.kind, missile, torpedo,
         missilesFired: ship.missilesFired,
         torpedoesFired: ship.torpedoesFired,
         missileTracking,
+        aimMode: shipAimMode,
+        missileAutoLock: shipMissileAutoLock,
+        lockAcquired: !!shipMissileLockTarget?.alive,
         selectedWeapon: shipWeaponIndex + 1,
         cameraYaw: shipCameraYaw,
         cameraPitch: shipCameraPitch,
@@ -8601,6 +8703,11 @@ export function startBattle(renderer, opts, onEnd){
           cameraDistance: camera.position.distanceTo(commandedShip.root.position),
           cameraYaw: +shipCameraYaw.toFixed(3),
           cameraPitch: +shipCameraPitch.toFixed(3),
+          aimMode: shipAimMode,
+          missileAutoLock: shipMissileAutoLock,
+          missileLockTarget: shipMissileLockTarget?.alive
+            ? shipMissileLockTarget.kind || shipMissileLockTarget.suit?.id || 'target'
+            : null,
           weaponIndex: shipWeaponIndex,
           weaponSlot: shipWeaponIndex + 1,
           weaponName: shipWeaponName(),

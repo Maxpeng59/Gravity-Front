@@ -41,21 +41,25 @@ test('every ship carries paired three-round missile racks and only Federation hu
   assert.equal((models.match(/addFederationTorpedoTube\(staticHull/g) || []).length, 3);
 });
 
-test('helm camera orbits independently while ship weapons use 1/2, LMB, and hull aim', () => {
+test('ship weapons use 1/2 and LMB, N hull aim, and optional U missile auto-lock', () => {
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
-  assert.match(battle, /ARROWS CAMERA · 1\/2 SELECT WEAPON · LMB FIRE ALONG HULL AIM/);
+  assert.match(battle, /ARROWS CAMERA · N HULL AIM · U MISSILE AUTO-LOCK · 1\/2 SELECT WEAPON · LMB FIRE/);
   assert.match(battle, /keys\.has\('arrowright'\)/);
   assert.match(battle, /shipCameraYaw = wrapAngle/);
   assert.match(battle, /if \(\(k === '1' \|\| k === '2'\) && !e\.repeat\) switchShipWeapon/);
+  assert.match(battle, /if \(k === 'n' && !e\.repeat\) toggleShipAimMode\(\)/);
+  assert.match(battle, /if \(k === 'u' && !e\.repeat\) toggleShipMissileAutoLock\(\)/);
   assert.match(battle, /if \(mouseDown\) fireSelectedShipWeapon\(p\)/);
   assert.match(battle, /function shipHullAimPoint/);
   assert.match(battle, /function drawShipHullReticle/);
-  assert.match(battle, /LMB FIRE · NO AUTO-TRACK/);
+  assert.match(battle, /function acquireShipMissileLock/);
+  assert.match(battle, /shipAimMode \? 46 : 58/);
+  assert.match(battle, /U AUTO-LOCK OFF · HULL-FORWARD SHOT/);
   assert.match(battle, /weaponName: 'SHIP MISSILE'/);
   assert.match(battle, /weaponName: 'FEDERATION SHIP TORPEDO'/);
-  assert.match(battle, /mesh, homing: null,[\s\S]*?collisionRadius: 1\.9/);
+  assert.match(battle, /mesh, homing: homingTarget, turn: 1\.35,[\s\S]*?collisionRadius: 1\.9/);
+  assert.match(battle, /p === commandedShip && shipMissileAutoLock && target\?\.alive \? target : null/);
   assert.match(battle, /homing: null, heavy: true, collisionRadius: 4\.2/);
-  assert.doesNotMatch(battle, /SEEKING TARGET/);
   assert.match(battle, /if \(p === commandedShip\) return/);
   assert.match(battle, /updateShipOrdnance\(p, dt\)/);
 });
