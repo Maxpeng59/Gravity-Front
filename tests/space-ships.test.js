@@ -71,7 +71,7 @@ test('ship weapons use an MS-style centred N hull view with optional U missile a
   assert.match(battle, /updateShipOrdnance\(p, dt\)/);
 });
 
-test('every fleet hull is routed through a dedicated complex silhouette builder', () => {
+test('every fleet hull is routed through a dedicated canonical silhouette builder', () => {
   const source = readFileSync(new URL('../js/canonical-space-ships.js', import.meta.url), 'utf8');
   assert.match(source, /function longitudinalHull/);
   assert.ok((source.match(/longitudinalHull\(/g) || []).length >= 12);
@@ -81,12 +81,28 @@ test('every fleet hull is routed through a dedicated complex silhouette builder'
   assert.match(source, /kind === 'magellan'.*buildMagellan/);
   assert.match(source, /kind === 'columbus'.*buildColumbus/);
   assert.match(source, /separated .*nacelles/);
-  assert.match(source, /Broad twin cargo bodies/);
-  assert.match(source, /salamis-triangle-waist-box-drive/);
-  assert.match(source, /magellan-long-wedge-heavy-drive/);
+  assert.match(source, /two blunt rectangular cargo barges/);
+  assert.match(source, /salamis-simple-triangle-waist-box-drive/);
+  assert.match(source, /magellan-simple-stepped-wedge-box-drive/);
+  assert.match(source, /columbus-simple-twin-box-carrier/);
   assert.match(source, /musai-swan-neck-twin-nacelle/);
-  assert.match(source, /triangular prow, a visible inward waist/);
+  assert.match(source, /arrowhead prow, an unmistakable pinched waist/);
   assert.match(source, /Swan-neck command tower and hammerhead bridge/);
+});
+
+test('Federation hulls use simple flat boxes and angular wedges instead of curved bodywork', () => {
+  const source = readFileSync(new URL('../js/canonical-space-ships.js', import.meta.url), 'utf8');
+  const federationBuilders = source.slice(
+    source.indexOf('function buildSalamis'),
+    source.indexOf('export function buildCanonicalSpaceShip'),
+  );
+  assert.doesNotMatch(federationBuilders, /chamferBox\(/);
+  assert.doesNotMatch(federationBuilders, /\baddEngine\(/);
+  assert.doesNotMatch(federationBuilders, /\bsph\(/);
+  assert.ok((federationBuilders.match(/\bbox\(/g) || []).length >= 20);
+  assert.ok((federationBuilders.match(/longitudinalHull\(/g) || []).length >= 5);
+  assert.equal((federationBuilders.match(/addBlockEngine\(/g) || []).length, 3);
+  assert.equal((federationBuilders.match(/addMissileRacks\(staticHull[^\n]*true\)/g) || []).length, 3);
 });
 
 test('each Federation hull mounts five light batteries on both sides', () => {
