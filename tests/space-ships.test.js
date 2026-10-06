@@ -48,7 +48,7 @@ test('ship weapons use an MS-style centred N hull view with optional U missile a
   assert.match(battle, /shipCameraYaw = wrapAngle/);
   assert.match(battle, /if \(\(k === '1' \|\| k === '2'\) && !e\.repeat\) switchShipWeapon/);
   assert.match(battle, /if \(k === 'n' && !e\.repeat\) toggleShipAimMode\(\)/);
-  assert.match(battle, /if \(k === 'u' && !e\.repeat\) toggleShipMissileAutoLock\(\)/);
+  assert.match(battle, /if \(k === 'u' && !e\.repeat && commandedShip\.spaceProfile\) toggleShipMissileAutoLock\(\)/);
   assert.match(battle, /if \(mouseDown\) fireSelectedShipWeapon\(p\)/);
   assert.match(battle, /function shipHullAimPoint/);
   assert.match(battle, /function shipHullAimOrigin/);
@@ -134,7 +134,7 @@ test('space hulls appear only in space rosters and actively maneuver and fire', 
 test('all five space hulls can launch as the player-controlled unit', () => {
   const menu = readFileSync(new URL('../js/main.js', import.meta.url), 'utf8');
   const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
-  assert.match(menu, /SHIPS\.filter\(unit => unit\.env === 'space'\)/);
+  assert.match(menu, /SHIPS\.filter\(unit => unit\.env === custom\.env\)/);
   assert.match(menu, /custom\.playerShip = ship\.id/);
   assert.match(menu, /playerControlled: true/);
   assert.match(menu, /playerTeam: playerFaction, playerShipKind: custom\.playerShip/);

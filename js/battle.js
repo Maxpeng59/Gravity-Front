@@ -174,6 +174,7 @@ export function startBattle(renderer, opts, onEnd){
   let pvpShotsSent = 0, pvpShotsReceived = 0, pvpHitsSent = 0, pvpHitsReceived = 0;
   let pvpForfeit = false, pvpListenersAttached = false;
   const playerShipLocked = !!opts.playerShipKind;
+  const playerLandshipLocked = !!landshipProfile(opts.playerShipKind);
   let commandedShip = null, playerShipProp = null;
   const PVP_DISCONNECT_GRACE_MS = 12000;
   const PVP_SILENCE_LIMIT_MS = 30000;
@@ -464,7 +465,9 @@ export function startBattle(renderer, opts, onEnd){
     + (opts.hoverCraft ? ' · HOVER CRAFT: 1.5× SPEED · SPACE RISE · C DESCEND · 5,000 HP' : '')
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
-  const shipHelmHint = `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N AIM FROM HULL VIEW · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
+  const shipHelmHint = playerLandshipLocked
+    ? `LANDSHIP HELM · W/S DRIVE/REVERSE · A/D TURN · ARROWS CAMERA · N HULL SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
+    : `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N AIM FROM HULL VIEW · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
   hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
   let msgT = 0;
@@ -1330,6 +1333,7 @@ export function startBattle(renderer, opts, onEnd){
       fixedMuzzles: canonicalLandship?.fixedMuzzles || [],
       secondaryMuzzles: canonicalLandship?.secondaryMuzzles || [],
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
+      manualMainT: 0, manualSecondaryT: 0, manualMainShots: 0, manualSecondaryShots: 0,
       carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
       carrierLaunchCycles: 0, carrierLaunches: [],
       missileT: rng.range(0.8, 2.4), torpedoT: rng.range(1.5, 3.5),
@@ -3780,7 +3784,8 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function setCommandedShip(ship, quiet = false){
-    if (!SPACE || PVP || !ship?.alive || !ship.spaceProfile || ship.team !== player.team) return false;
+    const correctEnvironment = SPACE ? !!ship?.spaceProfile : !!ship?.landProfile;
+    if (PVP || !ship?.alive || !correctEnvironment || ship.team !== player.team) return false;
     commandedShip = ship;
     debugShipCamera = null;
     shipCameraYaw = 0;
@@ -3795,15 +3800,17 @@ export function startBattle(renderer, opts, onEnd){
     player.vel.set(0, 0, 0);
     player.root.visible = false;
     if (playerHoverCraft?.alive && player.hoverCraft === playerHoverCraft) playerHoverCraft.root.visible = false;
-    hintEl.textContent = shipHelmHint;
-    if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM CONTROL — BATTERIES REMAIN AUTOMATIC`, 2.6);
+    hintEl.textContent = ship.landProfile
+      ? `LANDSHIP HELM · W/S DRIVE/REVERSE · A/D TURN · ARROWS CAMERA · N HULL SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
+      : shipHelmHint;
+    if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM CONTROL — ${ship.landProfile ? 'MAIN BATTERY MANUAL · DEFENSIVE GUNS AUTOMATIC' : 'BATTERIES REMAIN AUTOMATIC'}`, 2.6);
     return true;
   }
 
   function toggleCommandedShip(){
-    if (!SPACE || PVP){ setMsg('CAPITAL SHIP HELM IS AVAILABLE IN SOLO SPACE BATTLES', 2); return; }
+    if (PVP){ setMsg('CAPITAL SHIP HELM IS AVAILABLE IN SOLO BATTLES', 2); return; }
     if (commandedShip){ releaseCommandedShip(); return; }
-    const allies = props.filter(p => p.alive && p.spaceProfile && p.team === player.team)
+    const allies = props.filter(p => p.alive && (SPACE ? p.spaceProfile : p.landProfile) && p.team === player.team)
       .sort((a, b) => a.root.position.distanceToSquared(player.root.position)
         - b.root.position.distanceToSquared(player.root.position));
     if (!allies.length){ setMsg('NO ALLIED CAPITAL SHIP AVAILABLE', 2); return; }
@@ -3845,7 +3852,7 @@ export function startBattle(renderer, opts, onEnd){
       if ((k === '1' || k === '2') && !e.repeat) switchShipWeapon(Number(k) - 1);
       if (k === 'tab' && !e.repeat){ e.preventDefault(); switchShipWeapon(shipWeaponIndex === 0 ? 1 : 0); }
       if (k === 'n' && !e.repeat) toggleShipAimMode();
-      if (k === 'u' && !e.repeat) toggleShipMissileAutoLock();
+      if (k === 'u' && !e.repeat && commandedShip.spaceProfile) toggleShipMissileAutoLock();
       if (k === 'h' && !e.repeat) toggleCommandedShip();
       if (k === 'x' && paused && started) finish({ victory: false, retreat: true });
       return;
@@ -5586,7 +5593,7 @@ export function startBattle(renderer, opts, onEnd){
     drawObjectiveMarkers();
   }
   function shipHullAimOrigin(ship = commandedShip){
-    if (!ship?.alive || !ship.spaceProfile) return null;
+    if (!ship?.alive || (!ship.spaceProfile && !ship.landProfile)) return null;
     const radius = ship.radius || 42;
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
     return ship.root.position.clone()
@@ -5594,10 +5601,10 @@ export function startBattle(renderer, opts, onEnd){
       .addScaledVector(forward, -radius * 0.18);
   }
   function shipHullAimPoint(ship = commandedShip){
-    if (!ship?.alive || !ship.spaceProfile) return null;
-    const range = shipWeaponIndex === 1
-      ? ship.spaceProfile.torpedoRange
-      : ship.spaceProfile.missileRange;
+    if (!ship?.alive || (!ship.spaceProfile && !ship.landProfile)) return null;
+    const range = ship.landProfile
+      ? shipWeaponIndex === 1 ? ship.landProfile.secondaryRange : ship.landProfile.mainRange
+      : shipWeaponIndex === 1 ? ship.spaceProfile.torpedoRange : ship.spaceProfile.missileRange;
     const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
     return shipHullAimOrigin(ship).addScaledVector(forward, range);
   }
@@ -5607,9 +5614,12 @@ export function startBattle(renderer, opts, onEnd){
     const ship = commandedShip;
     const aim = shipHullAimPoint(ship);
     if (!ship || !aim) return;
-    const selectedTorpedo = shipWeaponIndex === 1;
-    const color = selectedTorpedo ? '#55e8ff' : '#ffd34f';
-    const label = selectedTorpedo ? '2 · FORWARD TORPEDO' : '1 · 2×3 MISSILES';
+    const selectedTorpedo = ship.spaceProfile && shipWeaponIndex === 1;
+    const selectedMachineGun = ship.landProfile && shipWeaponIndex === 1;
+    const color = selectedTorpedo || selectedMachineGun ? '#55e8ff' : '#ffd34f';
+    const label = ship.landProfile
+      ? selectedMachineGun ? '2 · MACHINE-GUN BURST' : '1 · MAIN BATTERY'
+      : selectedTorpedo ? '2 · FORWARD TORPEDO' : '1 · 2×3 MISSILES';
     // N uses the same sight rule as a mobile suit: the weapon path is the
     // camera's exact centre ray. The only difference is that the eye is mounted
     // above the capital ship's hull instead of at an MS sensor/head node.
@@ -5632,13 +5642,14 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.textAlign = 'center';
     loCtx.fillText(`HULL SIGHT · ${label}`, x, y - r - 18);
     loCtx.font = '11px monospace';
-    const lockText = selectedTorpedo ? 'TORPEDO FOLLOWS HULL COURSE'
+    const lockText = ship.landProfile ? 'BATTERY FOLLOWS HULL SIGHT'
+      : selectedTorpedo ? 'TORPEDO FOLLOWS HULL COURSE'
       : shipMissileAutoLock
         ? shipMissileLockTarget?.alive ? `U AUTO-LOCK · ${shipMissileLockTarget.kind?.toUpperCase?.() || 'TARGET'} ACQUIRED` : 'U AUTO-LOCK · SEARCHING FORWARD ARC'
         : 'U AUTO-LOCK OFF · HULL-FORWARD SHOT';
     loCtx.fillText(`LMB FIRE · ${lockText}`, x, y + r + 26);
 
-    if (!selectedTorpedo && shipMissileAutoLock && shipMissileLockTarget?.alive){
+    if (ship.spaceProfile && !selectedTorpedo && shipMissileAutoLock && shipMissileLockTarget?.alive){
       const targetNdc = shipMissileLockTarget.root.position.clone()
         .add(new THREE.Vector3(0, aimHeight(shipMissileLockTarget), 0))
         .project(camera);
@@ -6711,6 +6722,7 @@ export function startBattle(renderer, opts, onEnd){
   // tracks it at a limited slew rate, and looses from its muzzle when lined up (replaces hull-centre fire).
   const stv1 = new THREE.Vector3(), stv2 = new THREE.Vector3(), stv3 = new THREE.Vector3();
   function updateShipTurrets(p, dt){
+    if (p === commandedShip && p.landProfile) return; // the player owns the landship's main-battery trigger
     p.root.updateMatrixWorld(true);
     for (const t of p.turrets){
       const turretRange = p.gunRange * (t.rangeScale || 1);
@@ -6936,13 +6948,14 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function shipWeaponName(index = shipWeaponIndex){
+    if (commandedShip?.landProfile) return index === 1 ? 'MACHINE-GUN BURST' : 'MAIN BATTERY';
     return index === 1 ? 'FORWARD TORPEDO' : '2×3 MISSILES';
   }
 
   function switchShipWeapon(index, quiet = false){
     if (!commandedShip?.alive) return false;
     const next = clamp(Math.trunc(index), 0, 1);
-    if (next === 1 && !commandedShip.spaceProfile.torpedo){
+    if (next === 1 && commandedShip.spaceProfile && !commandedShip.spaceProfile.torpedo){
       if (!quiet) setMsg('2 · TORPEDO NOT FITTED ON THIS HULL', 1.5);
       return false;
     }
@@ -6953,6 +6966,7 @@ export function startBattle(renderer, opts, onEnd){
 
   function fireSelectedShipWeapon(p = commandedShip, quiet = false){
     if (!p?.alive || p !== commandedShip) return false;
+    if (p.landProfile) return fireCommandedLandshipWeapon(p, shipWeaponIndex === 1, quiet);
     const missileTarget = shipMissileAutoLock
       ? shipMissileLockTarget?.alive ? shipMissileLockTarget : acquireShipMissileLock(p)
       : null;
@@ -6968,6 +6982,47 @@ export function startBattle(renderer, opts, onEnd){
       1.7,
     );
     return fired;
+  }
+
+  function fireCommandedLandshipWeapon(p, secondary = false, quiet = false){
+    const profile = p?.landProfile;
+    if (!p?.alive || !profile) return false;
+    const cooldownKey = secondary ? 'manualSecondaryT' : 'manualMainT';
+    if ((p[cooldownKey] || 0) > 0){
+      if (!quiet) setMsg(`${secondary ? 'MACHINE GUNS' : 'MAIN BATTERY'} RELOADING · ${p[cooldownKey].toFixed(1)}s`, 1.2);
+      return false;
+    }
+    p.root.updateMatrixWorld(true);
+    const turretMuzzles = p.turrets?.flatMap(t => t.muzzles?.length ? t.muzzles : t.muzzle ? [t.muzzle] : []) || [];
+    const nodes = secondary
+      ? p.secondaryMuzzles.slice(0, Math.min(4, p.secondaryMuzzles.length))
+      : [...p.fixedMuzzles, ...turretMuzzles].slice(0, 4);
+    if (!nodes.length) return false;
+    const aim = shipHullAimPoint(p);
+    const speed = secondary ? 980 : profile.shellSpeed;
+    for (const node of nodes){
+      const muzzle = node.getWorldPosition(new THREE.Vector3());
+      const dir = aim.clone().sub(muzzle).normalize();
+      const mesh = secondary ? fx.tracerMesh() : makeShell(profile.shellScale || 1.1, false);
+      mesh.position.copy(muzzle);
+      mesh.quaternion.setFromUnitVectors(secondary ? FWD : UP, dir);
+      scene.add(mesh);
+      projectiles.push({
+        pos: muzzle.clone(), vel: dir.multiplyScalar(speed),
+        dmg: secondary ? profile.secondaryDamage : profile.mainDamage,
+        splash: secondary ? profile.secondarySplash : profile.mainSplash,
+        team: p.team, owner: p,
+        weaponName: secondary ? 'PLAYER LANDSHIP MACHINE GUN' : 'PLAYER LANDSHIP MAIN BATTERY',
+        life: secondary ? 2.2 : profile.shellLife,
+        mesh, heavy: !secondary, collisionRadius: secondary ? 0 : 1.8,
+      });
+    }
+    p[cooldownKey] = secondary ? 0.34 : (profile.mainRof[0] + profile.mainRof[1]) * 0.35;
+    p.manualMainShots = (p.manualMainShots || 0) + (secondary ? 0 : nodes.length);
+    p.manualSecondaryShots = (p.manualSecondaryShots || 0) + (secondary ? nodes.length : 0);
+    sfx(secondary ? 'rifle' : 'bazooka', clamp(520 / p.root.position.distanceTo(player.root.position), 0.08, 0.28));
+    if (!quiet) setMsg(secondary ? '2 · DEFENSIVE MACHINE-GUN BURST' : '1 · MAIN BATTERY SALVO', 1.4);
+    return true;
   }
 
   function updateShipOrdnance(p, dt){
@@ -7004,7 +7059,7 @@ export function startBattle(renderer, opts, onEnd){
   function updateLandshipAuxBatteries(p, dt){
     const profile = p.landProfile; if (!profile) return;
     p.fixedT -= dt;
-    if (profile.fixedShots && p.fixedMuzzles.length && p.fixedT <= 0){
+    if (p !== commandedShip && profile.fixedShots && p.fixedMuzzles.length && p.fixedT <= 0){
       const target = nearestLandshipTarget(p, profile.mainRange * 1.15, true);
       if (target){
         // Big Tray's two bow weapons are fixed: the hull must point within roughly 18°.
@@ -7059,6 +7114,39 @@ export function startBattle(renderer, opts, onEnd){
     if (!propBlocked && !staticCircleBlocked(nx, nz, bodyRadius, ny, ny + p.hitY * 2)){
       p.root.position.set(nx, ny, nz); p.vel.set(vx, 0, vz);
     } else p.vel.set(0, 0, 0);
+  }
+
+  function updateCommandedLandship(p, dt){
+    if (SPACE || !p?.alive || !p.landProfile) return;
+    const turn = (keys.has('d') ? 1 : 0) - (keys.has('a') ? 1 : 0);
+    const throttle = (keys.has('w') ? 1 : 0) - (keys.has('s') ? 0.48 : 0);
+    const flank = keys.has('shift') ? 1.6 : 1;
+    p.root.rotation.y = wrapAngle(p.root.rotation.y + turn * p.turnRate * 2.8 * dt);
+    const targetSpeed = throttle * p.speed * flank;
+    p.helmForward = lerp(p.helmForward || 0, targetSpeed, Math.min(1, (throttle ? 2.1 : 1.6) * dt));
+    const vx = Math.sin(p.root.rotation.y) * p.helmForward;
+    const vz = Math.cos(p.root.rotation.y) * p.helmForward;
+    const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
+    const ny = groundY(nx, nz);
+    const bodyRadius = Math.min(34, p.radius * 0.7);
+    const propBlocked = props.some(q => q.alive && q !== p && !q.attachedTo
+      && Math.hypot(nx - q.root.position.x, nz - q.root.position.z)
+        < bodyRadius + Math.min(34, (q.radius || 8) * 0.7));
+    if (!propBlocked && !staticCircleBlocked(nx, nz, bodyRadius, ny, ny + p.hitY * 2)){
+      p.root.position.set(nx, ny, nz);
+      p.vel.set(vx, 0, vz);
+    } else {
+      p.helmForward *= 0.35;
+      p.vel.set(0, 0, 0);
+    }
+    p.manualMainT = Math.max(0, (p.manualMainT || 0) - dt);
+    p.manualSecondaryT = Math.max(0, (p.manualSecondaryT || 0) - dt);
+    p.propulsionEngaged = Math.abs(p.helmForward) > 0.2;
+    p.verticalThrust = false;
+    p.helmVertical = 0;
+    p.spaceTravelMode = 'land-helm';
+    p.attackYaw = p.root.rotation.y;
+    if (mouseDown) fireSelectedShipWeapon(p);
   }
 
   function updateSpaceShipMovement(p, dt){
@@ -7271,7 +7359,8 @@ export function startBattle(renderer, opts, onEnd){
     // their main, fixed and defensive batteries independently.
     for (const p of props){
       if (!p.alive || !p.landProfile) continue;
-      updateLandshipMovement(p, dt);
+      if (p === commandedShip) updateCommandedLandship(p, dt);
+      else updateLandshipMovement(p, dt);
       updateLandshipAuxBatteries(p, dt);
     }
     // capital-ship & landship batteries — turreted hulls aim+fire per-turret; the rest volley from the hull
@@ -7474,6 +7563,27 @@ export function startBattle(renderer, opts, onEnd){
     if (commandedShip?.alive){
       const ship = commandedShip;
       const frac = clamp(ship.hp / ship.maxHp, 0, 1);
+      if (ship.landProfile){
+        const mainStatus = ship.manualMainT > 0 ? `${ship.manualMainT.toFixed(1)}s` : 'READY';
+        const secondaryStatus = ship.manualSecondaryT > 0 ? `${ship.manualSecondaryT.toFixed(1)}s` : 'READY';
+        const selectedStatus = shipWeaponIndex === 1 ? secondaryStatus : mainStatus;
+        hpBar.style.width = frac * 100 + '%';
+        hpBar.classList.toggle('low', frac < 0.3);
+        hpNum.textContent = ` ${Math.max(0, Math.round(ship.hp))} / ${ship.maxHp}`;
+        boostBar.style.width = clamp(Math.abs(ship.helmForward || 0) / Math.max(1, ship.speed * 1.6), 0, 1) * 100 + '%';
+        wEl.innerHTML = `${shipWeaponName()} <span class="ammo" style="color:var(--ok)">${selectedStatus} · LMB FIRE</span>`
+          + `<br><span style="color:${shipWeaponIndex === 0 ? 'var(--ok)' : 'var(--dim)'}">[1] MAIN BATTERY</span> <span class="ammo">${mainStatus}</span>`
+          + `<br><span style="color:${shipWeaponIndex === 1 ? 'var(--ok)' : 'var(--dim)'}">[2] MACHINE-GUN BURST</span> <span class="ammo">${secondaryStatus}</span>`
+          + `<br>${ship.kind.toUpperCase()} LANDSHIP HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · DEFENSIVE GUNS AUTO</span>`
+          + `<br>N HULL AIM <span class="ammo" style="color:${shipAimMode ? 'var(--ok)' : 'var(--dim)'}">${shipAimMode ? 'ACTIVE' : 'OFF'}</span>`;
+        objEl.textContent = objectiveText();
+        simEl.textContent = `LANDSHIP HELM · ${ship.kind.toUpperCase()} · N AIM · 1/2 BATTERY · LMB FIRE · W/S DRIVE · A/D TURN · ARROWS CAMERA${playerShipLocked ? '' : ' · H EXIT'}`;
+        msgT -= dt;
+        if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
+        radarT -= dt;
+        if (radarT <= 0){ radarT = 0.08; drawRadar(); }
+        return;
+      }
       const missileStatus = ship.missileT > 0 ? `${ship.missileT.toFixed(1)}s` : 'READY';
       const torpedoStatus = !ship.spaceProfile.torpedo ? 'NOT FITTED' : ship.torpedoT > 0 ? `${ship.torpedoT.toFixed(1)}s` : 'READY';
       const selectedStatus = shipWeaponIndex === 1 ? torpedoStatus : missileStatus;
@@ -8576,14 +8686,14 @@ export function startBattle(renderer, opts, onEnd){
       return { kind, silhouette: ship.root.children[0]?.userData?.silhouette || null };
     },
     _debugCommandShip(kind = 'salamis', drive = false){
-      const ship = props.find(p => p.alive && p.team === player.team && p.spaceProfile && p.kind === kind)
-        || props.find(p => p.alive && p.team === player.team && p.spaceProfile);
+      const ship = props.find(p => p.alive && p.team === player.team && (SPACE ? p.spaceProfile : p.landProfile) && p.kind === kind)
+        || props.find(p => p.alive && p.team === player.team && (SPACE ? p.spaceProfile : p.landProfile));
       if (!ship || !setCommandedShip(ship, true)) return null;
       paused = false;
       started = true;
       keys.clear();
-      if (drive){ keys.add('w'); keys.add('d'); keys.add(' '); keys.add('shift'); }
-      setMsg(`${ship.kind.toUpperCase()} HELM QA — ${drive ? 'FLANK CLIMB' : 'IDLE'}`, 2);
+      if (drive){ keys.add('w'); keys.add('d'); if (ship.spaceProfile) keys.add(' '); keys.add('shift'); }
+      setMsg(`${ship.kind.toUpperCase()} HELM QA — ${drive ? ship.landProfile ? 'FLANK TURN' : 'FLANK CLIMB' : 'IDLE'}`, 2);
       return { kind: ship.kind, drive, sideTurrets: ship.turrets?.filter(t => t.secondary).length || 0 };
     },
     _debugShipCombat(){
@@ -8730,7 +8840,12 @@ export function startBattle(renderer, opts, onEnd){
           missileSalvosFired: commandedShip.missileSalvosFired || 0,
           missilesFired: commandedShip.missilesFired || 0,
           torpedoesFired: commandedShip.torpedoesFired || 0,
-          torpedoFitted: !!commandedShip.spaceProfile.torpedo,
+          torpedoFitted: !!commandedShip.spaceProfile?.torpedo,
+          landship: !!commandedShip.landProfile,
+          manualMainCooldown: +(commandedShip.manualMainT || 0).toFixed(3),
+          manualSecondaryCooldown: +(commandedShip.manualSecondaryT || 0).toFixed(3),
+          manualMainShots: commandedShip.manualMainShots || 0,
+          manualSecondaryShots: commandedShip.manualSecondaryShots || 0,
         } : null,
         shipOrdnance: {
           activeMissiles: projectiles.filter(p => p.weaponName === 'SHIP MISSILE').length,

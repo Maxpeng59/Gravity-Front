@@ -4,9 +4,10 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=57shipordnance1';
+import { startBattle } from './battle.js?v=61landshiphelm1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
+import { buildCanonicalLandship } from './canonical-landships.js';
 import { MAPS } from './maps.js';
 import { MAX_PVP_PLAYERS, PvpRoom, pvpSeatId, pvpSpawnPoint } from './pvp.js';
 import { enterBridge, leaveBridge } from './bridge.js';
@@ -125,7 +126,9 @@ const msPreview = (() => {
       if (shipKind){
         const glow = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, emissive: 0x4aa3ff, emissiveIntensity: 1.1 });
         const thrust = new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.82 });
-        root = buildCanonicalSpaceShip(shipKind, glow, thrust, () => 0)?.root;
+        root = landshipProfile(shipKind)
+          ? buildCanonicalLandship(shipKind, glow, () => 0)?.root
+          : buildCanonicalSpaceShip(shipKind, glow, thrust, () => 0)?.root;
       } else {
         const baseSuit = suitById(id); if (!baseSuit) return;
         root = buildMech(applyWeaponLoadout(baseSuit, loadout)).root;
@@ -178,11 +181,11 @@ function renderMsStats(suit){
 }
 
 function renderShipStats(kind){
-  const box = $('ms-stats'), profile = spaceShipProfile(kind), ship = shipById(kind);
+  const box = $('ms-stats'), profile = landshipProfile(kind) || spaceShipProfile(kind), ship = shipById(kind);
   if (!box || !profile || !ship) return;
   const rows = [
     ['CLASS', profile.role],
-    ['FACTION', profile.faction === 'FED' ? 'E.F.S.F.' : 'ZEON'],
+    ['FACTION', ship.faction === 'FED' ? 'E.F.S.F.' : 'ZEON'],
     ['INTEGRITY', profile.hp.toLocaleString()],
     ['CRUISE', profile.speed],
     ['TURN RATE', profile.turnRate],
@@ -190,7 +193,9 @@ function renderShipStats(kind){
   ];
   let html = `<div class="nm">${ship.name}</div><div class="cd">${ship.code}</div>`;
   for (const [k, v] of rows) html += `<div class="sl"><span>${k}</span><b>${v}</b></div>`;
-  html += '<div class="wl">▸ <b>CAPITAL-SHIP HELM</b><br>▸ AUTOMATIC MAIN BATTERIES<br>▸ AUTOMATIC SIDE BATTERIES</div>';
+  html += profile === landshipProfile(kind)
+    ? '<div class="wl">▸ <b>LANDSHIP HELM</b><br>▸ MANUAL MAIN BATTERY<br>▸ MANUAL MACHINE-GUN BURST<br>▸ AUTOMATIC DEFENSIVE BATTERIES</div>'
+    : '<div class="wl">▸ <b>CAPITAL-SHIP HELM</b><br>▸ AUTOMATIC MAIN BATTERIES<br>▸ AUTOMATIC SIDE BATTERIES</div>';
   box.innerHTML = html;
 }
 
@@ -1099,7 +1104,7 @@ function applyRecommendedMapForces(map){
   const preset = map?.recommendedForces;
   if (!preset) return;
   custom.army = 0;
-  if (pvpSuit(preset.playerSuitId)){ custom.suit = preset.playerSuitId; custom.playerShip = null; }
+  if (pvpSuit(preset.playerSuitId) && !custom.playerShip) custom.suit = preset.playerSuitId;
   custom.enemies = preset.enemies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   custom.allies = preset.allies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   if (map.spawn?.player) custom.spawn.player = { ...map.spawn.player };
@@ -1117,7 +1122,8 @@ function statBar(label, frac){
 function renderCustomLoadout(){
   const box = $('custom-loadout'); if (!box) return;
   if (custom.playerShip){
-    box.innerHTML = '<div class="hovercraft-card"><div class="hovercraft-copy"><b>NAVAL FIRE CONTROL</b><span>Main and side batteries acquire and engage hostile targets automatically while you steer the hull.</span></div></div>';
+    const landship = !!landshipProfile(custom.playerShip);
+    box.innerHTML = `<div class="hovercraft-card"><div class="hovercraft-copy"><b>${landship ? 'LANDSHIP FIRE CONTROL' : 'NAVAL FIRE CONTROL'}</b><span>${landship ? 'Use 1/2 to select the main battery or machine-gun burst, N for the hull sight, and LMB to fire. Defensive batteries remain automatic.' : 'Missiles and torpedoes fire from the hull sight while the main and side batteries engage automatically.'}</span></div></div>`;
     return;
   }
   const suit = suitById(custom.suit);
@@ -1132,7 +1138,8 @@ function renderCustomLoadout(){
 function renderCustomHoverCraft(){
   const box = $('custom-hovercraft'); if (!box) return;
   if (custom.playerShip){
-    box.innerHTML = '<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>INTEGRAL CAPITAL-SHIP DRIVE</b><span>Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.</span></div></div>';
+    const landship = !!landshipProfile(custom.playerShip);
+    box.innerHTML = `<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>${landship ? 'INTEGRAL LANDSHIP DRIVE' : 'INTEGRAL CAPITAL-SHIP DRIVE'}</b><span>${landship ? 'Use W/S to drive or reverse, A/D to turn, Shift for flank speed, and the arrow keys to orbit the camera.' : 'Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.'}</span></div></div>`;
     return;
   }
   const suit = suitById(custom.suit), eligible = canUseHoverCraft(suit);
@@ -1153,11 +1160,11 @@ function renderCustomHoverCraft(){
 
 function renderCustom(){
   const grid = $('suit-grid'); grid.innerHTML = '';
-  if (custom.env === 'space') for (const ship of SHIPS.filter(unit => unit.env === 'space')){
-    const profile = spaceShipProfile(ship.id);
+  for (const ship of SHIPS.filter(unit => unit.env === custom.env)){
+    const profile = landshipProfile(ship.id) || spaceShipProfile(ship.id);
     const card = el('div', 'suit-card' + (custom.playerShip === ship.id ? ' sel' : ''));
     const top = el('div', '');
-    top.appendChild(el('span', 'fac ' + ship.faction, 'CAPITAL SHIP'));
+    top.appendChild(el('span', 'fac ' + ship.faction, ship.env === 'ground' ? 'LANDSHIP' : 'CAPITAL SHIP'));
     card.appendChild(top);
     card.appendChild(el('div', 'nm', ship.name));
     card.appendChild(el('div', 'cd', ship.code));
@@ -1208,7 +1215,7 @@ function renderCustom(){
     const b = el('button', 'small' + (custom.env === e.id ? ' sel' : ''), e.name);
     b.onclick = () => {
       custom.env = e.id;
-      if (custom.env !== 'space') custom.playerShip = null;
+      if (custom.playerShip && shipById(custom.playerShip)?.env !== custom.env) custom.playerShip = null;
       if (custom.env !== 'ground') custom.map = null;
       normalizeCustomRosterForEnvironment();
       normalizeCustomSidesForPlayer();
@@ -1262,7 +1269,8 @@ function renderCustom(){
       const b = el('button', 'small' + (custom.map === m.id ? ' sel' : ''), m.name);
       b.onclick = () => {
         const changed = custom.map !== m.id;
-        custom.map = m.id; custom.env = 'ground'; custom.playerShip = null;
+        custom.map = m.id; custom.env = 'ground';
+        if (custom.playerShip && shipById(custom.playerShip)?.env !== 'ground') custom.playerShip = null;
         normalizeCustomRosterForEnvironment();
         normalizeCustomSidesForPlayer();
         if (changed) applyRecommendedMapForces(m);
