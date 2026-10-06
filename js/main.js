@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=61landshiphelm1';
+import { startBattle } from './battle.js?v=63landshipturret1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -1123,7 +1123,7 @@ function renderCustomLoadout(){
   const box = $('custom-loadout'); if (!box) return;
   if (custom.playerShip){
     const landship = !!landshipProfile(custom.playerShip);
-    box.innerHTML = `<div class="hovercraft-card"><div class="hovercraft-copy"><b>${landship ? 'LANDSHIP FIRE CONTROL' : 'NAVAL FIRE CONTROL'}</b><span>${landship ? 'Use 1/2 to select the main battery or machine-gun burst, N for the hull sight, and LMB to fire. Defensive batteries remain automatic.' : 'Missiles and torpedoes fire from the hull sight while the main and side batteries engage automatically.'}</span></div></div>`;
+    box.innerHTML = `<div class="hovercraft-card"><div class="hovercraft-copy"><b>${landship ? 'LANDSHIP FIRE CONTROL' : 'NAVAL FIRE CONTROL'}</b><span>${landship ? 'Move the mouse to traverse and elevate the main turrets without turning the hull. Use 1/2 to select the main battery or machine-gun burst, N for the turret sight, and LMB to fire.' : 'Missiles and torpedoes fire from the hull sight while the main and side batteries engage automatically.'}</span></div></div>`;
     return;
   }
   const suit = suitById(custom.suit);
@@ -1139,7 +1139,7 @@ function renderCustomHoverCraft(){
   const box = $('custom-hovercraft'); if (!box) return;
   if (custom.playerShip){
     const landship = !!landshipProfile(custom.playerShip);
-    box.innerHTML = `<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>${landship ? 'INTEGRAL LANDSHIP DRIVE' : 'INTEGRAL CAPITAL-SHIP DRIVE'}</b><span>${landship ? 'Use W/S to drive or reverse, A/D to turn, Shift for flank speed, and the arrow keys to orbit the camera.' : 'Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.'}</span></div></div>`;
+    box.innerHTML = `<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>${landship ? 'INTEGRAL LANDSHIP DRIVE' : 'INTEGRAL CAPITAL-SHIP DRIVE'}</b><span>${landship ? 'Use W/S to drive or reverse, A/D to steer only the hull, Shift for flank speed, and the mouse to control the turret view.' : 'Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.'}</span></div></div>`;
     return;
   }
   const suit = suitById(custom.suit), eligible = canUseHoverCraft(suit);

@@ -466,7 +466,7 @@ export function startBattle(renderer, opts, onEnd){
     + (env === 'space' && !PVP ? ' · H CAPITAL SHIP HELM' : '')
     + ' · L GALCEZON BOARD/DISEMBARK';
   const shipHelmHint = playerLandshipLocked
-    ? `LANDSHIP HELM · W/S DRIVE/REVERSE · A/D TURN · ARROWS CAMERA · N HULL SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
+    ? `LANDSHIP HELM · MOUSE TURRET AIM · HULL STAYS ON COURSE · W/S DRIVE/REVERSE · A/D STEER HULL · N TURRET SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
     : `SHIP HELM · W/S THRUST/REVERSE · A/D TURN · SPACE/C CLIMB/DESCEND · ARROWS CAMERA · N AIM FROM HULL VIEW · U MISSILE AUTO-LOCK · 1/2 SELECT WEAPON · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · AUTO BATTERIES ACTIVE`;
   hintEl.textContent = playerShipLocked ? shipHelmHint : pilotHint;
 
@@ -3685,6 +3685,7 @@ export function startBattle(renderer, opts, onEnd){
   let camYaw = PVP && Number.isFinite(Number(opts.playerYaw)) ? Number(opts.playerYaw) : 0;
   let camPitch = 0.08, mouseDown = false, paused = false, started = false, camShake = 0, assistOn = true;
   let shipCameraYaw = 0, shipCameraPitch = 0.35;
+  let shipTurretYaw = 0, shipTurretPitch = 0;
   let shipWeaponIndex = 0;
   let shipAimMode = false, shipMissileAutoLock = false, shipMissileLockTarget = null;
   let debugShipCamera = null;
@@ -3790,6 +3791,8 @@ export function startBattle(renderer, opts, onEnd){
     debugShipCamera = null;
     shipCameraYaw = 0;
     shipCameraPitch = 0.35;
+    shipTurretYaw = 0;
+    shipTurretPitch = 0;
     shipWeaponIndex = 0;
     shipAimMode = false;
     shipMissileAutoLock = false;
@@ -3801,7 +3804,7 @@ export function startBattle(renderer, opts, onEnd){
     player.root.visible = false;
     if (playerHoverCraft?.alive && player.hoverCraft === playerHoverCraft) playerHoverCraft.root.visible = false;
     hintEl.textContent = ship.landProfile
-      ? `LANDSHIP HELM · W/S DRIVE/REVERSE · A/D TURN · ARROWS CAMERA · N HULL SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
+      ? `LANDSHIP HELM · MOUSE TURRET AIM · HULL STAYS ON COURSE · W/S DRIVE/REVERSE · A/D STEER HULL · N TURRET SIGHT · 1/2 SELECT BATTERY · LMB FIRE · SHIFT FLANK SPEED${playerShipLocked ? '' : ' · H EXIT HELM'} · DEFENSIVE GUNS AUTO`
       : shipHelmHint;
     if (!quiet) setMsg(`${ship.kind.toUpperCase()} HELM CONTROL — ${ship.landProfile ? 'MAIN BATTERY MANUAL · DEFENSIVE GUNS AUTOMATIC' : 'BATTERIES REMAIN AUTOMATIC'}`, 2.6);
     return true;
@@ -3819,6 +3822,11 @@ export function startBattle(renderer, opts, onEnd){
 
   const onMouseMove = e => {
     if (!locked) return;
+    if (commandedShip?.landProfile){
+      shipTurretYaw = wrapAngle(shipTurretYaw - e.movementX * 0.0026);
+      shipTurretPitch = clamp(shipTurretPitch - e.movementY * 0.00235, -0.38, 0.52);
+      return;
+    }
     const aim = activeAimProfile();
     const sensitivity = aim ? lerp(aim.sensitivity, aim.settledSensitivity, sniperSteady) : 0.0026;
     camYaw -= e.movementX * sensitivity;
@@ -5600,16 +5608,24 @@ export function startBattle(renderer, opts, onEnd){
       .addScaledVector(UP, (ship.hitY || 0) + radius * 0.55)
       .addScaledVector(forward, -radius * 0.18);
   }
+  function commandedShipAimDirection(ship = commandedShip){
+    if (!ship?.alive) return null;
+    if (ship.landProfile){
+      const yaw = ship.root.rotation.y + shipTurretYaw;
+      const cp = Math.cos(shipTurretPitch);
+      return new THREE.Vector3(Math.sin(yaw) * cp, Math.sin(shipTurretPitch), Math.cos(yaw) * cp).normalize();
+    }
+    return new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
+  }
   function shipHullAimPoint(ship = commandedShip){
     if (!ship?.alive || (!ship.spaceProfile && !ship.landProfile)) return null;
     const range = ship.landProfile
       ? shipWeaponIndex === 1 ? ship.landProfile.secondaryRange : ship.landProfile.mainRange
       : shipWeaponIndex === 1 ? ship.spaceProfile.torpedoRange : ship.spaceProfile.missileRange;
-    const forward = new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
-    return shipHullAimOrigin(ship).addScaledVector(forward, range);
+    return shipHullAimOrigin(ship).addScaledVector(commandedShipAimDirection(ship), range);
   }
-  // Ship ordnance is aimed by the hull. In N mode the camera and pipper share
-  // the same straight-ahead ray; arrow-key orbit resumes after leaving N mode.
+  // Space ordnance follows the hull; a commanded landship follows its turret.
+  // In N mode the camera, pipper and selected weapon share the same ray.
   function drawShipHullReticle(){
     const ship = commandedShip;
     const aim = shipHullAimPoint(ship);
@@ -5640,9 +5656,9 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.stroke();
     loCtx.font = 'bold 13px monospace';
     loCtx.textAlign = 'center';
-    loCtx.fillText(`HULL SIGHT · ${label}`, x, y - r - 18);
+    loCtx.fillText(`${ship.landProfile ? 'TURRET' : 'HULL'} SIGHT · ${label}`, x, y - r - 18);
     loCtx.font = '11px monospace';
-    const lockText = ship.landProfile ? 'BATTERY FOLLOWS HULL SIGHT'
+    const lockText = ship.landProfile ? 'MOUSE TRAVERSES TURRETS · HULL HEADING UNCHANGED'
       : selectedTorpedo ? 'TORPEDO FOLLOWS HULL COURSE'
       : shipMissileAutoLock
         ? shipMissileLockTarget?.alive ? `U AUTO-LOCK · ${shipMissileLockTarget.kind?.toUpperCase?.() || 'TARGET'} ACQUIRED` : 'U AUTO-LOCK · SEARCHING FORWARD ARC'
@@ -6783,6 +6799,15 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  function updateCommandedLandshipTurrets(p){
+    if (!p?.landProfile) return;
+    for (const turret of p.turrets || []){
+      turret.yaw.rotation.y = shipTurretYaw;
+      turret.gun.rotation.x = -shipTurretPitch;
+    }
+    p.root.updateMatrixWorld(true);
+  }
+
   function nearestLandshipTarget(p, range = Infinity, ships = true){
     let best = null, bestSq = range * range;
     for (const m of mechs){
@@ -6831,13 +6856,13 @@ export function startBattle(renderer, opts, onEnd){
   function toggleShipAimMode(quiet = false){
     if (!commandedShip?.alive) return false;
     shipAimMode = !shipAimMode;
-    if (shipAimMode){
+    if (shipAimMode && commandedShip.spaceProfile){
       shipCameraYaw = 0;
       shipCameraPitch = 0;
     }
     if (!quiet) setMsg(shipAimMode
-      ? `N · HULL VIEW AIM ACTIVE · ${shipWeaponName()} · CENTRE SIGHT · LMB FIRE`
-      : 'N · HULL VIEW AIM DISENGAGED · ARROW CAMERA FREE', 1.7);
+      ? `N · ${commandedShip.landProfile ? 'TURRET' : 'HULL'} VIEW AIM ACTIVE · ${shipWeaponName()} · CENTRE SIGHT · LMB FIRE`
+      : `N · AIM VIEW DISENGAGED · ${commandedShip.landProfile ? 'MOUSE TURRET CAMERA' : 'ARROW CAMERA FREE'}`, 1.7);
     return shipAimMode;
   }
 
@@ -6992,11 +7017,11 @@ export function startBattle(renderer, opts, onEnd){
       if (!quiet) setMsg(`${secondary ? 'MACHINE GUNS' : 'MAIN BATTERY'} RELOADING · ${p[cooldownKey].toFixed(1)}s`, 1.2);
       return false;
     }
-    p.root.updateMatrixWorld(true);
+    updateCommandedLandshipTurrets(p);
     const turretMuzzles = p.turrets?.flatMap(t => t.muzzles?.length ? t.muzzles : t.muzzle ? [t.muzzle] : []) || [];
     const nodes = secondary
       ? p.secondaryMuzzles.slice(0, Math.min(4, p.secondaryMuzzles.length))
-      : [...p.fixedMuzzles, ...turretMuzzles].slice(0, 4);
+      : (turretMuzzles.length ? turretMuzzles : p.fixedMuzzles).slice(0, 4);
     if (!nodes.length) return false;
     const aim = shipHullAimPoint(p);
     const speed = secondary ? 980 : profile.shellSpeed;
@@ -7146,6 +7171,7 @@ export function startBattle(renderer, opts, onEnd){
     p.helmVertical = 0;
     p.spaceTravelMode = 'land-helm';
     p.attackYaw = p.root.rotation.y;
+    updateCommandedLandshipTurrets(p);
     if (mouseDown) fireSelectedShipWeapon(p);
   }
 
@@ -7575,9 +7601,9 @@ export function startBattle(renderer, opts, onEnd){
           + `<br><span style="color:${shipWeaponIndex === 0 ? 'var(--ok)' : 'var(--dim)'}">[1] MAIN BATTERY</span> <span class="ammo">${mainStatus}</span>`
           + `<br><span style="color:${shipWeaponIndex === 1 ? 'var(--ok)' : 'var(--dim)'}">[2] MACHINE-GUN BURST</span> <span class="ammo">${secondaryStatus}</span>`
           + `<br>${ship.kind.toUpperCase()} LANDSHIP HELM <span class="ammo">${Math.round(Math.abs(ship.helmForward || 0))} m/s · DEFENSIVE GUNS AUTO</span>`
-          + `<br>N HULL AIM <span class="ammo" style="color:${shipAimMode ? 'var(--ok)' : 'var(--dim)'}">${shipAimMode ? 'ACTIVE' : 'OFF'}</span>`;
+          + `<br>N TURRET AIM <span class="ammo" style="color:${shipAimMode ? 'var(--ok)' : 'var(--dim)'}">${shipAimMode ? 'ACTIVE' : 'OFF'}</span>`;
         objEl.textContent = objectiveText();
-        simEl.textContent = `LANDSHIP HELM · ${ship.kind.toUpperCase()} · N AIM · 1/2 BATTERY · LMB FIRE · W/S DRIVE · A/D TURN · ARROWS CAMERA${playerShipLocked ? '' : ' · H EXIT'}`;
+        simEl.textContent = `LANDSHIP HELM · ${ship.kind.toUpperCase()} · MOUSE TURRET · HULL STEERING A/D · N SIGHT · 1/2 BATTERY · LMB FIRE${playerShipLocked ? '' : ' · H EXIT'}`;
         msgT -= dt;
         if (msgT <= 0 && msgEl.textContent && !paused) msgEl.textContent = '';
         radarT -= dt;
@@ -7739,15 +7765,36 @@ export function startBattle(renderer, opts, onEnd){
     const ship = commandedShip;
     const radius = ship.radius || 42;
     const forward = cameraFrameForward.set(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize();
+    const landship = !!ship.landProfile;
+    if (landship){
+      shipTurretYaw = wrapAngle(shipTurretYaw
+        + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
+      shipTurretPitch = clamp(shipTurretPitch
+        + ((keys.has('arrowup') ? 1 : 0) - (keys.has('arrowdown') ? 1 : 0)) * 0.9 * dt,
+        -0.38, 0.52);
+      updateCommandedLandshipTurrets(ship);
+    }
+    const sightDirection = landship ? commandedShipAimDirection(ship) : forward;
     const center = cameraFocusPoint.copy(ship.root.position).addScaledVector(UP, ship.hitY + radius * 0.18);
     let desired;
     if (shipAimMode){
-      // Same as MS weapon aim, relocated to a hull-mounted optical position:
-      // the camera looks exactly down +Z of the ship and the centred reticle is
-      // therefore the actual straight-ahead projectile path.
-      shipCameraYaw = 0;
-      shipCameraPitch = 0;
+      // Same as MS weapon aim, relocated to a ship-mounted optical position:
+      // space hulls look down +Z while landships look with the player turret.
+      if (!landship){
+        shipCameraYaw = 0;
+        shipCameraPitch = 0;
+      }
       desired = cameraAimFlat.copy(shipHullAimOrigin(ship));
+    } else if (landship){
+      const orbitYaw = ship.root.rotation.y + shipTurretYaw;
+      const viewPitch = clamp(0.3 + shipTurretPitch * 0.65, 0.05, 0.85);
+      shipCameraOrbit.set(Math.sin(orbitYaw), 0, Math.cos(orbitYaw));
+      const distance = radius * 3.25;
+      desired = cameraAimFlat.copy(center)
+        .addScaledVector(shipCameraOrbit, -distance * Math.cos(viewPitch))
+        .addScaledVector(UP, distance * Math.sin(viewPitch));
+      shipCameraYaw = shipTurretYaw;
+      shipCameraPitch = shipTurretPitch;
     } else {
       shipCameraYaw = wrapAngle(shipCameraYaw
         + ((keys.has('arrowright') ? 1 : 0) - (keys.has('arrowleft') ? 1 : 0)) * 1.45 * dt);
@@ -7764,8 +7811,8 @@ export function startBattle(renderer, opts, onEnd){
     camera.up.copy(UP);
     if (camera.position.distanceToSquared(desired) > radius * radius * 100) camera.position.copy(desired);
     else camera.position.lerp(desired, Math.min(1, (shipAimMode ? 18 : 6) * dt));
-    if (shipAimMode) camera.lookAt(cameraChaseDirection.copy(camera.position).addScaledVector(forward, 2000));
-    else camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(forward, radius * 0.55));
+    if (shipAimMode) camera.lookAt(cameraChaseDirection.copy(camera.position).addScaledVector(sightDirection, 2000));
+    else camera.lookAt(cameraChaseDirection.copy(center).addScaledVector(sightDirection, landship ? radius * 1.2 : radius * 0.55));
     camera.fov = lerp(camera.fov, shipAimMode ? 46 : 58, Math.min(1, 5 * dt));
     camera.updateProjectionMatrix();
     camera.updateMatrixWorld(true);
@@ -8536,6 +8583,8 @@ export function startBattle(renderer, opts, onEnd){
       if ('yaw' in o) camYaw = o.yaw;
       if ('bodyYaw' in o) player.yaw = o.bodyYaw;
       if ('pitch' in o) camPitch = o.pitch;
+      if ('shipTurretYaw' in o) shipTurretYaw = wrapAngle(Number(o.shipTurretYaw) || 0);
+      if ('shipTurretPitch' in o) shipTurretPitch = clamp(Number(o.shipTurretPitch) || 0, -0.38, 0.52);
       if (o.position) player.root.position.set(o.position[0], o.position[1], o.position[2]);
       if (o.velocity) player.vel.set(o.velocity[0], o.velocity[1], o.velocity[2]);
       if ('fire' in o) mouseDown = o.fire;
@@ -8698,7 +8747,7 @@ export function startBattle(renderer, opts, onEnd){
     },
     _debugShipCombat(){
       const ship = commandedShip?.alive ? commandedShip
-        : props.find(p => p.alive && p.team === player.team && p.spaceProfile);
+        : props.find(p => p.alive && p.team === player.team && (p.landProfile || p.spaceProfile));
       if (!ship || !setCommandedShip(ship, true)) return null;
       paused = false;
       started = true;
@@ -8714,8 +8763,15 @@ export function startBattle(renderer, opts, onEnd){
       ship.missileT = 0;
       ship.torpedoT = 0;
       shipAimMode = true;
-      shipCameraYaw = 0;
-      shipCameraPitch = 0;
+      const hullYawBefore = ship.root.rotation.y;
+      if (ship.landProfile){
+        shipTurretYaw = 0.72;
+        shipTurretPitch = 0.12;
+        updateCommandedLandshipTurrets(ship);
+      } else {
+        shipCameraYaw = 0;
+        shipCameraPitch = 0;
+      }
       commandedShipCameraUpdate(1);
       shipMissileAutoLock = true;
       shipMissileLockTarget = acquireShipMissileLock(ship);
@@ -8725,7 +8781,8 @@ export function startBattle(renderer, opts, onEnd){
       const torpedoSelected = switchShipWeapon(1, true);
       const torpedo = torpedoSelected ? fireSelectedShipWeapon(ship, true) : false;
       switchShipWeapon(0, true);
-      setMsg('SHIP ORDNANCE QA — N AIM · U MISSILE AUTO-LOCK · 1/2 SELECT', 2);
+      setMsg(ship.landProfile ? 'LANDSHIP TURRET QA — MOUSE TRAVERSE · HULL UNCHANGED' : 'SHIP ORDNANCE QA — N AIM · U MISSILE AUTO-LOCK · 1/2 SELECT', 2);
+      const aimDirection = commandedShipAimDirection(ship);
       return {
         kind: ship.kind, missile, torpedo,
         missilesFired: ship.missilesFired,
@@ -8736,7 +8793,11 @@ export function startBattle(renderer, opts, onEnd){
         lockAcquired: !!shipMissileLockTarget?.alive,
         aimNdc: shipHullAimPoint(ship)?.project(camera).toArray() || null,
         cameraAimAlignment: camera.getWorldDirection(new THREE.Vector3())
-          .dot(new THREE.Vector3(0, 0, 1).applyQuaternion(ship.root.quaternion).normalize()),
+          .dot(aimDirection),
+        hullYawBefore,
+        hullYawAfter: ship.root.rotation.y,
+        turretYaw: shipTurretYaw,
+        turretPitch: shipTurretPitch,
         selectedWeapon: shipWeaponIndex + 1,
         cameraYaw: shipCameraYaw,
         cameraPitch: shipCameraPitch,
@@ -8804,6 +8865,7 @@ export function startBattle(renderer, opts, onEnd){
       const shipForwardDbg = commandedShip?.alive
         ? new THREE.Vector3(0, 0, 1).applyQuaternion(commandedShip.root.quaternion).normalize()
         : null;
+      const shipAimDirectionDbg = commandedShip?.alive ? commandedShipAimDirection(commandedShip) : null;
       const shipAimNdcDbg = shipAimDbg ? shipAimDbg.clone().project(camera) : null;
       return {
         kills, playerHp: player.hp, playerTeam: player.team, playerShipLocked,
@@ -8828,11 +8890,14 @@ export function startBattle(renderer, opts, onEnd){
             ? shipMissileLockTarget.kind || shipMissileLockTarget.suit?.id || 'target'
             : null,
           aimCameraPosition: shipHullAimOrigin(commandedShip)?.toArray() || null,
-          cameraAimAlignment: shipForwardDbg ? cameraForwardDbg.dot(shipForwardDbg) : null,
+          cameraAimAlignment: shipAimDirectionDbg ? cameraForwardDbg.dot(shipAimDirectionDbg) : null,
           weaponIndex: shipWeaponIndex,
           weaponSlot: shipWeaponIndex + 1,
           weaponName: shipWeaponName(),
-          aimDirection: shipForwardDbg?.toArray() || null,
+          aimDirection: shipAimDirectionDbg?.toArray() || null,
+          hullDirection: shipForwardDbg?.toArray() || null,
+          turretYaw: +shipTurretYaw.toFixed(3),
+          turretPitch: +shipTurretPitch.toFixed(3),
           aimPoint: shipAimDbg?.toArray() || null,
           aimNdc: shipAimNdcDbg?.toArray() || null,
           missileCooldown: +(commandedShip.missileT || 0).toFixed(3),

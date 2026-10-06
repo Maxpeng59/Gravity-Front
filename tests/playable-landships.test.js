@@ -16,16 +16,21 @@ test('all three landship hulls are selectable player units in ground custom batt
   assert.match(menu, /playerTeam: playerFaction, playerShipKind: custom\.playerShip/);
 });
 
-test('ground player ships receive a dedicated helm, hull sight, and manual batteries', () => {
+test('ground player ships receive a dedicated helm, independent turret sight, and manual batteries', () => {
   assert.match(battle, /const correctEnvironment = SPACE \? !!ship\?\.spaceProfile : !!ship\?\.landProfile/);
   assert.match(battle, /function updateCommandedLandship/);
   assert.match(battle, /if \(p === commandedShip\) updateCommandedLandship\(p, dt\)/);
-  assert.match(battle, /W\/S DRIVE\/REVERSE · A\/D TURN/);
+  assert.match(battle, /MOUSE TURRET AIM · HULL STAYS ON COURSE/);
   assert.match(battle, /return index === 1 \? 'MACHINE-GUN BURST' : 'MAIN BATTERY'/);
   assert.match(battle, /function fireCommandedLandshipWeapon/);
   assert.match(battle, /weaponName: secondary \? 'PLAYER LANDSHIP MACHINE GUN' : 'PLAYER LANDSHIP MAIN BATTERY'/);
   assert.match(battle, /ship\.landProfile\.secondaryRange : ship\.landProfile\.mainRange/);
   assert.match(battle, /if \(p === commandedShip && p\.landProfile\) return/);
+  assert.match(battle, /function updateCommandedLandshipTurrets/);
+  assert.match(battle, /turret\.yaw\.rotation\.y = shipTurretYaw/);
+  assert.match(battle, /turret\.gun\.rotation\.x = -shipTurretPitch/);
+  assert.match(battle, /const sightDirection = landship \? commandedShipAimDirection\(ship\) : forward/);
+  assert.match(battle, /if \(commandedShip\?\.landProfile\)[\s\S]*shipTurretYaw = wrapAngle[\s\S]*return;/);
 });
 
 test('landship helm stays on terrain and collision checks its full hull route', () => {

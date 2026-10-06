@@ -58,7 +58,8 @@ test('ship weapons use an MS-style centred N hull view with optional U missile a
   assert.match(battle, /const x = innerWidth \* 0\.5/);
   assert.match(battle, /const y = innerHeight \* 0\.5/);
   assert.match(battle, /desired = cameraAimFlat\.copy\(shipHullAimOrigin\(ship\)\)/);
-  assert.match(battle, /camera\.lookAt\(cameraChaseDirection\.copy\(camera\.position\)\.addScaledVector\(forward, 2000\)\)/);
+  assert.match(battle, /const sightDirection = landship \? commandedShipAimDirection\(ship\) : forward/);
+  assert.match(battle, /camera\.lookAt\(cameraChaseDirection\.copy\(camera\.position\)\.addScaledVector\(sightDirection, 2000\)\)/);
   assert.match(battle, /sightPoint\.sub\(muzzle\)\.normalize\(\)/);
   assert.match(battle, /const spreadScale = p === commandedShip && shipAimMode \? 0 : 1/);
   assert.match(battle, /U AUTO-LOCK OFF · HULL-FORWARD SHOT/);
