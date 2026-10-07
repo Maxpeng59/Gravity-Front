@@ -3135,6 +3135,8 @@ export function startBattle(renderer, opts, onEnd){
 
   const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0.16;
   const BEAM_DAMAGE_EXPONENT = Math.log(20);
+  const CONCENTRATED_BEAM_SPLASH_MIN = 0.22;
+  const CONCENTRATED_BEAM_SPLASH_MAX = 0.32;
 
   function beamBatteryPercent(w, draw){
     return clamp((Number(draw) || 0) / Math.max(1, w?.clip || 1) * 100, 0, 100);
@@ -3149,10 +3151,12 @@ export function startBattle(renderer, opts, onEnd){
       * Math.exp(BEAM_DAMAGE_EXPONENT * beamChargeFraction(w, draw));
   }
 
-  function concentratedBeamImpactExplosion(point, chargeFraction){
+  function concentratedBeamImpactExplosion(point, chargeFraction, blastDamage = 0, attacker = null, excludedTargets = null){
     const radius = lerp(9, 22, clamp(chargeFraction, 0, 1));
     const volume = clamp(360 / point.distanceTo(player.root.position), 0.05, 0.34);
     explosion(point, radius, volume);
+    if (blastDamage > 0 && attacker)
+      splashDamage(point, radius, blastDamage, attacker, 'CONCENTRATED BEAM EXPLOSION', excludedTargets);
   }
 
   function cancelPlayerBeamCharge(){
@@ -3283,6 +3287,7 @@ export function startBattle(renderer, opts, onEnd){
     const maxHits = Math.min(4, 1 + Math.floor(chargeFraction * 3.99));
     const chargeDamage = beamChargeDamage(w, draw);
     const impactPoints = [];
+    const directTargets = new Set();
     let hitCount = 0;
     for (const hit of hits){
       if (hit.t > hardStop || hitCount >= maxHits) break;
@@ -3293,6 +3298,7 @@ export function startBattle(renderer, opts, onEnd){
       else damageProp(hit.target, dealt, point, player, `${w.name} CHARGED BEAM`);
       fx.spark(point, true);
       impactPoints.push(point);
+      directTargets.add(hit.target);
       hitCount++;
       if (hit.hard){ hardStop = Math.min(hardStop, hit.t); break; }
     }
@@ -3301,8 +3307,11 @@ export function startBattle(renderer, opts, onEnd){
       const duplicate = impactPoints.some(point => point.distanceToSquared(terminalPoint) < 0.25);
       if (!duplicate) impactPoints.push(terminalPoint);
     }
-    for (const point of impactPoints) concentratedBeamImpactExplosion(point, chargeFraction);
+    const blastDamage = chargeDamage * lerp(CONCENTRATED_BEAM_SPLASH_MIN, CONCENTRATED_BEAM_SPLASH_MAX, chargeFraction);
+    for (const point of impactPoints)
+      concentratedBeamImpactExplosion(point, chargeFraction, blastDamage, player, directTargets);
     player.lastBeamImpactExplosions = impactPoints.length;
+    player.lastBeamBlastDamage = blastDamage;
     const end = muzzle.clone().addScaledVector(dir, hardStop);
     const width = 1.12 + chargeFraction * 1.02;
     const lineLife = 0.185 + chargeFraction * 0.375;
@@ -3487,9 +3496,9 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
-  function splashDamage(pos, r, dmg, attacker, weaponName = null){
+  function splashDamage(pos, r, dmg, attacker, weaponName = null, excludedTargets = null){
     for (const m of mechs){
-      if (!m.alive) continue;
+      if (!m.alive || excludedTargets?.has(m)) continue;
       let d;
       if (m.hitSpheres){
         // huge multi-sphere hulls (GAW): a burst on the wing is 50-135m from the root centre, so measure
@@ -3508,7 +3517,7 @@ export function startBattle(renderer, opts, onEnd){
         damage(m, dmg * clamp(1 - d / reach, 0.15, 1), pos, attacker, false, weaponName);
     }
     for (const p of props){
-      if (!p.alive) continue;
+      if (!p.alive || excludedTargets?.has(p)) continue;
       const reach = r * 2.4, d = closestColliderPoint(p, pos, CLOSEST_COLLIDER_POINT);
       if (d < reach) damageProp(p, dmg * clamp(1 - d / reach, 0.15, 1), pos, attacker, weaponName);
     }
@@ -9104,14 +9113,23 @@ export function startBattle(renderer, opts, onEnd){
       updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
       const selectedDraw = player.beamChargeDraw;
       const chargePercent = beamBatteryPercent(player.suit.weapons[beamIndex], selectedDraw);
+      let collateral = null, collateralHpBefore = null;
       let fired;
       if (forceImpact && !player.suit.weapons[beamIndex].pellets){
         const target = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team);
         if (target){
           const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+          const right = new THREE.Vector3(forward.z, 0, -forward.x);
           target.root.position.copy(player.root.position).addScaledVector(forward, 150);
           target.vel.set(0, 0, 0);
           if (target.ai){ target.ai.target = null; target.ai.tThink = 9999; }
+          collateral = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team && m !== target) || null;
+          if (collateral){
+            collateral.root.position.copy(target.root.position).addScaledVector(right, 16);
+            collateral.vel.set(0, 0, 0);
+            if (collateral.ai){ collateral.ai.target = null; collateral.ai.tThink = 9999; }
+            collateralHpBefore = collateral.hp;
+          }
           const aimPoint = target.root.position.clone();
           aimPoint.y += aimHeight(target);
           cancelPlayerBeamCharge();
@@ -9132,6 +9150,8 @@ export function startBattle(renderer, opts, onEnd){
         projectilesCreated: projectiles.length - projectilesBefore,
         lastBeamHits: player.lastBeamHits || 0,
         impactExplosions: player.lastBeamImpactExplosions || 0,
+        blastDamage: player.lastBeamBlastDamage || 0,
+        collateralDamage: collateral && collateralHpBefore !== null ? Math.max(0, collateralHpBefore - collateral.hp) : 0,
       };
     },
     _debugForceFedShipCharge(){

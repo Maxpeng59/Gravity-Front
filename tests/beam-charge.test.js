@@ -29,9 +29,12 @@ test('charged beam lines and bounded charged damage replicate to PvP peers', () 
 });
 
 test('concentrated beam collisions create explosions on targets and terminal surfaces', () => {
-  assert.match(battle, /function concentratedBeamImpactExplosion\(point, chargeFraction\)[\s\S]*explosion\(point, radius, volume\)/);
+  assert.match(battle, /function concentratedBeamImpactExplosion\(point, chargeFraction[\s\S]*explosion\(point, radius, volume\)/);
   assert.match(battle, /impactPoints\.push\(point\)[\s\S]*hardStop < range - 0\.001[\s\S]*impactPoints\.push\(terminalPoint\)/);
-  assert.match(battle, /for \(const point of impactPoints\) concentratedBeamImpactExplosion\(point, chargeFraction\)/);
+  assert.match(battle, /const blastDamage = chargeDamage \* lerp\(CONCENTRATED_BEAM_SPLASH_MIN, CONCENTRATED_BEAM_SPLASH_MAX, chargeFraction\)/);
+  assert.match(battle, /concentratedBeamImpactExplosion\(point, chargeFraction, blastDamage, player, directTargets\)/);
+  assert.match(battle, /splashDamage\(point, radius, blastDamage, attacker, 'CONCENTRATED BEAM EXPLOSION', excludedTargets\)/);
+  assert.match(battle, /if \(!m\.alive \|\| excludedTargets\?\.has\(m\)\) continue/);
   assert.match(battle, /impacts: impacts\.slice\(0, 6\)[\s\S]*if \(kind === 'beam_charge'\)[\s\S]*concentratedBeamImpactExplosion\(point, chargeFraction\)/);
 });
 
