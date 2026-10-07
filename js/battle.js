@@ -2621,7 +2621,7 @@ export function startBattle(renderer, opts, onEnd){
       batteryPercent: beamBatteryPercent(m.suit.weapons[m.wi], draw),
       width,
       life,
-      impacts: impacts.slice(0, 6).map(point => point.toArray()),
+      impacts: impacts.slice(0, 16).map(point => point.toArray()),
     })) pvpShotsSent++;
   }
   // Short faceted streaks remain readable against snow/desert without becoming opaque exhaust beams.
@@ -3266,8 +3266,8 @@ export function startBattle(renderer, opts, onEnd){
     const baseRange = Math.max(620, (w.pref || 520) * 1.55);
     const chargeFraction = beamChargeFraction(w, draw);
     const range = clamp(baseRange * (1 + chargeFraction * 0.57), 620, 2400);
-    let hardStop = range;
-    if (rayTerrainHit(muzzle, dir, hardStop, TERRAIN_HIT, 0.5, 8)) hardStop = TERRAIN_HIT.t;
+    const terrainHit = rayTerrainHit(muzzle, dir, range, TERRAIN_HIT, 0.5, 8);
+    const hardStop = terrainHit ? TERRAIN_HIT.t : range;
     const hits = [];
     for (const target of mechs){
       if (!target.alive || target === player || target.team === player.team) continue;
@@ -3277,20 +3277,16 @@ export function startBattle(renderer, opts, onEnd){
     for (const target of props){
       if (!target.alive || target.attachedTo === player) continue;
       if (!rayColliderHit(target, muzzle, dir, hardStop, COLLIDER_HIT, 0.5)) continue;
-      if (target.team === player.team || target.indestructible){
-        hardStop = Math.min(hardStop, COLLIDER_HIT.t);
-        continue;
-      }
-      hits.push({ target, kind: 'prop', t: COLLIDER_HIT.t, hard: !!(target.scenery || target.isShip) });
+      if (target.team === player.team || target.indestructible) continue;
+      hits.push({ target, kind: 'prop', t: COLLIDER_HIT.t });
     }
     hits.sort((a, b) => a.t - b.t);
-    const maxHits = Math.min(4, 1 + Math.floor(chargeFraction * 3.99));
     const chargeDamage = beamChargeDamage(w, draw);
     const impactPoints = [];
     const directTargets = new Set();
     let hitCount = 0;
     for (const hit of hits){
-      if (hit.t > hardStop || hitCount >= maxHits) break;
+      if (hit.t > hardStop) break;
       const point = muzzle.clone().addScaledVector(dir, hit.t);
       const falloff = impactMultiplier({ profile: ballisticProfile(w), distance: hit.t, air: PHYS.air }).mult;
       const dealt = chargeDamage * Math.pow(0.78, hitCount) * falloff;
@@ -3300,9 +3296,8 @@ export function startBattle(renderer, opts, onEnd){
       impactPoints.push(point);
       directTargets.add(hit.target);
       hitCount++;
-      if (hit.hard){ hardStop = Math.min(hardStop, hit.t); break; }
     }
-    if (hardStop < range - 0.001){
+    if (terrainHit){
       const terminalPoint = muzzle.clone().addScaledVector(dir, hardStop);
       const duplicate = impactPoints.some(point => point.distanceToSquared(terminalPoint) < 0.25);
       if (!duplicate) impactPoints.push(terminalPoint);
@@ -3655,7 +3650,7 @@ export function startBattle(renderer, opts, onEnd){
       const width = clamp(Number(message.width) || (1.12 + chargeFraction * 1.02), 0.5, 3);
       const life = clamp(Number(message.life) || (0.185 + chargeFraction * 0.375), 0.1, 0.8);
       fx.chargedBeamLine(position, end, m.suit.faction, width, life);
-      const impacts = Array.isArray(message.impacts) ? message.impacts.slice(0, 6) : [];
+      const impacts = Array.isArray(message.impacts) ? message.impacts.slice(0, 16) : [];
       for (const value of impacts){
         const point = pvpVector(value);
         if (point && point.distanceTo(position) <= 2600)
@@ -9113,17 +9108,27 @@ export function startBattle(renderer, opts, onEnd){
       updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
       const selectedDraw = player.beamChargeDraw;
       const chargePercent = beamBatteryPercent(player.suit.weapons[beamIndex], selectedDraw);
+      let penetrated = null, penetratedHpBefore = null;
       let collateral = null, collateralHpBefore = null;
       let fired;
       if (forceImpact && !player.suit.weapons[beamIndex].pellets){
-        const target = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team);
+        const enemies = mechs.filter(m => m.alive && !m.isPlayer && m.team !== player.team);
+        const target = enemies[0];
         if (target){
           const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
           const right = new THREE.Vector3(forward.z, 0, -forward.x);
           target.root.position.copy(player.root.position).addScaledVector(forward, 150);
           target.vel.set(0, 0, 0);
           if (target.ai){ target.ai.target = null; target.ai.tThink = 9999; }
-          collateral = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team && m !== target) || null;
+          penetrated = enemies[1] || null;
+          if (penetrated){
+            penetrated.root.position.copy(player.root.position).addScaledVector(forward, 190);
+            penetrated.root.position.y += aimHeight(target) - aimHeight(penetrated);
+            penetrated.vel.set(0, 0, 0);
+            if (penetrated.ai){ penetrated.ai.target = null; penetrated.ai.tThink = 9999; }
+            penetratedHpBefore = penetrated.hp;
+          }
+          collateral = enemies[2] || null;
           if (collateral){
             collateral.root.position.copy(target.root.position).addScaledVector(right, 16);
             collateral.vel.set(0, 0, 0);
@@ -9151,6 +9156,7 @@ export function startBattle(renderer, opts, onEnd){
         lastBeamHits: player.lastBeamHits || 0,
         impactExplosions: player.lastBeamImpactExplosions || 0,
         blastDamage: player.lastBeamBlastDamage || 0,
+        penetrationDamage: penetrated && penetratedHpBefore !== null ? Math.max(0, penetratedHpBefore - penetrated.hp) : 0,
         collateralDamage: collateral && collateralHpBefore !== null ? Math.max(0, collateralHpBefore - collateral.hp) : 0,
       };
     },

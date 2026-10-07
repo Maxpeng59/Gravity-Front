@@ -18,7 +18,8 @@ test('player beam guns charge while held and discharge when LMB is released', ()
 test('charged beams consume the selected battery draw and scale power and line length', () => {
   assert.match(battle, /player\.clip = Math\.max\(0, player\.clip - draw\)/);
   assert.match(battle, /return w\.dmg \* Math\.min\(1, Math\.max\(0, Number\(draw\) \|\| 0\)\)[\s\S]*\* Math\.exp\(BEAM_DAMAGE_EXPONENT \* beamChargeFraction\(w, draw\)\)/);
-  assert.match(battle, /const maxHits = Math\.min\(4, 1 \+ Math\.floor\(chargeFraction \* 3\.99\)\)/);
+  assert.doesNotMatch(battle, /const maxHits =/);
+  assert.match(battle, /for \(const hit of hits\)\{[\s\S]*if \(hit\.t > hardStop\) break/);
   assert.match(battle, /fx\.chargedBeamLine\(muzzle, end, player\.suit\.faction, width/);
   assert.match(effects, /function chargedBeamLine\(start, end, faction = 'FED', width = 1, life = 0\.18\)/);
 });
@@ -31,12 +32,15 @@ test('charged beam lines and bounded charged damage replicate to PvP peers', () 
 
 test('concentrated beam collisions create explosions on targets and terminal surfaces', () => {
   assert.match(battle, /function concentratedBeamImpactExplosion\(point, chargeFraction[\s\S]*explosion\(point, radius, volume\)/);
-  assert.match(battle, /impactPoints\.push\(point\)[\s\S]*hardStop < range - 0\.001[\s\S]*impactPoints\.push\(terminalPoint\)/);
+  assert.match(battle, /const terrainHit = rayTerrainHit\(muzzle, dir, range[\s\S]*const hardStop = terrainHit \? TERRAIN_HIT\.t : range/);
+  assert.match(battle, /for \(const hit of hits\)[\s\S]*if \(hit\.t > hardStop\) break[\s\S]*impactPoints\.push\(point\)/);
+  assert.doesNotMatch(battle, /hit\.hard[\s\S]*hardStop = Math\.min\(hardStop, hit\.t\)/);
+  assert.match(battle, /if \(terrainHit\)[\s\S]*impactPoints\.push\(terminalPoint\)/);
   assert.match(battle, /const blastDamage = chargeDamage \* lerp\(CONCENTRATED_BEAM_SPLASH_MIN, CONCENTRATED_BEAM_SPLASH_MAX, chargeFraction\)/);
   assert.match(battle, /concentratedBeamImpactExplosion\(point, chargeFraction, blastDamage, player, directTargets\)/);
   assert.match(battle, /splashDamage\(point, radius, blastDamage, attacker, 'CONCENTRATED BEAM EXPLOSION', excludedTargets\)/);
   assert.match(battle, /if \(!m\.alive \|\| excludedTargets\?\.has\(m\)\) continue/);
-  assert.match(battle, /impacts: impacts\.slice\(0, 6\)[\s\S]*if \(kind === 'beam_charge'\)[\s\S]*concentratedBeamImpactExplosion\(point, chargeFraction\)/);
+  assert.match(battle, /impacts: impacts\.slice\(0, 16\)[\s\S]*if \(kind === 'beam_charge'\)[\s\S]*concentratedBeamImpactExplosion\(point, chargeFraction\)/);
 });
 
 test('sixteen normal beam shots equal a continuously drainable 100-percent battery', () => {
