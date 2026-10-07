@@ -2,10 +2,10 @@
 // Menu flow, campaign state, custom battle setup, save/load, render loop.
 import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
-import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
+import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js?v=74groundgmloadouts1';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=73mobilearmorbalance1';
-import { buildMech } from './mecha.js';
+import { startBattle } from './battle.js?v=74groundgmloadouts1';
+import { buildMech } from './mecha.js?v=74groundgmloadouts1';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { MAPS } from './maps.js';
@@ -17,7 +17,7 @@ import { ANIME, installAnimePost, setVisualStyle } from './anime-render.js';
 import { formatClock } from './mission-objectives.js';
 import {
   applyWeaponLoadout, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
-} from './loadouts.js';
+} from './loadouts.js?v=74groundgmloadouts1';
 import { renderEquipmentPanel } from './equipment-ui.js';
 import { CHALLENGE_RUNS, challengeForEquipment, readPvpProgress } from './challenge-runs.js';
 import { canUseHoverCraft, hoverCraftEquipped, hoverCraftSpaceCapable } from './hovercraft.js';

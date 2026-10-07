@@ -6,8 +6,8 @@
 // optional support weapon, and carried mass changes both walk and boost speed.
 
 const FED_STANDARD = ['rx78', 'gm', 'gmbazooka'];
-const FED_GROUND = ['rx79g', 'ez8', 'gmg_a', 'gmg_b'];
-const FED_GM = ['gm', 'gmii', 'gmiii', 'jegan', 'gmbazooka', 'gmg_a', 'gmg_b', 'rgm79sp', 'gmspartan'];
+const FED_GROUND = ['rx79g', 'ez8', 'gmg_a', 'gmg_std', 'gmg_b'];
+const FED_GM = ['gm', 'gmii', 'gmiii', 'jegan', 'gmbazooka', 'gmg_a', 'gmg_std', 'gmg_b', 'rgm79sp', 'gmspartan'];
 const FED_ORIGINAL = ['harrow', 'kestrel'];
 const FED_MODULAR = [...new Set([...FED_STANDARD, ...FED_GROUND, ...FED_GM, ...FED_ORIGINAL])];
 const ZEON_ZAKU = ['zaku2', 'zaku2g', 'zaku2b', 'zaku2s'];
@@ -103,6 +103,27 @@ export function normalizeWeaponLoadout(suit, loadout){
   const support = loadout.support === 'none' || options.support.some(item => item.id === loadout.support)
     ? (loadout.support || 'none') : 'none';
   return { primary, support: support === primary ? 'none' : support };
+}
+
+// Field-spawned AI draws from the same lore-compatible armoury as the unit
+// readout. A machine carrying only one hand-held gun plus its saber keeps its
+// signature stock rack; built-in head/backpack weapons do not count as guns.
+export function randomSpawnLoadout(suit, random = Math.random){
+  if (!suit || suit.air || suit.vehicle || suit.apc) return null;
+  const carried = (suit.weapons || []).filter(weapon => !fixedWeapon(weapon));
+  if (carried.length <= 1) return null;
+  const options = weaponLoadoutOptions(suit);
+  if (!options.primary.length) return null;
+  const roll = () => Math.max(0, Math.min(0.999999, Number(random()) || 0));
+
+  // Stock remains a real field possibility; the other rolls select a legal
+  // primary and then independently choose no support or one compatible rack.
+  if (roll() < 0.25) return null;
+  const primary = options.primary[Math.floor(roll() * options.primary.length)].id;
+  const supportOptions = options.support.filter(item => item.id !== primary);
+  const supportIndex = Math.floor(roll() * (supportOptions.length + 1));
+  const support = supportIndex === 0 ? 'none' : supportOptions[supportIndex - 1].id;
+  return normalizeWeaponLoadout(suit, { primary, support });
 }
 
 export function normalizeRestrictedWeaponLoadout(suit, loadout, unlockedIds){

@@ -7,8 +7,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { RNG, noise2D, clamp, lerp, sfx } from './util.js';
-import { suitById } from './data.js';
-import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js';
+import { suitById } from './data.js?v=74groundgmloadouts1';
+import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js?v=74groundgmloadouts1';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -36,8 +36,8 @@ import {
   OBJECTIVE_TUNING, advanceHold, evaluateSecondaries, isStagedMission, missionStages, stageLabel,
 } from './mission-objectives.js';
 import {
-  applyWeaponLoadout, canAimWeapon, isSniperWeapon, weaponAimCoefficient, weaponAimProfile, weaponRecoilImpulse,
-} from './loadouts.js';
+  applyWeaponLoadout, canAimWeapon, isSniperWeapon, randomSpawnLoadout, weaponAimCoefficient, weaponAimProfile, weaponRecoilImpulse,
+} from './loadouts.js?v=74groundgmloadouts1';
 import {
   advanceKneelBlend,
   kneelAimErrorMultiplier,
@@ -142,9 +142,9 @@ const LITE_GEOS = {
 const liteKind = suit => suit.style === 'fighter' ? 'air' : suit.style === 'tank' || suit.style === 'galcezon' ? 'tank' : suit.style === 'apc' ? 'apc'
   : suit.style === 'guntank' || suit.style === 'crane' ? 'guntank'
   : suit.style === 'zakutank' ? 'zakutank' : suit.style === 'acguy' ? 'acguy' : 'humanoid';
-const FED_POOL = ['gm', 'gm', 'gmbazooka', 'guncannon'];
+const FED_POOL = ['gm', 'gm', 'gmbazooka', 'gmg_std', 'guncannon'];
 const SHIELDED_IDS = new Set([
-  'rx78','fa78','rx79g','ez8','nt1','gp01','mk2','gm','gmbazooka','gmg_a','gmg_b','rgm79sp',
+  'rx78','fa78','rx79g','ez8','nt1','gp01','mk2','gm','gmbazooka','gmg_a','gmg_std','gmg_b','rgm79sp',
   'zaku2','zaku2g','zaku2b','zaku2s','gouf','goufnh','gelgoog','gelgoogs',
 ]);
 // ground-only suits get swapped for a space-capable equivalent when fielded in orbit
@@ -310,7 +310,7 @@ export function startBattle(renderer, opts, onEnd){
     const style = player.suit.style;
     viewShield.userData.screenSide = style === 'zaku' ? 'right' : 'left';
     const classicFed = fed && (style === 'gundam' || style === 'gm');
-    const groundFed = new Set(['rx79g','ez8','gmg_a','gmg_b']).has(player.suit.id);
+    const groundFed = new Set(['rx79g','ez8','gmg_a','gmg_std','gmg_b']).has(player.suit.id);
     const fedCrossShield = new Set(['rx78','gm','gmbazooka']).has(player.suit.id);
     const mat = color => new THREE.MeshStandardMaterial({ color, roughness: 0.58, metalness: 0.38 });
     const edge = mat(classicFed ? 0xe5e8e3 : fed ? (c.chest || 0x41566b) : 0x252a2e);
@@ -841,7 +841,11 @@ export function startBattle(renderer, opts, onEnd){
     let suit = suitById(typeof spec === 'string' ? spec : spec.suitId);
     const isNetworkRemote = PVP && typeof spec === 'object' && !!spec.networkRemote;
     if (SPACE && suit.groundOnly && !isPlayer) suit = suitById(SPACE_SUB[suit.id] || (suit.faction === 'ZEON' ? 'zaku2' : 'gm'));
-    suit = applyWeaponLoadout(suit, specObject?.loadout || null);
+    const authoredLoadout = specObject?.loadout || null;
+    const fieldLoadout = !isPlayer && !isNetworkRemote && !authoredLoadout
+      ? randomSpawnLoadout(suit, () => rng.next())
+      : null;
+    suit = applyWeaponLoadout(suit, authoredLoadout || fieldLoadout);
     const air = !!suit.air;
     if (air && !mission.aircraftCore) core = false; // aircraft are support and don't gate a mission's win — except custom battles, which opt them in so a fielded air force must actually be destroyed
     const ace = typeof spec === 'object' && spec.ace;
@@ -9511,6 +9515,8 @@ export function startBattle(renderer, opts, onEnd){
               squadTethered: !!m.ai?.squadTethered,
               groundTactic: m.ai?.groundTactic ? { ...m.ai.groundTactic } : null,
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
+              weapons: m.suit.weapons.map(weapon => weapon.name),
+              loadout: m.suit.weaponLoadout || { primary: 'stock', support: 'stock' },
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
               phaseSide: s?.side || null, phaseUp: s?.up || null,
               passes: s?.passes || 0, feints: s?.feints || 0,
@@ -9523,6 +9529,8 @@ export function startBattle(renderer, opts, onEnd){
           }),
         allies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'FED').map(m => ({
           id: m.suit.id,
+          weapons: m.suit.weapons.map(weapon => weapon.name),
+          loadout: m.suit.weaponLoadout || { primary: 'stock', support: 'stock' },
           p: m.root.position.toArray(),
           v: m.vel.toArray(),
           hp: m.hp,

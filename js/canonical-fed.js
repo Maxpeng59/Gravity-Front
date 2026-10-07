@@ -1014,6 +1014,13 @@ function buildGroundGM(suit, M){
   addChestVents(rig, P, 12.25, 1.48, 0.76);
   rig.torso.add(chamferBox(1.05, 1.25, 0.48, P.main, 0, 11.55, 1.58, 0.09));
   rig.torso.add(chamferBox(5.25, 0.5, 2.7, P.main, 0, 13.98, 0, 0.09));
+  if (suit.legBooster){
+    for (const leg of [rig.parts.legL, rig.parts.legR]){
+      leg.add(chamferBox(1.18, 2.15, 1.05, P.main, 0, -5.35, -1.15, 0.13));
+      leg.add(chamferBox(0.72, 1.35, 0.72, P.dark, 0, -5.45, -1.72, 0.09));
+      addThruster(leg, rig.parts, P.dark, P.flame, 0, -5.45, -2.22, 0.34, 1.45, 'rear');
+    }
+  }
   addGroundBackpack(rig, P);
   mountShield(rig, makeArmShield(P, 'ground', true), 1.28, -3.5, 0.18);
   return finishHumanoid(suit, rig, { allowDefaultShield: false });
@@ -1438,6 +1445,7 @@ export function buildFederationCanonical(suit, M){
     case 'gmiii': return buildGMIII(suit, M);
     case 'jegan': return buildJegan(suit, M);
     case 'gmg_a':
+    case 'gmg_std':
     case 'gmg_b': return buildGroundGM(suit, M);
     case 'rgm79sp': return buildSniperII(suit, M);
     case 'gmspartan': return buildSpartan(suit, M);

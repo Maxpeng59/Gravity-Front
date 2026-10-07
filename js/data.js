@@ -174,6 +174,18 @@ export const SUITS = [
     saber: { name: 'BEAM SABER', dmg: 420 }, cost: 12000,
   },
   {
+    // Economical standard Ground GM: calf boosters, lower thrust reserve and a fast-handling field rack.
+    id: 'gmg_std', name: 'RGM-79[G] GM Ground (Standard)', code: 'RGM-79[G]', faction: 'FED', style: 'gm',
+    groundOnly: true, landType: true, legBooster: true,
+    hp: 3300, armor: 8, walk: 32, boost: 70, boostFuel: 65, scale: 0.99,
+    colors: { main: 0xc7b48a, chest: 0x7d6644, accent: 0x5d4a30, trim: 0xd9caa2 },
+    weapons: [
+      { name: 'YF-MG100 100MM ASSAULT RIFLE', type: 'mg', dmg: 220, rof: 8.4, clip: 60, reload: 2.1, speed: 1400, spread: 0.014, pref: 350 },
+      { name: 'YHI 380MM BAZOOKA', type: 'bazooka', dmg: 480, rof: 1.05, clip: 5, reload: 2.8, speed: 320, spread: 0.012, splash: 13, pref: 390 },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 420 }, cost: 8000,
+  },
+  {
     // GM Ground Type, bazooka: Dom-style hover, faster, high 1.5x jump; can reach space but is sluggish there
     id: 'gmg_b', name: 'RGM-79[G] GM Ground (Bazooka)', code: 'RGM-79[G]', faction: 'FED', style: 'gm',
     groundOnly: true, landType: true,

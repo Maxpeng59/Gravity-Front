@@ -13,7 +13,7 @@ import { buildGuntankMk2 } from './guntankmk2.js';
 import { buildGalcezon } from './galcezon.js';
 import { buildCanonicalAircraft } from './canonical-aircraft.js';
 import { buildZeonCanonical } from './canonical-zeon.js';
-import { buildFederationCanonical } from './canonical-fed.js';
+import { buildFederationCanonical } from './canonical-fed.js?v=74groundgmloadouts1';
 import { buildOriginalSuit, isOriginalSuit } from './original-suits.js';
 import { applyAnimeLook } from './anime-render.js';
 

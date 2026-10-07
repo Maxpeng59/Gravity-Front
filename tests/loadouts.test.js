@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { AIRCRAFT, SUITS, suitById } from '../js/data.js';
 import {
-  applyWeaponLoadout, canAimWeapon, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout,
+  applyWeaponLoadout, canAimWeapon, canModifyWeapons, isSniperWeapon, normalizeRestrictedWeaponLoadout, normalizeWeaponLoadout, randomSpawnLoadout,
   weaponAimCoefficient, weaponAimProfile, weaponLoadoutOptions, weaponLoadoutProfile, weaponRecoilImpulse,
 } from '../js/loadouts.js';
 
@@ -13,6 +13,19 @@ test('only compatible humanoid mobile suits expose weapon modification', () => {
   assert.equal(canModifyWeapons(suitById('weasel')), false);
   assert.ok(weaponLoadoutOptions(suitById('gmg_a')).primary.some(w => w.id === 'fed_180mm'));
   assert.ok(weaponLoadoutOptions(suitById('zaku2')).primary.some(w => w.id === 'zeon_magella_cannon'));
+});
+
+test('AI spawn rolls equipment only for units with more than a gun and saber', () => {
+  assert.equal(randomSpawnLoadout(suitById('gm'), () => 0.9), null);
+  assert.equal(randomSpawnLoadout(suitById('gmg_a'), () => 0.9), null);
+
+  const rolls = [0.9, 0.4, 0.9];
+  const rolled = randomSpawnLoadout(suitById('gmg_std'), () => rolls.shift());
+  assert.ok(rolled);
+  const options = weaponLoadoutOptions(suitById('gmg_std'));
+  assert.ok(options.primary.some(item => item.id === rolled.primary));
+  assert.ok(rolled.support === 'none' || options.support.some(item => item.id === rolled.support));
+  assert.notEqual(rolled.primary, rolled.support);
 });
 
 test('invalid or cross-faction weapon choices normalize safely', () => {
