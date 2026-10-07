@@ -34,6 +34,15 @@ test('sixteen normal beam shots equal a continuously drainable 100-percent batte
   assert.match(battle, /CHARGING \$\{chargePercent\.toFixed\(1\)\}%/);
 });
 
+test('a full battery discharge reaches exactly twenty times normal beam damage', () => {
+  assert.match(battle, /const BEAM_DAMAGE_EXPONENT = Math\.log\(20\)/);
+  const exponent = Math.log(20);
+  const multiplier = draw => Math.exp(exponent * Math.max(0, Math.min(1, (draw - 1) / 15)));
+  assert.equal(multiplier(1), 1);
+  assert.ok(Math.abs(multiplier(16) - 20) < 1e-12);
+  assert.ok(multiplier(8.5) > 1 && multiplier(8.5) < 20);
+});
+
 test('every true beam firearm can charge while the physical heat rod remains immediate-fire', () => {
   const beamWeapons = SUITS.flatMap(suit => suit.weapons).filter(weapon => weapon.type === 'beam');
   assert.ok(beamWeapons.length > 0);

@@ -3132,7 +3132,7 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0.16;
-  const BEAM_DAMAGE_EXPONENT = Math.log(4);
+  const BEAM_DAMAGE_EXPONENT = Math.log(20);
 
   function beamBatteryPercent(w, draw){
     return clamp((Number(draw) || 0) / Math.max(1, w?.clip || 1) * 100, 0, 100);
