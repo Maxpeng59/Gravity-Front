@@ -28,6 +28,13 @@ test('charged beam lines and bounded charged damage replicate to PvP peers', () 
   assert.match(battle, /chargeDraw > 0 && isChargeableBeam\(weapon\)[\s\S]*beamChargeDamage\(weapon, chargeDraw\)/);
 });
 
+test('concentrated beam collisions create explosions on targets and terminal surfaces', () => {
+  assert.match(battle, /function concentratedBeamImpactExplosion\(point, chargeFraction\)[\s\S]*explosion\(point, radius, volume\)/);
+  assert.match(battle, /impactPoints\.push\(point\)[\s\S]*hardStop < range - 0\.001[\s\S]*impactPoints\.push\(terminalPoint\)/);
+  assert.match(battle, /for \(const point of impactPoints\) concentratedBeamImpactExplosion\(point, chargeFraction\)/);
+  assert.match(battle, /impacts: impacts\.slice\(0, 6\)[\s\S]*if \(kind === 'beam_charge'\)[\s\S]*concentratedBeamImpactExplosion\(point, chargeFraction\)/);
+});
+
 test('sixteen normal beam shots equal a continuously drainable 100-percent battery', () => {
   assert.match(battle, /return clamp\(\(Number\(draw\) \|\| 0\) \/ Math\.max\(1, w\?\.clip \|\| 1\) \* 100, 0, 100\)/);
   assert.match(battle, /BATTERY \$\{beamBatteryPercent\(w, player\.clip\)\.toFixed\(1\)\}% · HOLD LMB/);

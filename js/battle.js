@@ -2609,7 +2609,7 @@ export function startBattle(renderer, opts, onEnd){
       chargeDraw: projectile.chargeDraw || 0,
     })) pvpShotsSent++;
   }
-  function sendPvpChargedBeam(m, start, end, draw, width, life){
+  function sendPvpChargedBeam(m, start, end, draw, width, life, impacts = []){
     if (!PVP || m !== player) return;
     if (pvpSend({
       type: 'shot',
@@ -2621,6 +2621,7 @@ export function startBattle(renderer, opts, onEnd){
       batteryPercent: beamBatteryPercent(m.suit.weapons[m.wi], draw),
       width,
       life,
+      impacts: impacts.slice(0, 6).map(point => point.toArray()),
     })) pvpShotsSent++;
   }
   // Short faceted streaks remain readable against snow/desert without becoming opaque exhaust beams.
@@ -3148,6 +3149,12 @@ export function startBattle(renderer, opts, onEnd){
       * Math.exp(BEAM_DAMAGE_EXPONENT * beamChargeFraction(w, draw));
   }
 
+  function concentratedBeamImpactExplosion(point, chargeFraction){
+    const radius = lerp(9, 22, clamp(chargeFraction, 0, 1));
+    const volume = clamp(360 / point.distanceTo(player.root.position), 0.05, 0.34);
+    explosion(point, radius, volume);
+  }
+
   function cancelPlayerBeamCharge(){
     player.beamCharging = false;
     player.beamCharge = 0;
@@ -3243,6 +3250,7 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function firePlayerChargedBeam(w, draw, aimPoint){
+    player.lastBeamImpactExplosions = 0;
     if (w.pellets) return firePlayerChargedScatter(w, draw, aimPoint);
     syncMuzzlePose(player, null, aimPoint);
     const muzzleNode = activeMuzzleNode(player, true);
@@ -3274,6 +3282,7 @@ export function startBattle(renderer, opts, onEnd){
     hits.sort((a, b) => a.t - b.t);
     const maxHits = Math.min(4, 1 + Math.floor(chargeFraction * 3.99));
     const chargeDamage = beamChargeDamage(w, draw);
+    const impactPoints = [];
     let hitCount = 0;
     for (const hit of hits){
       if (hit.t > hardStop || hitCount >= maxHits) break;
@@ -3283,14 +3292,22 @@ export function startBattle(renderer, opts, onEnd){
       if (hit.kind === 'mech') damage(hit.target, dealt, point, player, false, w.name, draw);
       else damageProp(hit.target, dealt, point, player, `${w.name} CHARGED BEAM`);
       fx.spark(point, true);
+      impactPoints.push(point);
       hitCount++;
       if (hit.hard){ hardStop = Math.min(hardStop, hit.t); break; }
     }
+    if (hardStop < range - 0.001){
+      const terminalPoint = muzzle.clone().addScaledVector(dir, hardStop);
+      const duplicate = impactPoints.some(point => point.distanceToSquared(terminalPoint) < 0.25);
+      if (!duplicate) impactPoints.push(terminalPoint);
+    }
+    for (const point of impactPoints) concentratedBeamImpactExplosion(point, chargeFraction);
+    player.lastBeamImpactExplosions = impactPoints.length;
     const end = muzzle.clone().addScaledVector(dir, hardStop);
     const width = 1.12 + chargeFraction * 1.02;
     const lineLife = 0.185 + chargeFraction * 0.375;
     fx.chargedBeamLine(muzzle, end, player.suit.faction, width, lineLife);
-    sendPvpChargedBeam(player, muzzle, end, draw, width, lineLife);
+    sendPvpChargedBeam(player, muzzle, end, draw, width, lineLife, impactPoints);
     fx.muzzleFlash(muzzle, dir, 'beam', player.suit.faction, (player.suit.scale || 1) * (1 + chargeFraction * 0.88));
     return finishPlayerBeamDischarge(w, draw, chargeFraction, hitCount, 1);
   }
@@ -3629,6 +3646,12 @@ export function startBattle(renderer, opts, onEnd){
       const width = clamp(Number(message.width) || (1.12 + chargeFraction * 1.02), 0.5, 3);
       const life = clamp(Number(message.life) || (0.185 + chargeFraction * 0.375), 0.1, 0.8);
       fx.chargedBeamLine(position, end, m.suit.faction, width, life);
+      const impacts = Array.isArray(message.impacts) ? message.impacts.slice(0, 6) : [];
+      for (const value of impacts){
+        const point = pvpVector(value);
+        if (point && point.distanceTo(position) <= 2600)
+          concentratedBeamImpactExplosion(point, chargeFraction);
+      }
       fx.muzzleFlash(position, delta.normalize(), 'beam', m.suit.faction, (m.suit.scale || 1) * (1 + chargeFraction * 0.88));
       m.lastMuzzleWorld = position.clone();
       m.shotsFired = (m.shotsFired || 0) + 1;
@@ -9067,8 +9090,9 @@ export function startBattle(renderer, opts, onEnd){
         cameraPitch: shipCameraPitch,
       };
     },
-    _debugBeamCharge(seconds = 1.12){
-      const beamIndex = player.suit.weapons.findIndex(isChargeableBeam);
+    _debugBeamCharge(seconds = 1.12, forceImpact = false){
+      let beamIndex = player.suit.weapons.findIndex(w => isChargeableBeam(w) && !w.pellets);
+      if (beamIndex < 0) beamIndex = player.suit.weapons.findIndex(isChargeableBeam);
       if (beamIndex < 0) return null;
       if (commandedShip) releaseCommandedShip(true);
       if (player.wi !== beamIndex) switchWeapon(beamIndex);
@@ -9080,7 +9104,20 @@ export function startBattle(renderer, opts, onEnd){
       updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
       const selectedDraw = player.beamChargeDraw;
       const chargePercent = beamBatteryPercent(player.suit.weapons[beamIndex], selectedDraw);
-      const fired = releasePlayerBeamCharge();
+      let fired;
+      if (forceImpact && !player.suit.weapons[beamIndex].pellets){
+        const target = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team);
+        if (target){
+          const forward = new THREE.Vector3(Math.sin(player.yaw), 0, Math.cos(player.yaw));
+          target.root.position.copy(player.root.position).addScaledVector(forward, 150);
+          target.vel.set(0, 0, 0);
+          if (target.ai){ target.ai.target = null; target.ai.tThink = 9999; }
+          const aimPoint = target.root.position.clone();
+          aimPoint.y += aimHeight(target);
+          cancelPlayerBeamCharge();
+          fired = firePlayerChargedBeam(player.suit.weapons[beamIndex], selectedDraw, aimPoint);
+        } else fired = releasePlayerBeamCharge();
+      } else fired = releasePlayerBeamCharge();
       mouseDown = false;
       return {
         fired,
@@ -9094,6 +9131,7 @@ export function startBattle(renderer, opts, onEnd){
         pelletCount: player.lastBeamPellets || 0,
         projectilesCreated: projectiles.length - projectilesBefore,
         lastBeamHits: player.lastBeamHits || 0,
+        impactExplosions: player.lastBeamImpactExplosions || 0,
       };
     },
     _debugForceFedShipCharge(){
