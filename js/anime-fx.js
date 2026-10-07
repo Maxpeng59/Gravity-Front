@@ -120,6 +120,7 @@ const BOLT_FRAGMENT = /* glsl */`
 uniform vec3 uCore;
 uniform vec3 uHalo;
 uniform vec2 uHalf;      // (unused by the crossed ribbons, kept for tuning parity)
+uniform float uOpacity;
 varying vec2 vUv;
 void main() {
 	float r = abs( vUv.x - 0.5 ) * 2.0;
@@ -128,7 +129,7 @@ void main() {
 	float core = 1.0 - smoothstep( 0.16, 0.26, r );
 	float halo = pow( max( 1.0 - r, 0.0 ), 2.2 );
 	vec3 c = ( uCore * core + uHalo * halo ) * tip;
-	gl_FragColor = vec4( c, 1.0 );
+	gl_FragColor = vec4( c, uOpacity * tip );
 }`;
 
 // two perpendicular ribbons along +z: an energy bolt reads from any side without a volume shader
@@ -149,7 +150,7 @@ function crossedRibbon(width, length){
 
 function boltMaterial(core, halo, halfWidth, halfLength){
   return new THREE.ShaderMaterial({
-    uniforms: { uCore: { value: core }, uHalo: { value: halo }, uHalf: { value: new THREE.Vector2(halfWidth, halfLength) } },
+    uniforms: { uCore: { value: core }, uHalo: { value: halo }, uHalf: { value: new THREE.Vector2(halfWidth, halfLength) }, uOpacity: { value: 1 } },
     vertexShader: BOLT_VERTEX, fragmentShader: BOLT_FRAGMENT,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false, side: THREE.DoubleSide,
   });
@@ -330,6 +331,19 @@ export function createAnimeFx(scene, { space = false } = {}){
   function beamMesh(faction){ return new THREE.Mesh(geo.beam, mats.beam[faction] || mats.beam.FED); }
   function tracerMesh(){ return new THREE.Mesh(geo.tracer, mats.tracer); }
   function ballMesh(){ return new THREE.Mesh(geo.round, mats.ball); }
+  function chargedBeamLine(start, end, faction = 'FED', width = 1, life = 0.18){
+    const material = (mats.beam[faction] || mats.beam.FED).clone();
+    material.uniforms = THREE.UniformsUtils.clone((mats.beam[faction] || mats.beam.FED).uniforms);
+    material.uniforms.uOpacity.value = 1;
+    const mesh = new THREE.Mesh(geo.beam, material);
+    const delta = end.clone().sub(start), length = Math.max(1, delta.length());
+    mesh.position.copy(start).addScaledVector(delta, 0.5);
+    mesh.quaternion.setFromUnitVectors(FWD, delta.multiplyScalar(1 / length));
+    mesh.scale.set(width, width, length / 14);
+    group.add(mesh);
+    push({ kind: 'beamLine', key: 'beamLine', mesh, life, maxLife: life, width, lengthScale: length / 14 });
+    return mesh;
+  }
 
   const q = new THREE.Quaternion(), tmp = new THREE.Vector3();
   function update(dt, cam){
@@ -370,13 +384,20 @@ export function createAnimeFx(scene, { space = false } = {}){
           e.mesh.material.opacity = 0.9 * (1 - k);
           if (e.billboard && camera) e.mesh.quaternion.copy(camera.quaternion);
           break;
+        case 'beamLine':
+          e.mesh.material.uniforms.uOpacity.value = Math.max(0, 1 - k);
+          e.mesh.scale.set(e.width * (1 - k * 0.42), e.width * (1 - k * 0.42), e.lengthScale);
+          break;
       }
       if (e.life <= 0){
         if (e.counted) activeExplosions--;
         if (e.countedFlash) activeFlashes--;
         if (e.countedDust) activeDust--;
         if (e.kind === 'spark') activeSparks--;
-        give(e.key, e.mesh);
+        if (e.kind === 'beamLine'){
+          group.remove(e.mesh);
+          e.mesh.material.dispose();
+        } else give(e.key, e.mesh);
         live.splice(i, 1);
       }
     }
@@ -392,7 +413,7 @@ export function createAnimeFx(scene, { space = false } = {}){
   }
 
   return {
-    explosion, spark, dust, muzzleFlash, beamMesh, tracerMesh, ballMesh, update, dispose,
+    explosion, spark, dust, muzzleFlash, beamMesh, tracerMesh, ballMesh, chargedBeamLine, update, dispose,
     get activeCount(){ return live.length; },
   };
 }

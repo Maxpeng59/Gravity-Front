@@ -869,6 +869,8 @@ export function startBattle(renderer, opts, onEnd){
       colonyFlightCapable,
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
       wi: 0, clip: suit.weapons[0].clip, reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
+      beamCharging: false, beamCharge: 0, beamChargeCells: 0,
+      chargedBeamBursts: 0, lastBeamChargeCells: 0, lastBeamHits: 0,
       muzzleCursors: [],
       swingT: 0, swingDir: 1, swingKind: 'diagonal', swingDuration: 0.4,
       meleeCombo: 0, meleeHits: 0, slashCounts: {}, pendingMelee: null,
@@ -2606,6 +2608,19 @@ export function startBattle(renderer, opts, onEnd){
       life: projectile.life,
     })) pvpShotsSent++;
   }
+  function sendPvpChargedBeam(m, start, end, cells, width, life){
+    if (!PVP || m !== player) return;
+    if (pvpSend({
+      type: 'shot',
+      kind: 'beam_charge',
+      weaponIndex: m.wi,
+      position: start.toArray(),
+      end: end.toArray(),
+      chargeCells: cells,
+      width,
+      life,
+    })) pvpShotsSent++;
+  }
   // Short faceted streaks remain readable against snow/desert without becoming opaque exhaust beams.
   const hoverJetGeo = new THREE.CylinderGeometry(0.07, 0.26, 1.35, 6, 1, true);
   hoverJetGeo.userData.shared = true;
@@ -3115,6 +3130,118 @@ export function startBattle(renderer, opts, onEnd){
     sfx(w.type, vol);
   }
 
+  const BEAM_CHARGE_SECONDS_PER_CELL = 0.16;
+
+  function cancelPlayerBeamCharge(){
+    player.beamCharging = false;
+    player.beamCharge = 0;
+    player.beamChargeCells = 0;
+  }
+
+  function beginPlayerBeamCharge(){
+    const w = selectedWeapon();
+    if (commandedShip || !player.alive || !isChargeableBeam(w) || player.reloadT > 0 || player.fireT > 0) return false;
+    if (player.clip <= 0){
+      player.reloadT = w.reload;
+      return false;
+    }
+    if (!player.beamCharging){
+      player.beamCharging = true;
+      player.beamCharge = 0;
+      player.beamChargeCells = 1;
+      setMsg('BEAM CAPACITOR CHARGING — RELEASE LMB TO FIRE', 1.4);
+    }
+    return true;
+  }
+
+  function updatePlayerBeamCharge(dt){
+    const w = selectedWeapon();
+    if (!isChargeableBeam(w)){
+      cancelPlayerBeamCharge();
+      return false;
+    }
+    if (!mouseDown || player.reloadT > 0) return true;
+    if (!player.beamCharging && !beginPlayerBeamCharge()) return true;
+    player.beamCharge += dt;
+    player.beamChargeCells = Math.min(player.clip,
+      1 + Math.floor(player.beamCharge / BEAM_CHARGE_SECONDS_PER_CELL));
+    return true;
+  }
+
+  function firePlayerChargedBeam(w, cells, aimPoint){
+    syncMuzzlePose(player, null, aimPoint);
+    const muzzleNode = activeMuzzleNode(player, true);
+    const muzzle = muzzleNode
+      ? muzzleNode.getWorldPosition(new THREE.Vector3())
+      : approximateMuzzle(player, w);
+    player.lastMuzzleWorld = muzzle.clone();
+    const dir = aimPoint.clone().sub(muzzle).normalize();
+    const baseRange = Math.max(620, (w.pref || 520) * 1.55);
+    const range = clamp(baseRange * (1 + Math.min(0.48, (cells - 1) * 0.038)), 620, 2400);
+    let hardStop = range;
+    if (rayTerrainHit(muzzle, dir, hardStop, TERRAIN_HIT, 0.5, 8)) hardStop = TERRAIN_HIT.t;
+    const hits = [];
+    for (const target of mechs){
+      if (!target.alive || target === player || target.team === player.team) continue;
+      if (rayColliderHit(target, muzzle, dir, hardStop, COLLIDER_HIT, 0.5))
+        hits.push({ target, kind: 'mech', t: COLLIDER_HIT.t, hard: false });
+    }
+    for (const target of props){
+      if (!target.alive || target.attachedTo === player) continue;
+      if (!rayColliderHit(target, muzzle, dir, hardStop, COLLIDER_HIT, 0.5)) continue;
+      if (target.team === player.team || target.indestructible){
+        hardStop = Math.min(hardStop, COLLIDER_HIT.t);
+        continue;
+      }
+      hits.push({ target, kind: 'prop', t: COLLIDER_HIT.t, hard: !!(target.scenery || target.isShip) });
+    }
+    hits.sort((a, b) => a.t - b.t);
+    const maxHits = Math.min(4, 1 + Math.floor((cells - 1) / 5));
+    const chargeDamage = w.dmg * (1 + 0.32 * Math.pow(Math.max(0, cells - 1), 0.72));
+    let hitCount = 0;
+    for (const hit of hits){
+      if (hit.t > hardStop || hitCount >= maxHits) break;
+      const point = muzzle.clone().addScaledVector(dir, hit.t);
+      const falloff = impactMultiplier({ profile: ballisticProfile(w), distance: hit.t, air: PHYS.air }).mult;
+      const dealt = chargeDamage * Math.pow(0.78, hitCount) * falloff;
+      if (hit.kind === 'mech') damage(hit.target, dealt, point, player, false, w.name, cells);
+      else damageProp(hit.target, dealt, point, player, `${w.name} CHARGED BEAM`);
+      fx.spark(point, true);
+      hitCount++;
+      if (hit.hard){ hardStop = Math.min(hardStop, hit.t); break; }
+    }
+    const end = muzzle.clone().addScaledVector(dir, hardStop);
+    const width = 0.78 + Math.sqrt(cells) * 0.34;
+    const lineLife = 0.16 + cells * 0.025;
+    fx.chargedBeamLine(muzzle, end, player.suit.faction, width, lineLife);
+    sendPvpChargedBeam(player, muzzle, end, cells, width, lineLife);
+    fx.muzzleFlash(muzzle, dir, 'beam', player.suit.faction, (player.suit.scale || 1) * (1 + cells * 0.055));
+    player.clip = Math.max(0, player.clip - cells);
+    player.fireT = Math.max(1 / w.rof, 0.18 + cells * 0.018);
+    if (player.clip <= 0) player.reloadT = w.reload;
+    player.shotsFired = (player.shotsFired || 0) + 1;
+    player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.12 + cells * 0.025);
+    player.chargedBeamBursts = (player.chargedBeamBursts || 0) + 1;
+    player.lastBeamChargeCells = cells;
+    player.lastBeamHits = hitCount;
+    applyPlayerWeaponRecoil(w);
+    camShake = Math.min(1.25, camShake + 0.05 + cells * 0.009);
+    sfx('beam', 0.2 + Math.min(0.18, cells * 0.008));
+    return true;
+  }
+
+  function releasePlayerBeamCharge(){
+    const w = selectedWeapon();
+    if (!player.beamCharging || !isChargeableBeam(w)){
+      cancelPlayerBeamCharge();
+      return false;
+    }
+    const cells = clamp(player.beamChargeCells || 1, 1, player.clip);
+    cancelPlayerBeamCharge();
+    if (player.reloadT > 0 || player.fireT > 0 || cells <= 0) return false;
+    return firePlayerChargedBeam(w, cells, playerAimPoint(w));
+  }
+
   // Launch either a guided weapon at a target or an unguided missile toward an
   // explicit crosshair point. Free-aim missiles never gain homing after launch.
   function launchMissile(m, target, { weaponIndex = m.wi, cone = 0, barrageIndex = 0, aimPoint = null } = {}){
@@ -3305,7 +3432,7 @@ export function startBattle(renderer, opts, onEnd){
     killSoldiersNear(pos, r * 1.8);
   }
 
-  function damage(m, dmg, hitPoint, attacker, melee, weaponName = null){
+  function damage(m, dmg, hitPoint, attacker, melee, weaponName = null, chargeCells = 0){
     if (!m.alive) return;
     // The pilot is aboard the commanded hull. Ship HP is the active health pool
     // until helm control is released, so the hidden mobile suit cannot be hit.
@@ -3322,6 +3449,7 @@ export function startBattle(renderer, opts, onEnd){
         hitPoint: point.toArray(),
         melee: !!melee,
         weapon: weaponNoticeName(attacker, melee, weaponName),
+        chargeCells: Math.max(0, Math.trunc(Number(chargeCells) || 0)),
       })) pvpHitsSent++;
       return;
     }
@@ -3420,10 +3548,28 @@ export function startBattle(renderer, opts, onEnd){
   function pvpReplayShot(message){
     const m = networkRemotes.get(String(message.senderId || ''));
     if (!m || !m.alive) return;
-    const position = pvpVector(message.position), velocity = pvpVector(message.velocity);
-    if (!position || !velocity || velocity.lengthSq() < 0.001) return;
+    const position = pvpVector(message.position);
+    if (!position) return;
     if (!pvpSetRemoteWeapon(m, message.weaponIndex)) return;
     const w = m.suit.weapons[m.wi], kind = message.kind;
+    if (kind === 'beam_charge'){
+      if (!isChargeableBeam(w)) return;
+      const end = pvpVector(message.end);
+      if (!end) return;
+      const delta = end.clone().sub(position);
+      if (delta.lengthSq() < 1 || delta.length() > 2600) return;
+      const cells = clamp(Math.trunc(Number(message.chargeCells) || 1), 1, Math.max(1, w.clip));
+      const width = clamp(Number(message.width) || (0.78 + Math.sqrt(cells) * 0.34), 0.5, 3);
+      const life = clamp(Number(message.life) || (0.16 + cells * 0.025), 0.1, 0.8);
+      fx.chargedBeamLine(position, end, m.suit.faction, width, life);
+      fx.muzzleFlash(position, delta.normalize(), 'beam', m.suit.faction, (m.suit.scale || 1) * (1 + cells * 0.055));
+      m.lastMuzzleWorld = position.clone();
+      m.shotsFired = (m.shotsFired || 0) + 1;
+      pvpShotsReceived++;
+      return;
+    }
+    const velocity = pvpVector(message.velocity);
+    if (!velocity || velocity.lengthSq() < 0.001) return;
     if (!['direct', 'missile', 'bomb', 'artillery'].includes(kind)) return;
     if ((kind === 'missile') !== (w.type === 'lockmissile')) return;
     if ((kind === 'bomb') !== (w.type === 'bomb')) return;
@@ -3481,7 +3627,10 @@ export function startBattle(renderer, opts, onEnd){
     } else {
       const weapon = networkRemote.suit.weapons.find(candidate => candidate.name === weaponName);
       if (!weapon || !(weapon.dmg > 0)) return;
-      cap = weapon.dmg * 1.01;
+      const chargeCells = clamp(Math.trunc(Number(message.chargeCells) || 0), 0, Math.max(1, weapon.clip));
+      cap = chargeCells > 0 && isChargeableBeam(weapon)
+        ? weapon.dmg * (1 + 0.32 * Math.pow(Math.max(0, chargeCells - 1), 0.72)) * 1.01
+        : weapon.dmg * 1.01;
     }
     const bounded = Math.min(requested, cap);
     if (!(bounded > 0)) return;
@@ -3695,6 +3844,7 @@ export function startBattle(renderer, opts, onEnd){
   let sniperSwayYaw = 0, sniperSwayPitch = 0, sniperLatched = false, sniperRmbHeld = false;
 
   const selectedWeapon = () => player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
+  const isChargeableBeam = weapon => weapon?.type === 'beam' && !/HEAT ROD/i.test(weapon.name || '');
   const activeAimProfile = () => sniperMode ? weaponAimProfile(selectedWeapon()) : null;
   const aimMoveScale = () => activeAimProfile()?.moveScale ?? 1;
 
@@ -3834,7 +3984,10 @@ export function startBattle(renderer, opts, onEnd){
   };
   const onMouseDown = e => {
     if (!locked){ canvas.requestPointerLock(); return; }
-    if (e.button === 0) mouseDown = true;
+    if (e.button === 0){
+      mouseDown = true;
+      if (!commandedShip && isChargeableBeam(selectedWeapon())) beginPlayerBeamCharge();
+    }
     if (e.button === 2){
       const weapon = selectedWeapon();
       if (canAimWeapon(weapon)){
@@ -3844,7 +3997,10 @@ export function startBattle(renderer, opts, onEnd){
     }
   };
   const onMouseUp = e => {
-    if (e.button === 0) mouseDown = false;
+    if (e.button === 0){
+      if (mouseDown) releasePlayerBeamCharge();
+      mouseDown = false;
+    }
     if (e.button === 2 && sniperRmbHeld){
       sniperRmbHeld = false;
       if (!sniperLatched) setSniperMode(false, true);
@@ -3865,8 +4021,10 @@ export function startBattle(renderer, opts, onEnd){
       if (k === 'x' && paused && started) finish({ victory: false, retreat: true });
       return;
     }
-    if (k === 'r' && player.wi !== SABER_SLOT && player.clip < player.suit.weapons[player.wi].clip && player.reloadT <= 0)
-      player.reloadT = player.suit.weapons[player.wi].reload, player.clip = 0;
+    if (k === 'r' && player.wi !== SABER_SLOT && player.clip < player.suit.weapons[player.wi].clip && player.reloadT <= 0){
+      cancelPlayerBeamCharge();
+      player.reloadT = player.suit.weapons[player.wi].reload; player.clip = 0;
+    }
     if (k === 'tab'){
       e.preventDefault();
       if (!e.repeat) cyclePlayerWeapon();
@@ -3907,7 +4065,7 @@ export function startBattle(renderer, opts, onEnd){
     paused = PVP ? false : !locked;
     if (locked){ started = true; setMsg('', 0); }
     else {
-      keys.clear(); mouseDown = false;
+      keys.clear(); cancelPlayerBeamCharge(); mouseDown = false;
       if (sniperRmbHeld && !sniperLatched) setSniperMode(false, true);
       if (PVP) setMsg('DUEL LIVE — CLICK TO RE-ENGAGE CONTROLS', 9999);
       else if (started) setMsg('PAUSED — CLICK TO RESUME · X TO WITHDRAW', 9999);
@@ -3929,6 +4087,7 @@ export function startBattle(renderer, opts, onEnd){
 
   function switchWeapon(i){
     if (i === player.wi) return;
+    cancelPlayerBeamCharge();
     player.wi = i;
     resetMuzzleCycle(player, i);
     player.lockT = 0; player.lockTarget = null; // drop any pending missile lock
@@ -5146,7 +5305,9 @@ export function startBattle(renderer, opts, onEnd){
     m.fireT -= dt;
     if (m.reloadT > 0){ m.reloadT -= dt; if (m.reloadT <= 0) m.clip = m.suit.weapons[m.wi].clip; }
     const aw = m.suit.weapons[m.wi];
-    if (aw && aw.type === 'lockmissile' && !aw.freeAim){
+    if (isChargeableBeam(aw)){
+      updatePlayerBeamCharge(dt);
+    } else if (aw && aw.type === 'lockmissile' && !aw.freeAim){
       updateLockOn(m, dt); // movie-style lock sequence → auto-launches a homing missile at full lock
     } else if (mouseDown && m.reloadT <= 0 && aw){
       fire(m, null, playerAimPoint(aw));
@@ -5161,6 +5322,10 @@ export function startBattle(renderer, opts, onEnd){
       if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
     }
     const activeWeapon = m.wi === SABER_SLOT ? null : m.suit.weapons[m.wi];
+    if (isChargeableBeam(activeWeapon)){
+      updatePlayerBeamCharge(dt);
+      return;
+    }
     if (activeWeapon?.type === 'lockmissile' && !activeWeapon.freeAim){
       updateLockOn(m, dt);
       return;
@@ -5597,6 +5762,7 @@ export function startBattle(renderer, opts, onEnd){
     if (aim && aim.id !== 'precision') drawWeaponAimSight(aim, aw);
     else if (!aim && aw && !aw.arc && !player.air && aw.type !== 'lockmissile' && aw.type !== 'bomb') drawBloomRing(aw);
     drawReticle();
+    if (player.beamCharging) drawBeamChargeMeter(aw);
     drawCritFlash();
     drawObjectiveMarkers();
   }
@@ -5730,6 +5896,25 @@ export function startBattle(renderer, opts, onEnd){
       const a0 = i * Math.PI / 2 + 0.28, a1 = (i + 1) * Math.PI / 2 - 0.28;
       loCtx.beginPath(); loCtx.arc(cx, cy, r, a0, a1); loCtx.stroke();
     }
+    loCtx.restore();
+  }
+  function drawBeamChargeMeter(w){
+    if (!isChargeableBeam(w)) return;
+    const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
+    const cells = Math.max(1, player.beamChargeCells || 1);
+    const available = Math.max(1, player.clip);
+    const fraction = clamp(cells / available, 0, 1);
+    const radius = 33;
+    loCtx.save();
+    loCtx.strokeStyle = player.suit.faction === 'ZEON' ? '#ffbd4a' : '#ff72cf';
+    loCtx.fillStyle = '#f4fbff';
+    loCtx.lineWidth = 3;
+    loCtx.globalAlpha = 0.95;
+    loCtx.beginPath();
+    loCtx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
+    loCtx.stroke();
+    loCtx.font = 'bold 11px monospace'; loCtx.textAlign = 'center';
+    loCtx.fillText(`CHARGE ${cells} ENERGY · RELEASE LMB`, cx, cy + radius + 22);
     loCtx.restore();
   }
   function drawSniperScope(){
@@ -7647,11 +7832,15 @@ export function startBattle(renderer, opts, onEnd){
       wHtml = `${w.name} <span class="ammo">BARRAGE · ${salvo.total - salvo.remaining}/${salvo.total} AWAY</span>`;
     } else if (player.reloadT > 0){
       wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s</span>`;
+    } else if (player.beamCharging){
+      wHtml = `${w.name} <span class="ammo" style="color:var(--acc)">CHARGING ${player.beamChargeCells} ENERGY · RELEASE LMB</span>`;
     } else if (w.type === 'lockmissile' && !w.freeAim){
       const st = (player.lockedFlash || 0) > 0 ? 'LOCK ✓ — FOX'
         : player.lockTarget ? `LOCKING ${Math.round(clamp((player.lockT || 0) / w.lockTime, 0, 1) * 100)}%`
         : `${player.clip} / ${w.clip} · AUTO-LOCK`;
       wHtml = `${w.name} <span class="ammo">${st}</span>`;
+    } else if (isChargeableBeam(w)){
+      wHtml = `${w.name} <span class="ammo">${player.clip} / ${w.clip} ENERGY · HOLD LMB</span>`;
     } else {
       wHtml = `${w.name} <span class="ammo">${player.clip} / ${w.clip}</span>`;
     }
@@ -8587,7 +8776,12 @@ export function startBattle(renderer, opts, onEnd){
       if ('shipTurretPitch' in o) shipTurretPitch = clamp(Number(o.shipTurretPitch) || 0, -0.38, 0.52);
       if (o.position) player.root.position.set(o.position[0], o.position[1], o.position[2]);
       if (o.velocity) player.vel.set(o.velocity[0], o.velocity[1], o.velocity[2]);
-      if ('fire' in o) mouseDown = o.fire;
+      if ('fire' in o){
+        const firing = !!o.fire;
+        if (firing && !mouseDown && isChargeableBeam(selectedWeapon())) beginPlayerBeamCharge();
+        if (!firing && mouseDown) releasePlayerBeamCharge();
+        mouseDown = firing;
+      }
       if ('fp' in o) firstPerson = o.fp;
       if ('view' in o){ firstPerson = !!o.view; buildViewGun(vgMeleeOverride); }
       if ('camera' in o){
@@ -8803,6 +8997,29 @@ export function startBattle(renderer, opts, onEnd){
         cameraPitch: shipCameraPitch,
       };
     },
+    _debugBeamCharge(seconds = 1.12){
+      const beamIndex = player.suit.weapons.findIndex(isChargeableBeam);
+      if (beamIndex < 0) return null;
+      if (commandedShip) releaseCommandedShip(true);
+      if (player.wi !== beamIndex) switchWeapon(beamIndex);
+      player.reloadT = 0; player.fireT = 0; player.clip = player.suit.weapons[beamIndex].clip;
+      const before = player.clip;
+      mouseDown = true;
+      beginPlayerBeamCharge();
+      updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
+      const selectedCells = player.beamChargeCells;
+      const fired = releasePlayerBeamCharge();
+      mouseDown = false;
+      return {
+        fired,
+        weapon: player.suit.weapons[beamIndex].name,
+        selectedCells,
+        energyBefore: before,
+        energyAfter: player.clip,
+        chargedBeamBursts: player.chargedBeamBursts || 0,
+        lastBeamHits: player.lastBeamHits || 0,
+      };
+    },
     _debugForceFedShipCharge(){
       const fed = props.find(p => p.alive && p.team === 'FED' && p.spaceProfile?.ramDuration);
       const foe = fed ? props.find(p => p.alive && p.team !== 'FED' && p.spaceProfile) : null;
@@ -8989,6 +9206,12 @@ export function startBattle(renderer, opts, onEnd){
         bladeVisible: !!player.parts?.blade?.visible, gunVisible: !!player.parts?.gun?.visible,
         pMeleeT: player.meleeT, pBladeT: player.bladeT, pReloadT: player.reloadT,
         pClip: player.clip, pShotsFired: player.shotsFired || 0,
+        beamCharging: !!player.beamCharging,
+        beamCharge: +(player.beamCharge || 0).toFixed(3),
+        beamChargeCells: player.beamChargeCells || 0,
+        chargedBeamBursts: player.chargedBeamBursts || 0,
+        lastBeamChargeCells: player.lastBeamChargeCells || 0,
+        lastBeamHits: player.lastBeamHits || 0,
         missileBarrage: player.missileBarrage ? {
           weaponIndex: player.missileBarrage.weaponIndex,
           remaining: player.missileBarrage.remaining,
