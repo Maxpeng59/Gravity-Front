@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=72mobilearmors1';
+import { startBattle } from './battle.js?v=73mobilearmorbalance1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -32,7 +32,7 @@ import {
 } from './stationary-batteries.js';
 import {
   MOBILE_ARMORS, MOBILE_ARMOR_IDS, buildMobileArmor, mobileArmorById, mobileArmorProfile,
-} from './mobile-armors.js?v=71mobilearmors1';
+} from './mobile-armors.js?v=73mobilearmorbalance1';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -200,7 +200,7 @@ function renderShipStats(kind){
   let html = `<div class="nm">${ship.name}</div><div class="cd">${ship.code}</div>`;
   for (const [k, v] of rows) html += `<div class="sl"><span>${k}</span><b>${v}</b></div>`;
   html += mobileArmorProfile(kind)
-    ? `<div class="wl">▸ <b>${profile.turretCount} INDEPENDENT TURRETS</b><br>▸ ALL-ENVIRONMENT DEPLOYMENT<br>▸ HEAVY MOBILE-ARMOR HULL<br>▸ FIRES WHILE MANEUVERING</div>`
+    ? `<div class="wl">▸ <b>${profile.turretCount} WEAPON HARDPOINTS</b><br>▸ ${profile.activeTurretLimit} BANKS MAY FIRE TOGETHER<br>▸ ALL-ENVIRONMENT DEPLOYMENT<br>▸ FIRES WHILE MANEUVERING</div>`
     : profile === landshipProfile(kind)
     ? '<div class="wl">▸ <b>LANDSHIP HELM</b><br>▸ MANUAL MAIN BATTERY<br>▸ MANUAL MACHINE-GUN BURST<br>▸ AUTOMATIC DEFENSIVE BATTERIES</div>'
     : '<div class="wl">▸ <b>CAPITAL-SHIP HELM</b><br>▸ AUTOMATIC MAIN BATTERIES<br>▸ AUTOMATIC SIDE BATTERIES</div>';
@@ -1339,7 +1339,7 @@ function renderCustom(){
         const mobileArmorStats = mobileArmorProfile(s.id);
         const shipStats = landshipProfile(s.id) || spaceShipProfile(s.id);
         const battery = STATIONARY_BATTERY_IDS.has(s.id);
-        o.value = s.id; o.textContent = `${MOBILE_ARMOR_IDS.has(s.id) ? '◉ ' : SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${mobileArmorStats ? ` · MOBILE ARMOR · ${mobileArmorStats.hp.toLocaleString()} HP · SPD ${mobileArmorStats.speed} · ${mobileArmorStats.turretCount} TURRETS` : shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
+        o.value = s.id; o.textContent = `${MOBILE_ARMOR_IDS.has(s.id) ? '◉ ' : SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${mobileArmorStats ? ` · MOBILE ARMOR · ${mobileArmorStats.hp.toLocaleString()} HP · SPD ${mobileArmorStats.speed} · ${mobileArmorStats.turretCount} HARDPOINTS / ${mobileArmorStats.activeTurretLimit} ACTIVE` : shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
       const maxForEntry = () => ENTRY_MAX;

@@ -13,7 +13,7 @@ import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
-import { buildMobileArmor, mobileArmorProfile } from './mobile-armors.js?v=71mobilearmors1';
+import { buildMobileArmor, mobileArmorProfile } from './mobile-armors.js?v=73mobilearmorbalance1';
 import { spaceShipProfile } from './space-ship-balance.js?v=57shipordnance1';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
@@ -1341,6 +1341,7 @@ export function startBattle(renderer, opts, onEnd){
       landProfile, spaceProfile,
       fixedMuzzles: canonicalMobileArmor?.fixedMuzzles || canonicalLandship?.fixedMuzzles || [],
       secondaryMuzzles: canonicalMobileArmor?.secondaryMuzzles || canonicalLandship?.secondaryMuzzles || [],
+      turretBankOffset: rng.range(0, 2.8),
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
       manualMainT: 0, manualSecondaryT: 0, manualMainShots: 0, manualSecondaryShots: 0,
       carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
@@ -7029,7 +7030,22 @@ export function startBattle(renderer, opts, onEnd){
   function updateShipTurrets(p, dt){
     if (p === commandedShip && p.landProfile) return; // the player owns the landship's main-battery trigger
     p.root.updateMatrixWorld(true);
-    for (const t of p.turrets){
+    const activeLimit = p.isMobileArmor
+      ? Math.min(p.turrets.length, (p.landProfile || p.spaceProfile)?.activeTurretLimit || p.turrets.length)
+      : p.turrets.length;
+    const bankStart = p.isMobileArmor && p.turrets.length
+      ? Math.floor((battleClock + p.turretBankOffset) / 2.8) * activeLimit % p.turrets.length
+      : 0;
+    for (const [turretIndex, t] of p.turrets.entries()){
+      // Large MAs still carry many visible hardpoints, but heat/power routing only
+      // permits a limited rotating bank to fire at once. This prevents the old
+      // all-guns alpha strike while preserving the multi-directional silhouette.
+      const relativeBankIndex = (turretIndex - bankStart + p.turrets.length) % p.turrets.length;
+      if (relativeBankIndex >= activeLimit){
+        t.gun.rotation.x = lerp(t.gun.rotation.x, -0.04, 2 * dt);
+        t.cd = Math.max(t.cd, 0.35);
+        continue;
+      }
       const turretRange = p.gunRange * (t.rangeScale || 1);
       const rangeSq = turretRange * turretRange;
       const tw = t.yaw.getWorldPosition(stv1);

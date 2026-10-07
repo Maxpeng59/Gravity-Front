@@ -14,14 +14,15 @@ test('four faction-authentic UC mobile armors join the custom roster', () => {
   assert.match(main, /if \(MOBILE_ARMOR_IDS\.has\(entry\.id\)\) return true/);
 });
 
-test('mobile armors are high-HP moderate-speed multi-turret combatants', () => {
+test('mobile armors are boss-sized but bounded multi-turret combatants', () => {
   for (const id of ['bigzam', 'apsaras3', 'neueziel', 'dendrobium']){
     const profile = mobileArmors.match(new RegExp(`${id}: Object\\.freeze\\(\\{([\\s\\S]*?)\\n  \\}\\)`))?.[1] || '';
     const number = key => Number(profile.match(new RegExp(`${key}: (\\d+)`))?.[1]);
-    assert.ok(number('hp') >= 76000, `${id} HP`);
-    assert.ok(number('speed') >= 18 && number('speed') <= 32, `${id} speed`);
-    assert.ok(number('turretCount') >= 10, `${id} turret count`);
-    assert.ok(number('mainRange') >= 1800, `${id} range`);
+    assert.ok(number('hp') >= 34000 && number('hp') <= 42000, `${id} HP`);
+    assert.ok(number('speed') >= 12 && number('speed') <= 28, `${id} speed`);
+    assert.ok(number('turretCount') >= 5 && number('turretCount') <= 8, `${id} hardpoint count`);
+    assert.ok(number('mainRange') >= 1400 && number('mainRange') <= 1700, `${id} range`);
+    assert.ok(number('activeTurretLimit') >= 2 && number('activeTurretLimit') <= 4, `${id} simultaneous banks`);
   }
 });
 
@@ -41,5 +42,7 @@ test('battle runtime treats mobile armors as moving targetable heavy props in ev
   assert.match(battle, /groundY\(nx, nz\) \+ \(p\.hoverHeight \|\| 0\)/);
   assert.match(battle, /p\.spaceProfile \|\| p\.isMobileArmor/);
   assert.match(battle, /energy: !!p\.isMobileArmor/);
+  assert.match(battle, /activeTurretLimit/);
+  assert.match(battle, /relativeBankIndex >= activeLimit/);
   assert.match(battle, /mobileArmors: props\.filter\(p => p\.isMobileArmor\)/);
 });
