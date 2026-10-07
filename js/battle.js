@@ -13,6 +13,7 @@ import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
+import { buildMobileArmor, mobileArmorProfile } from './mobile-armors.js?v=71mobilearmors1';
 import { spaceShipProfile } from './space-ship-balance.js?v=57shipordnance1';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
@@ -1054,14 +1055,15 @@ export function startBattle(renderer, opts, onEnd){
   const props = [];
   props.push(...pendingStaticProps);
   function spawnProp(kind, team, pos, hp, options = {}){
-    const spaceProfile = spaceShipProfile(kind);
+    const mobileArmor = mobileArmorProfile(kind);
+    const spaceProfile = mobileArmor && SPACE ? mobileArmor : spaceShipProfile(kind);
     const isSpaceShip = !!spaceProfile || kind === 'solfortress';
-    const landProfile = landshipProfile(kind);
+    const landProfile = mobileArmor && !SPACE ? mobileArmor : landshipProfile(kind);
     const isLandShip = !!landProfile;
     const isShip = isSpaceShip || isLandShip;
     // Ground capital profiles always own their HP. Space missions may author a
     // scenario-scale hull value, while Custom Battle passes the class HP below.
-    hp = landProfile?.hp || (options.missionTarget
+    hp = mobileArmor?.hp || landProfile?.hp || (options.missionTarget
       ? campaignObjectiveHitPoints(hp)
       : buildingHitPoints(kind, hp));
     // war-production HP buff — applies to every Federation capital ship (opts.fedShipHp is 0 in custom sorties)
@@ -1090,7 +1092,12 @@ export function startBattle(renderer, opts, onEnd){
       ? buildCanonicalLandship(kind, glow, () => rng.range(0, 3)) : null;
     const canonicalSpaceShip = spaceProfile
       ? buildCanonicalSpaceShip(kind, glow, thrust, () => rng.range(0, 3)) : null;
-    if (canonicalLandship){
+    const canonicalMobileArmor = mobileArmor
+      ? buildMobileArmor(kind, glow, thrust, () => rng.range(0, 2)) : null;
+    if (canonicalMobileArmor){
+      root.add(canonicalMobileArmor.root);
+      shipTurrets.push(...canonicalMobileArmor.turrets);
+    } else if (canonicalLandship){
       root.add(canonicalLandship.root);
       shipTurrets.push(...canonicalLandship.turrets);
     } else if (canonicalSpaceShip){
@@ -1304,7 +1311,7 @@ export function startBattle(renderer, opts, onEnd){
       add(new THREE.SphereGeometry(1.1, 8, 6), glow, 0, 6.5, 7);
     }
     root.position.copy(pos);
-    if (hfn && !SPACE) root.position.y = groundY(pos.x, pos.z) + (isSpaceShip ? 26 : 0); // space hulls hover, landships sit on treads
+    if (hfn && !SPACE) root.position.y = groundY(pos.x, pos.z) + (mobileArmor?.hoverHeight || (isSpaceShip ? 26 : 0)); // mobile armors hover; landships sit on treads
     // ships are modelled prow-toward +Z; Zeon hulls spawn ahead of the player (+Z) so turn them
     // to face the oncoming Federation line (−Z), prow and main guns forward
     if (isShip) root.rotation.y = team === 'ZEON' ? Math.PI : 0;
@@ -1313,13 +1320,13 @@ export function startBattle(renderer, opts, onEnd){
       missionTarget: !!options.missionTarget,
       indestructible: false,
       value: Math.round(hp * (isShip ? 2.5 : kind === 'base' || kind === 'depot' ? 1.2 : 0.65)),
-      isProp: true, isShip,
-      radius: kind === 'truck' ? 8 : kind === 'solfortress' ? 58
+      isProp: true, isShip, isMobileArmor: !!mobileArmor, hoverHeight: mobileArmor?.hoverHeight || 0,
+      radius: mobileArmor?.radius || (kind === 'truck' ? 8 : kind === 'solfortress' ? 58
         : kind === 'bigtray' ? 55 : kind === 'dabude' ? 50 : kind === 'gallop' ? 30
-        : kind === 'magellan' ? 46 : kind === 'columbus' ? 44 : isShip ? 42 : 17,
-      hitY: kind === 'truck' ? 3 : kind === 'solfortress' ? 16
+        : kind === 'magellan' ? 46 : kind === 'columbus' ? 44 : isShip ? 42 : 17),
+      hitY: mobileArmor?.hitY || (kind === 'truck' ? 3 : kind === 'solfortress' ? 16
         : kind === 'bigtray' ? 17 : kind === 'dabude' ? 18 : kind === 'gallop' ? 11
-        : isShip ? 13 : 9,
+        : isShip ? 13 : 9),
       gunT: rng.range(2, 4),
       // The Gallop is a fast transport with one rear artillery mount, not a super-heavy landship.
       // The Magellan is the Federation's gun-line flagship; the Columbus barely defends itself.
@@ -1332,8 +1339,8 @@ export function startBattle(renderer, opts, onEnd){
       turnRate: landProfile?.turnRate || spaceProfile?.turnRate || 0.12,
       standoff: landProfile?.standoff || spaceProfile?.standoff || 0,
       landProfile, spaceProfile,
-      fixedMuzzles: canonicalLandship?.fixedMuzzles || [],
-      secondaryMuzzles: canonicalLandship?.secondaryMuzzles || [],
+      fixedMuzzles: canonicalMobileArmor?.fixedMuzzles || canonicalLandship?.fixedMuzzles || [],
+      secondaryMuzzles: canonicalMobileArmor?.secondaryMuzzles || canonicalLandship?.secondaryMuzzles || [],
       fixedT: rng.range(2.5, 5), secondaryT: rng.range(0.4, 1.2),
       manualMainT: 0, manualSecondaryT: 0, manualMainShots: 0, manualSecondaryShots: 0,
       carrierLaunchT: kind === 'columbus' ? COLUMBUS_LAUNCH_INTERVAL : null,
@@ -1393,6 +1400,8 @@ export function startBattle(renderer, opts, onEnd){
     };
     if (PROP_BOXES[kind]) p.hitBoxes = PROP_BOXES[kind];
     if (PROP_SPHERES[kind]) p.hitSpheres = PROP_SPHERES[kind];
+    if (mobileArmor?.hitBoxes) p.hitBoxes = mobileArmor.hitBoxes;
+    if (mobileArmor?.hitSpheres) p.hitSpheres = mobileArmor.hitSpheres;
     // WEAK POINTS (world units — props render unscaled): the bridge/command tower and engine blocks.
     // Hitting them deals 2.5× damage. (local x=beam, y=up, z=prow)
     const SHIP_WEAK = {
@@ -2307,7 +2316,7 @@ export function startBattle(renderer, opts, onEnd){
   // (enemy → ZEON ahead of the line, ally → FED at the player's back)
   if (mission.customShips){
     for (const cs of mission.customShips){
-      const hp = landshipProfile(cs.kind)?.hp || spaceShipProfile(cs.kind)?.hp || 20000;
+      const hp = mobileArmorProfile(cs.kind)?.hp || landshipProfile(cs.kind)?.hp || spaceShipProfile(cs.kind)?.hp || 20000;
       const pos = cs.pos ? new THREE.Vector3(cs.pos.x, SPACE ? rng.range(-120, 120) : 0, cs.pos.z) // per-entry deployment marker
         : cs.team === 'ZEON'
         ? ringPos(rng.range(-30, 30), cs.dist ? enemyDistBand(cs.dist) : rng.range(720, 1000), 120)
@@ -6850,7 +6859,7 @@ export function startBattle(renderer, opts, onEnd){
         }
       }
       if (p.ballistic && !p.arc && !p.bomb && !p.homing) stepBallistic(p.vel, p.ballistic, PHYS, dt); // local gravity + air drag
-      else if (!SPACE && p.splash) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
+      else if (!SPACE && p.splash && !p.energy) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
       const stepLen = p.vel.length() * dt;
       const dirN = tmpV.copy(p.vel).normalize();
       let hit = false, hitKind = null, hitTarget = null, bestT = stepLen;
@@ -7062,13 +7071,14 @@ export function startBattle(renderer, opts, onEnd){
           dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
           // Surface batteries fire machined HE shells; warship batteries use the
           // same luminous naval beams as the campaign fleet battle.
-          const mesh = p.spaceProfile
+          const mesh = p.spaceProfile || p.isMobileArmor
             ? new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat)
             : makeShell(shellScale, false);
-          if (p.spaceProfile && t.shellScale) mesh.scale.setScalar(t.shellScale);
+          if ((p.spaceProfile || p.isMobileArmor) && t.shellScale) mesh.scale.setScalar(t.shellScale);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
           projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg * (t.damageScale || 1), splash: p.gunSplash * (t.splashScale || 1), team: p.team, owner: p,
-            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.spaceProfile ? (t.weaponName || 'SHIP MAIN BATTERY') : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
+            weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.isMobileArmor ? (t.weaponName || 'MOBILE ARMOR MEGA-PARTICLE TURRET') : p.spaceProfile ? (t.weaponName || 'SHIP MAIN BATTERY') : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
+            energy: !!p.isMobileArmor,
             heavy: t.heavy ?? true, collisionRadius: t.collisionRadius ?? (p.spaceProfile ? 2.6 : p.battery ? 1.8 : 2.1) });
         }
         t.shotsFired = (t.shotsFired || 0) + (t.shots || 1);
@@ -7332,6 +7342,10 @@ export function startBattle(renderer, opts, onEnd){
 
   function updateShipOrdnance(p, dt){
     const profile = p.spaceProfile;
+    // Mobile armours share capital-ship steering in space, but their many beam
+    // turrets are their ordnance. Do not send them through the missile/torpedo
+    // launcher path unless a profile actually authors a missile rack.
+    if (!profile?.missileCount || !Number.isFinite(profile.missileRange)) return;
     p.missileT = Math.max(0, (p.missileT || 0) - dt);
     p.torpedoT = Math.max(0, (p.torpedoT || 0) - dt);
     if (p === commandedShip) return;
@@ -7411,7 +7425,7 @@ export function startBattle(renderer, opts, onEnd){
     // Gallop present its cannon end without making its AI retreat again.
     const vx = dx / distance * moveSpeed, vz = dz / distance * moveSpeed;
     const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
-    const ny = groundY(nx, nz);
+    const ny = groundY(nx, nz) + (p.hoverHeight || 0);
     const bodyRadius = Math.min(34, p.radius * 0.7);
     const propBlocked = props.some(q => q.alive && q !== p && !q.attachedTo
       && Math.hypot(nx - q.root.position.x, nz - q.root.position.z)
@@ -7432,7 +7446,7 @@ export function startBattle(renderer, opts, onEnd){
     const vx = Math.sin(p.root.rotation.y) * p.helmForward;
     const vz = Math.cos(p.root.rotation.y) * p.helmForward;
     const nx = p.root.position.x + vx * dt, nz = p.root.position.z + vz * dt;
-    const ny = groundY(nx, nz);
+    const ny = groundY(nx, nz) + (p.hoverHeight || 0);
     const bodyRadius = Math.min(34, p.radius * 0.7);
     const propBlocked = props.some(q => q.alive && q !== p && !q.attachedTo
       && Math.hypot(nx - q.root.position.x, nz - q.root.position.z)
@@ -9277,6 +9291,12 @@ export function startBattle(renderer, opts, onEnd){
             .reduce((sum, p) => sum + (p.torpedoesFired || 0), 0),
           zeonTorpedoCapable: props.some(p => p.alive && p.team === 'ZEON' && !!p.spaceProfile?.torpedo),
         },
+        mobileArmors: props.filter(p => p.isMobileArmor).map(p => ({
+          kind: p.kind, team: p.team, hp: Math.round(p.hp), maxHp: p.maxHp,
+          speed: p.speed, turretCount: p.turrets?.length || 0,
+          position: p.root.position.toArray(), velocity: p.vel.toArray(),
+          shotsFired: (p.turrets || []).reduce((sum, turret) => sum + (turret.shotsFired || 0), 0),
+        })),
         colony: COLONY ? {
           radius: COLONY_RADIUS,
           gravityScale: COLONY_GRAVITY_SCALE,

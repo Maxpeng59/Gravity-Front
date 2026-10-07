@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=71penetratingbeam1';
+import { startBattle } from './battle.js?v=72mobilearmors1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -30,6 +30,9 @@ import {
 import {
   STATIONARY_BATTERIES, STATIONARY_BATTERY_IDS, stationaryBatteryById,
 } from './stationary-batteries.js';
+import {
+  MOBILE_ARMORS, MOBILE_ARMOR_IDS, buildMobileArmor, mobileArmorById, mobileArmorProfile,
+} from './mobile-armors.js?v=71mobilearmors1';
 
 preloadModels(); // real mech models load in the background; procedural fallback until ready
 
@@ -126,9 +129,11 @@ const msPreview = (() => {
       if (shipKind){
         const glow = new THREE.MeshStandardMaterial({ color: 0x9fd8ff, emissive: 0x4aa3ff, emissiveIntensity: 1.1 });
         const thrust = new THREE.MeshBasicMaterial({ color: 0x8fdcff, transparent: true, opacity: 0.82 });
-        root = landshipProfile(shipKind)
-          ? buildCanonicalLandship(shipKind, glow, () => 0)?.root
-          : buildCanonicalSpaceShip(shipKind, glow, thrust, () => 0)?.root;
+        root = mobileArmorProfile(shipKind)
+          ? buildMobileArmor(shipKind, glow, thrust, () => 0)?.root
+          : landshipProfile(shipKind)
+            ? buildCanonicalLandship(shipKind, glow, () => 0)?.root
+            : buildCanonicalSpaceShip(shipKind, glow, thrust, () => 0)?.root;
       } else {
         const baseSuit = suitById(id); if (!baseSuit) return;
         root = buildMech(applyWeaponLoadout(baseSuit, loadout)).root;
@@ -142,7 +147,7 @@ const msPreview = (() => {
     const reach = Math.max(sz.x, sz.y, sz.z) || 20;
     // The RTX-440-B's thin cannon and radio whips extend far beyond its visual mass. Give this hero
     // mesh a tighter inspection framing so its track, arm and casemate detail stays readable.
-    const framing = shipKind ? 1.15 : id === 'guntankmk2' ? 1.6 : id === 'weasel' ? 1.4 : 1.75;
+    const framing = shipKind ? (mobileArmorProfile(shipKind) ? 1.45 : 1.15) : id === 'guntankmk2' ? 1.6 : id === 'weasel' ? 1.4 : 1.75;
     cam.position.set(shipKind ? reach * 0.72 : 0, sz.y * (shipKind ? 0.7 : 0.12), reach * framing);
     cam.lookAt(0, 0, 0);
   }
@@ -181,7 +186,8 @@ function renderMsStats(suit){
 }
 
 function renderShipStats(kind){
-  const box = $('ms-stats'), profile = landshipProfile(kind) || spaceShipProfile(kind), ship = shipById(kind);
+  const box = $('ms-stats'), profile = mobileArmorProfile(kind) || landshipProfile(kind) || spaceShipProfile(kind);
+  const ship = mobileArmorById(kind) || shipById(kind);
   if (!box || !profile || !ship) return;
   const rows = [
     ['CLASS', profile.role],
@@ -193,7 +199,9 @@ function renderShipStats(kind){
   ];
   let html = `<div class="nm">${ship.name}</div><div class="cd">${ship.code}</div>`;
   for (const [k, v] of rows) html += `<div class="sl"><span>${k}</span><b>${v}</b></div>`;
-  html += profile === landshipProfile(kind)
+  html += mobileArmorProfile(kind)
+    ? `<div class="wl">▸ <b>${profile.turretCount} INDEPENDENT TURRETS</b><br>▸ ALL-ENVIRONMENT DEPLOYMENT<br>▸ HEAVY MOBILE-ARMOR HULL<br>▸ FIRES WHILE MANEUVERING</div>`
+    : profile === landshipProfile(kind)
     ? '<div class="wl">▸ <b>LANDSHIP HELM</b><br>▸ MANUAL MAIN BATTERY<br>▸ MANUAL MACHINE-GUN BURST<br>▸ AUTOMATIC DEFENSIVE BATTERIES</div>'
     : '<div class="wl">▸ <b>CAPITAL-SHIP HELM</b><br>▸ AUTOMATIC MAIN BATTERIES<br>▸ AUTOMATIC SIDE BATTERIES</div>';
   box.innerHTML = html;
@@ -1078,9 +1086,9 @@ const SHIPS = [
   { id: 'chivvay', name: 'Chivvay-class', code: 'Zeon high-speed heavy cruiser', faction: 'ZEON', env: 'space' },
 ];
 const SHIP_IDS = new Set(SHIPS.map(s => s.id));
-const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...STATIONARY_BATTERY_IDS]);
+const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...MOBILE_ARMOR_IDS, ...STATIONARY_BATTERY_IDS]);
 const shipById = id => SHIPS.find(ship => ship.id === id) || null;
-const unitFaction = id => shipById(id)?.faction || stationaryBatteryById(id)?.faction || suitById(id)?.faction || null;
+const unitFaction = id => shipById(id)?.faction || mobileArmorById(id)?.faction || stationaryBatteryById(id)?.faction || suitById(id)?.faction || null;
 const opposingFaction = faction => faction === 'ZEON' ? 'FED' : 'ZEON';
 const customPlayerFaction = () => custom.playerShip ? shipById(custom.playerShip).faction : suitById(custom.suit)?.faction || 'FED';
 function normalizeCustomSidesForPlayer(){
@@ -1096,6 +1104,7 @@ function normalizeCustomRosterForEnvironment(){
   const allowed = entry => {
     const ship = shipById(entry.id);
     if (ship) return ship.env === custom.env;
+    if (MOBILE_ARMOR_IDS.has(entry.id)) return true;
     if (STATIONARY_BATTERY_IDS.has(entry.id)) return custom.env === 'ground';
     return true;
   };
@@ -1107,6 +1116,7 @@ function normalizeCustomRosterForEnvironment(){
 const ROWS_MAX = SUITS.length + AIRCRAFT.length
   + Math.max(...['FED', 'ZEON'].map(faction =>
     SHIPS.filter(ship => ship.faction === faction).length
+    + MOBILE_ARMORS.filter(unit => unit.faction === faction).length
     + STATIONARY_BATTERIES.filter(battery => battery.faction === faction).length));
 
 function applyRecommendedMapForces(map){
@@ -1321,13 +1331,15 @@ function renderCustom(){
       const canonicalShipFaction = faction;
       for (const s of [
         ...SUITS.filter(unit => unit.faction === faction), ...AIRCRAFT.filter(unit => unit.faction === faction),
+        ...MOBILE_ARMORS.filter(unit => unit.faction === canonicalShipFaction),
         ...SHIPS.filter(ship => ship.faction === canonicalShipFaction && ship.env === custom.env),
         ...(custom.env === 'ground' ? STATIONARY_BATTERIES.filter(battery => battery.faction === canonicalShipFaction) : []),
       ]){
         const o = document.createElement('option');
+        const mobileArmorStats = mobileArmorProfile(s.id);
         const shipStats = landshipProfile(s.id) || spaceShipProfile(s.id);
         const battery = STATIONARY_BATTERY_IDS.has(s.id);
-        o.value = s.id; o.textContent = `${SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
+        o.value = s.id; o.textContent = `${MOBILE_ARMOR_IDS.has(s.id) ? '◉ ' : SHIP_IDS.has(s.id) ? '⚓ ' : battery ? '▣ ' : s.air ? '✈ ' : ''}${s.name} (${s.faction})${mobileArmorStats ? ` · MOBILE ARMOR · ${mobileArmorStats.hp.toLocaleString()} HP · SPD ${mobileArmorStats.speed} · ${mobileArmorStats.turretCount} TURRETS` : shipStats ? ` · ${shipStats.hp.toLocaleString()} HP · SPD ${shipStats.speed} · RNG ${shipStats.mainRange}` : battery ? ` · ${s.code}` : ''}`; o.selected = s.id === entry.id;
         sel.appendChild(o);
       }
       const maxForEntry = () => ENTRY_MAX;
@@ -1348,7 +1360,8 @@ function renderCustom(){
       const squadNumbers = [...(squadRows.get(i) || [])].sort((a, b) => a - b);
       const squadPick = document.createElement('select');
       squadPick.className = 'squad-pick';
-      const nonSquad = SHIP_IDS.has(entry.id) ? 'SHIP'
+      const nonSquad = MOBILE_ARMOR_IDS.has(entry.id) ? 'MOBILE ARMOR'
+        : SHIP_IDS.has(entry.id) ? 'SHIP'
         : STATIONARY_BATTERY_IDS.has(entry.id) ? 'BATTERY'
         : suit?.air ? 'AIR' : !squadNumbers.length ? 'CAP' : null;
       if (nonSquad){
@@ -1368,6 +1381,7 @@ function renderCustom(){
       }
       squadPick.title = squadNumbers.length
         ? `Assigned to ${faction}-${squadNumbers[0]}${squadNumbers.length > 1 ? ` through ${faction}-${squadNumbers.at(-1)}` : ''}`
+        : MOBILE_ARMOR_IDS.has(entry.id) ? 'Mobile armor — independent heavy combat unit deployable in every environment'
         : SHIP_IDS.has(entry.id) ? 'Capital ship — outside the mobile-suit squad net'
         : STATIONARY_BATTERY_IDS.has(entry.id) ? 'Stationary artillery — position set by its numbered deployment marker'
         : suit?.air ? 'Aircraft flight — outside the ground mobile-suit squad net' : `Outside the ${PER_SIDE_CAP}-unit deployment cap`;
@@ -1499,11 +1513,11 @@ $('btn-launch-custom').onclick = () => {
   // Capital hulls retain canonical faction identity. Each roster follows the selected
   // player's faction, including when the player launches aboard a Zeon hull.
   const customShips = custom.army > 0 ? [] : [
-    ...enemyEx.filter(o => SHIP_IDS.has(o.id)),
-    ...allyEx.filter(o => SHIP_IDS.has(o.id)),
+    ...enemyEx.filter(o => SHIP_IDS.has(o.id) || MOBILE_ARMOR_IDS.has(o.id)),
+    ...allyEx.filter(o => SHIP_IDS.has(o.id) || MOBILE_ARMOR_IDS.has(o.id)),
   ].map(o => ({
     kind: o.id,
-    team: shipById(o.id).faction,
+    team: (shipById(o.id) || mobileArmorById(o.id)).faction,
     pos: o.pos ? {
       x: o.pos.x + ((o.formationIndex % 3) - 1) * (custom.env === 'space' ? 130 : 90),
       z: o.pos.z + Math.floor(o.formationIndex / 3) * (custom.env === 'space' ? 110 : 80),
