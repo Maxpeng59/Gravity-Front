@@ -870,7 +870,7 @@ export function startBattle(renderer, opts, onEnd){
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
       wi: 0, clip: suit.weapons[0].clip, reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
       beamCharging: false, beamCharge: 0, beamChargeDraw: 0,
-      chargedBeamBursts: 0, lastBeamChargeDraw: 0, lastBeamHits: 0,
+      chargedBeamBursts: 0, lastBeamChargeDraw: 0, lastBeamHits: 0, lastBeamPellets: 0,
       muzzleCursors: [],
       swingT: 0, swingDir: 1, swingKind: 'diagonal', swingDuration: 0.4,
       meleeCombo: 0, meleeHits: 0, slashCounts: {}, pendingMelee: null,
@@ -2606,6 +2606,7 @@ export function startBattle(renderer, opts, onEnd){
       position: projectile.pos.toArray(),
       velocity: projectile.vel.toArray(),
       life: projectile.life,
+      chargeDraw: projectile.chargeDraw || 0,
     })) pvpShotsSent++;
   }
   function sendPvpChargedBeam(m, start, end, draw, width, life){
@@ -3183,7 +3184,66 @@ export function startBattle(renderer, opts, onEnd){
     return true;
   }
 
+  function finishPlayerBeamDischarge(w, draw, chargeFraction, hitCount = 0, pelletCount = 1){
+    player.clip = Math.max(0, player.clip - draw);
+    player.fireT = Math.max(1 / w.rof, 0.198 + chargeFraction * 0.27);
+    if (player.clip <= 0) player.reloadT = w.reload;
+    player.shotsFired = (player.shotsFired || 0) + 1;
+    player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.145 + chargeFraction * 0.375);
+    player.chargedBeamBursts = (player.chargedBeamBursts || 0) + 1;
+    player.lastBeamChargeDraw = draw;
+    player.lastBeamHits = hitCount;
+    player.lastBeamPellets = pelletCount;
+    applyPlayerWeaponRecoil(w);
+    camShake = Math.min(1.25, camShake + 0.059 + chargeFraction * 0.135);
+    sfx('beam', 0.208 + chargeFraction * 0.12);
+    return true;
+  }
+
+  function firePlayerChargedScatter(w, draw, aimPoint){
+    syncMuzzlePose(player, null, aimPoint);
+    const muzzleNode = activeMuzzleNode(player, true);
+    const muzzle = muzzleNode
+      ? muzzleNode.getWorldPosition(new THREE.Vector3())
+      : approximateMuzzle(player, w);
+    player.lastMuzzleWorld = muzzle.clone();
+    const base = aimPoint.clone().sub(muzzle).normalize();
+    const chargeFraction = beamChargeFraction(w, draw);
+    const ballistic = ballisticProfile(w);
+    const speedFrac = clamp(Math.hypot(player.vel.x, player.vel.z) / Math.max(20, player.suit.walk * 2.2), 0, 1);
+    const bloom = spreadBloom({ heat: player.fireHeat || 0, speedFrac, boosting: !!player.boosting, beam: true });
+    const spread = w.spread * kneelSpreadMultiplier(player.kneelBlend) * bloom
+      * (sniperMode ? weaponAimCoefficient(w, sniperSteady) : 1);
+    const pelletCount = Math.max(1, Math.trunc(w.pellets || 1));
+    const pelletDamage = beamChargeDamage(w, draw);
+    const speed = w.speed * (1 + chargeFraction * 0.35);
+    const life = (w.life || 4) * (1 + chargeFraction * 0.25);
+    fx.muzzleFlash(muzzle, base, 'beam', player.suit.faction, (player.suit.scale || 1) * (1.2 + chargeFraction * 0.55));
+    for (let s = 0; s < pelletCount; s++){
+      const d = base.clone();
+      d.x += (rng.next() - 0.5) * 2 * spread;
+      d.y += (rng.next() - 0.5) * 2 * spread;
+      d.z += (rng.next() - 0.5) * 2 * spread;
+      d.normalize();
+      const mesh = projectileMesh('beam', player.suit.faction);
+      mesh.position.copy(muzzle);
+      mesh.quaternion.setFromUnitVectors(FWD, d);
+      scene.add(mesh);
+      const projectile = {
+        pos: muzzle.clone(), vel: d.multiplyScalar(speed), dmg: pelletDamage, splash: 0,
+        team: player.team, owner: player, weaponName: w.name, life, mesh,
+        ballistic, muzzleSpeed: speed, traveled: 0, heavy: false, collisionRadius: 0,
+        chargeDraw: draw, chargedScatter: true,
+      };
+      projectiles.push(projectile);
+      sendPvpShot(player, projectile, 'direct');
+    }
+    player.roundCount = (player.roundCount || 0) + pelletCount;
+    return finishPlayerBeamDischarge(w, draw, chargeFraction, 0, pelletCount);
+  }
+
   function firePlayerChargedBeam(w, draw, aimPoint){
+    if (w.pellets) return firePlayerChargedScatter(w, draw, aimPoint);
     syncMuzzlePose(player, null, aimPoint);
     const muzzleNode = activeMuzzleNode(player, true);
     const muzzle = muzzleNode
@@ -3232,18 +3292,7 @@ export function startBattle(renderer, opts, onEnd){
     fx.chargedBeamLine(muzzle, end, player.suit.faction, width, lineLife);
     sendPvpChargedBeam(player, muzzle, end, draw, width, lineLife);
     fx.muzzleFlash(muzzle, dir, 'beam', player.suit.faction, (player.suit.scale || 1) * (1 + chargeFraction * 0.88));
-    player.clip = Math.max(0, player.clip - draw);
-    player.fireT = Math.max(1 / w.rof, 0.198 + chargeFraction * 0.27);
-    if (player.clip <= 0) player.reloadT = w.reload;
-    player.shotsFired = (player.shotsFired || 0) + 1;
-    player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.145 + chargeFraction * 0.375);
-    player.chargedBeamBursts = (player.chargedBeamBursts || 0) + 1;
-    player.lastBeamChargeDraw = draw;
-    player.lastBeamHits = hitCount;
-    applyPlayerWeaponRecoil(w);
-    camShake = Math.min(1.25, camShake + 0.059 + chargeFraction * 0.135);
-    sfx('beam', 0.208 + chargeFraction * 0.12);
-    return true;
+    return finishPlayerBeamDischarge(w, draw, chargeFraction, hitCount, 1);
   }
 
   function releasePlayerBeamCharge(){
@@ -6814,7 +6863,8 @@ export function startBattle(renderer, opts, onEnd){
             fx.spark(p.pos, false);
             if (p.owner?.isPlayer || hitTarget.isPlayer) sfx('hit', 0.08);
           }
-          damage(hitTarget, p.dmg * impact.mult, p.pos, p.owner, false, p.weaponName);
+          damage(hitTarget, p.dmg * impact.mult, p.pos, p.owner, false, p.weaponName, p.chargeDraw || 0);
+          if (p.chargedScatter && p.owner === player) player.lastBeamHits = (player.lastBeamHits || 0) + 1;
         } else if (!p.networkGhost && hitKind === 'prop' && hitTarget.team !== p.team){
           const falloff = p.ballistic?.kind === 'beam'
             ? impactMultiplier({ profile: p.ballistic, distance: (p.traveled || 0) + bestT, air: PHYS.air }).mult : 1;
@@ -9024,6 +9074,7 @@ export function startBattle(renderer, opts, onEnd){
       if (player.wi !== beamIndex) switchWeapon(beamIndex);
       player.reloadT = 0; player.fireT = 0; player.clip = player.suit.weapons[beamIndex].clip;
       const before = player.clip;
+      const projectilesBefore = projectiles.length;
       mouseDown = true;
       beginPlayerBeamCharge();
       updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
@@ -9040,6 +9091,8 @@ export function startBattle(renderer, opts, onEnd){
         energyAfter: player.clip,
         batteryAfterPercent: beamBatteryPercent(player.suit.weapons[beamIndex], player.clip),
         chargedBeamBursts: player.chargedBeamBursts || 0,
+        pelletCount: player.lastBeamPellets || 0,
+        projectilesCreated: projectiles.length - projectilesBefore,
         lastBeamHits: player.lastBeamHits || 0,
       };
     },
@@ -9234,6 +9287,7 @@ export function startBattle(renderer, opts, onEnd){
         beamChargeDraw: +(player.beamChargeDraw || 0).toFixed(4),
         chargedBeamBursts: player.chargedBeamBursts || 0,
         lastBeamChargeDraw: +(player.lastBeamChargeDraw || 0).toFixed(4),
+        lastBeamPellets: player.lastBeamPellets || 0,
         lastBeamHits: player.lastBeamHits || 0,
         missileBarrage: player.missileBarrage ? {
           weaponIndex: player.missileBarrage.weaponIndex,

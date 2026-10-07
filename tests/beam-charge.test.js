@@ -43,6 +43,16 @@ test('a full battery discharge reaches exactly twenty times normal beam damage',
   assert.ok(multiplier(8.5) > 1 && multiplier(8.5) < 20);
 });
 
+test('the GM charged beam spray remains six separate shotgun pellets', () => {
+  const gm = SUITS.find(suit => suit.id === 'gm');
+  const spray = gm.weapons.find(weapon => /BEAM SPRAY GUN/.test(weapon.name));
+  assert.equal(spray.pellets, 6);
+  assert.match(battle, /if \(w\.pellets\) return firePlayerChargedScatter\(w, draw, aimPoint\)/);
+  assert.match(battle, /const pelletCount = Math\.max\(1, Math\.trunc\(w\.pellets \|\| 1\)\)/);
+  assert.match(battle, /for \(let s = 0; s < pelletCount; s\+\+\)[\s\S]*projectileMesh\('beam', player\.suit\.faction\)[\s\S]*projectiles\.push\(projectile\)/);
+  assert.match(battle, /chargeDraw: draw, chargedScatter: true/);
+});
+
 test('every true beam firearm can charge while the physical heat rod remains immediate-fire', () => {
   const beamWeapons = SUITS.flatMap(suit => suit.weapons).filter(weapon => weapon.type === 'beam');
   assert.ok(beamWeapons.length > 0);
