@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=64beamcharge1';
+import { startBattle } from './battle.js?v=65beampercent1';
 import { buildMech } from './mecha.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -429,7 +429,7 @@ function runBattle(opts, after){
       document.documentElement.dataset.gravityShipCombat = JSON.stringify(battleHandle?._debugShipCombat?.() || null);
     };
     qaBeamCharge.onclick = () => {
-      document.documentElement.dataset.gravityBeamCharge = JSON.stringify(battleHandle?._debugBeamCharge?.(1.12) || null);
+      document.documentElement.dataset.gravityBeamCharge = JSON.stringify(battleHandle?._debugBeamCharge?.(1.13) || null);
     };
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);

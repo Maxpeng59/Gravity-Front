@@ -869,8 +869,8 @@ export function startBattle(renderer, opts, onEnd){
       colonyFlightCapable,
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
       wi: 0, clip: suit.weapons[0].clip, reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
-      beamCharging: false, beamCharge: 0, beamChargeCells: 0,
-      chargedBeamBursts: 0, lastBeamChargeCells: 0, lastBeamHits: 0,
+      beamCharging: false, beamCharge: 0, beamChargeDraw: 0,
+      chargedBeamBursts: 0, lastBeamChargeDraw: 0, lastBeamHits: 0,
       muzzleCursors: [],
       swingT: 0, swingDir: 1, swingKind: 'diagonal', swingDuration: 0.4,
       meleeCombo: 0, meleeHits: 0, slashCounts: {}, pendingMelee: null,
@@ -2608,7 +2608,7 @@ export function startBattle(renderer, opts, onEnd){
       life: projectile.life,
     })) pvpShotsSent++;
   }
-  function sendPvpChargedBeam(m, start, end, cells, width, life){
+  function sendPvpChargedBeam(m, start, end, draw, width, life){
     if (!PVP || m !== player) return;
     if (pvpSend({
       type: 'shot',
@@ -2616,7 +2616,8 @@ export function startBattle(renderer, opts, onEnd){
       weaponIndex: m.wi,
       position: start.toArray(),
       end: end.toArray(),
-      chargeCells: cells,
+      chargeDraw: draw,
+      batteryPercent: beamBatteryPercent(m.suit.weapons[m.wi], draw),
       width,
       life,
     })) pvpShotsSent++;
@@ -3130,12 +3131,26 @@ export function startBattle(renderer, opts, onEnd){
     sfx(w.type, vol);
   }
 
-  const BEAM_CHARGE_SECONDS_PER_CELL = 0.16;
+  const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0.16;
+  const BEAM_DAMAGE_EXPONENT = Math.log(4);
+
+  function beamBatteryPercent(w, draw){
+    return clamp((Number(draw) || 0) / Math.max(1, w?.clip || 1) * 100, 0, 100);
+  }
+
+  function beamChargeFraction(w, draw){
+    return clamp(((Number(draw) || 0) - 1) / Math.max(1, (w?.clip || 1) - 1), 0, 1);
+  }
+
+  function beamChargeDamage(w, draw){
+    return w.dmg * Math.min(1, Math.max(0, Number(draw) || 0))
+      * Math.exp(BEAM_DAMAGE_EXPONENT * beamChargeFraction(w, draw));
+  }
 
   function cancelPlayerBeamCharge(){
     player.beamCharging = false;
     player.beamCharge = 0;
-    player.beamChargeCells = 0;
+    player.beamChargeDraw = 0;
   }
 
   function beginPlayerBeamCharge(){
@@ -3148,7 +3163,7 @@ export function startBattle(renderer, opts, onEnd){
     if (!player.beamCharging){
       player.beamCharging = true;
       player.beamCharge = 0;
-      player.beamChargeCells = 1;
+      player.beamChargeDraw = Math.min(1, player.clip);
       setMsg('BEAM CAPACITOR CHARGING — RELEASE LMB TO FIRE', 1.4);
     }
     return true;
@@ -3163,12 +3178,12 @@ export function startBattle(renderer, opts, onEnd){
     if (!mouseDown || player.reloadT > 0) return true;
     if (!player.beamCharging && !beginPlayerBeamCharge()) return true;
     player.beamCharge += dt;
-    player.beamChargeCells = Math.min(player.clip,
-      1 + Math.floor(player.beamCharge / BEAM_CHARGE_SECONDS_PER_CELL));
+    player.beamChargeDraw = Math.min(player.clip,
+      1 + player.beamCharge / BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT);
     return true;
   }
 
-  function firePlayerChargedBeam(w, cells, aimPoint){
+  function firePlayerChargedBeam(w, draw, aimPoint){
     syncMuzzlePose(player, null, aimPoint);
     const muzzleNode = activeMuzzleNode(player, true);
     const muzzle = muzzleNode
@@ -3177,7 +3192,8 @@ export function startBattle(renderer, opts, onEnd){
     player.lastMuzzleWorld = muzzle.clone();
     const dir = aimPoint.clone().sub(muzzle).normalize();
     const baseRange = Math.max(620, (w.pref || 520) * 1.55);
-    const range = clamp(baseRange * (1 + Math.min(0.48, (cells - 1) * 0.038)), 620, 2400);
+    const chargeFraction = beamChargeFraction(w, draw);
+    const range = clamp(baseRange * (1 + chargeFraction * 0.57), 620, 2400);
     let hardStop = range;
     if (rayTerrainHit(muzzle, dir, hardStop, TERRAIN_HIT, 0.5, 8)) hardStop = TERRAIN_HIT.t;
     const hits = [];
@@ -3196,37 +3212,37 @@ export function startBattle(renderer, opts, onEnd){
       hits.push({ target, kind: 'prop', t: COLLIDER_HIT.t, hard: !!(target.scenery || target.isShip) });
     }
     hits.sort((a, b) => a.t - b.t);
-    const maxHits = Math.min(4, 1 + Math.floor((cells - 1) / 5));
-    const chargeDamage = w.dmg * (1 + 0.32 * Math.pow(Math.max(0, cells - 1), 0.72));
+    const maxHits = Math.min(4, 1 + Math.floor(chargeFraction * 3.99));
+    const chargeDamage = beamChargeDamage(w, draw);
     let hitCount = 0;
     for (const hit of hits){
       if (hit.t > hardStop || hitCount >= maxHits) break;
       const point = muzzle.clone().addScaledVector(dir, hit.t);
       const falloff = impactMultiplier({ profile: ballisticProfile(w), distance: hit.t, air: PHYS.air }).mult;
       const dealt = chargeDamage * Math.pow(0.78, hitCount) * falloff;
-      if (hit.kind === 'mech') damage(hit.target, dealt, point, player, false, w.name, cells);
+      if (hit.kind === 'mech') damage(hit.target, dealt, point, player, false, w.name, draw);
       else damageProp(hit.target, dealt, point, player, `${w.name} CHARGED BEAM`);
       fx.spark(point, true);
       hitCount++;
       if (hit.hard){ hardStop = Math.min(hardStop, hit.t); break; }
     }
     const end = muzzle.clone().addScaledVector(dir, hardStop);
-    const width = 0.78 + Math.sqrt(cells) * 0.34;
-    const lineLife = 0.16 + cells * 0.025;
+    const width = 1.12 + chargeFraction * 1.02;
+    const lineLife = 0.185 + chargeFraction * 0.375;
     fx.chargedBeamLine(muzzle, end, player.suit.faction, width, lineLife);
-    sendPvpChargedBeam(player, muzzle, end, cells, width, lineLife);
-    fx.muzzleFlash(muzzle, dir, 'beam', player.suit.faction, (player.suit.scale || 1) * (1 + cells * 0.055));
-    player.clip = Math.max(0, player.clip - cells);
-    player.fireT = Math.max(1 / w.rof, 0.18 + cells * 0.018);
+    sendPvpChargedBeam(player, muzzle, end, draw, width, lineLife);
+    fx.muzzleFlash(muzzle, dir, 'beam', player.suit.faction, (player.suit.scale || 1) * (1 + chargeFraction * 0.88));
+    player.clip = Math.max(0, player.clip - draw);
+    player.fireT = Math.max(1 / w.rof, 0.198 + chargeFraction * 0.27);
     if (player.clip <= 0) player.reloadT = w.reload;
     player.shotsFired = (player.shotsFired || 0) + 1;
-    player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.12 + cells * 0.025);
+    player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.145 + chargeFraction * 0.375);
     player.chargedBeamBursts = (player.chargedBeamBursts || 0) + 1;
-    player.lastBeamChargeCells = cells;
+    player.lastBeamChargeDraw = draw;
     player.lastBeamHits = hitCount;
     applyPlayerWeaponRecoil(w);
-    camShake = Math.min(1.25, camShake + 0.05 + cells * 0.009);
-    sfx('beam', 0.2 + Math.min(0.18, cells * 0.008));
+    camShake = Math.min(1.25, camShake + 0.059 + chargeFraction * 0.135);
+    sfx('beam', 0.208 + chargeFraction * 0.12);
     return true;
   }
 
@@ -3236,10 +3252,11 @@ export function startBattle(renderer, opts, onEnd){
       cancelPlayerBeamCharge();
       return false;
     }
-    const cells = clamp(player.beamChargeCells || 1, 1, player.clip);
+    const minimumDraw = Math.min(1, player.clip);
+    const draw = clamp(player.beamChargeDraw || minimumDraw, minimumDraw, player.clip);
     cancelPlayerBeamCharge();
-    if (player.reloadT > 0 || player.fireT > 0 || cells <= 0) return false;
-    return firePlayerChargedBeam(w, cells, playerAimPoint(w));
+    if (player.reloadT > 0 || player.fireT > 0 || draw <= 0) return false;
+    return firePlayerChargedBeam(w, draw, playerAimPoint(w));
   }
 
   // Launch either a guided weapon at a target or an unguided missile toward an
@@ -3432,7 +3449,7 @@ export function startBattle(renderer, opts, onEnd){
     killSoldiersNear(pos, r * 1.8);
   }
 
-  function damage(m, dmg, hitPoint, attacker, melee, weaponName = null, chargeCells = 0){
+  function damage(m, dmg, hitPoint, attacker, melee, weaponName = null, chargeDraw = 0){
     if (!m.alive) return;
     // The pilot is aboard the commanded hull. Ship HP is the active health pool
     // until helm control is released, so the hidden mobile suit cannot be hit.
@@ -3449,7 +3466,7 @@ export function startBattle(renderer, opts, onEnd){
         hitPoint: point.toArray(),
         melee: !!melee,
         weapon: weaponNoticeName(attacker, melee, weaponName),
-        chargeCells: Math.max(0, Math.trunc(Number(chargeCells) || 0)),
+        chargeDraw: Math.max(0, Number(chargeDraw) || 0),
       })) pvpHitsSent++;
       return;
     }
@@ -3558,11 +3575,12 @@ export function startBattle(renderer, opts, onEnd){
       if (!end) return;
       const delta = end.clone().sub(position);
       if (delta.lengthSq() < 1 || delta.length() > 2600) return;
-      const cells = clamp(Math.trunc(Number(message.chargeCells) || 1), 1, Math.max(1, w.clip));
-      const width = clamp(Number(message.width) || (0.78 + Math.sqrt(cells) * 0.34), 0.5, 3);
-      const life = clamp(Number(message.life) || (0.16 + cells * 0.025), 0.1, 0.8);
+      const draw = clamp(Number(message.chargeDraw ?? message.chargeCells) || 1, 0.01, Math.max(1, w.clip));
+      const chargeFraction = beamChargeFraction(w, draw);
+      const width = clamp(Number(message.width) || (1.12 + chargeFraction * 1.02), 0.5, 3);
+      const life = clamp(Number(message.life) || (0.185 + chargeFraction * 0.375), 0.1, 0.8);
       fx.chargedBeamLine(position, end, m.suit.faction, width, life);
-      fx.muzzleFlash(position, delta.normalize(), 'beam', m.suit.faction, (m.suit.scale || 1) * (1 + cells * 0.055));
+      fx.muzzleFlash(position, delta.normalize(), 'beam', m.suit.faction, (m.suit.scale || 1) * (1 + chargeFraction * 0.88));
       m.lastMuzzleWorld = position.clone();
       m.shotsFired = (m.shotsFired || 0) + 1;
       pvpShotsReceived++;
@@ -3627,9 +3645,9 @@ export function startBattle(renderer, opts, onEnd){
     } else {
       const weapon = networkRemote.suit.weapons.find(candidate => candidate.name === weaponName);
       if (!weapon || !(weapon.dmg > 0)) return;
-      const chargeCells = clamp(Math.trunc(Number(message.chargeCells) || 0), 0, Math.max(1, weapon.clip));
-      cap = chargeCells > 0 && isChargeableBeam(weapon)
-        ? weapon.dmg * (1 + 0.32 * Math.pow(Math.max(0, chargeCells - 1), 0.72)) * 1.01
+      const chargeDraw = clamp(Number(message.chargeDraw ?? message.chargeCells) || 0, 0, Math.max(1, weapon.clip));
+      cap = chargeDraw > 0 && isChargeableBeam(weapon)
+        ? beamChargeDamage(weapon, chargeDraw) * 1.01
         : weapon.dmg * 1.01;
     }
     const bounded = Math.min(requested, cap);
@@ -5901,9 +5919,9 @@ export function startBattle(renderer, opts, onEnd){
   function drawBeamChargeMeter(w){
     if (!isChargeableBeam(w)) return;
     const cx = innerWidth * 0.5, cy = innerHeight * 0.5;
-    const cells = Math.max(1, player.beamChargeCells || 1);
-    const available = Math.max(1, player.clip);
-    const fraction = clamp(cells / available, 0, 1);
+    const draw = Math.max(0, player.beamChargeDraw || 0);
+    const percent = beamBatteryPercent(w, draw);
+    const fraction = percent / 100;
     const radius = 33;
     loCtx.save();
     loCtx.strokeStyle = player.suit.faction === 'ZEON' ? '#ffbd4a' : '#ff72cf';
@@ -5914,7 +5932,7 @@ export function startBattle(renderer, opts, onEnd){
     loCtx.arc(cx, cy, radius, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * fraction);
     loCtx.stroke();
     loCtx.font = 'bold 11px monospace'; loCtx.textAlign = 'center';
-    loCtx.fillText(`CHARGE ${cells} ENERGY · RELEASE LMB`, cx, cy + radius + 22);
+    loCtx.fillText(`CHARGE ${percent.toFixed(1)}% · RELEASE LMB`, cx, cy + radius + 22);
     loCtx.restore();
   }
   function drawSniperScope(){
@@ -7833,14 +7851,16 @@ export function startBattle(renderer, opts, onEnd){
     } else if (player.reloadT > 0){
       wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s</span>`;
     } else if (player.beamCharging){
-      wHtml = `${w.name} <span class="ammo" style="color:var(--acc)">CHARGING ${player.beamChargeCells} ENERGY · RELEASE LMB</span>`;
+      const chargePercent = beamBatteryPercent(w, player.beamChargeDraw);
+      const batteryPercent = beamBatteryPercent(w, player.clip);
+      wHtml = `${w.name} <span class="ammo" style="color:var(--acc)">CHARGING ${chargePercent.toFixed(1)}% · BATTERY ${batteryPercent.toFixed(1)}% · RELEASE LMB</span>`;
     } else if (w.type === 'lockmissile' && !w.freeAim){
       const st = (player.lockedFlash || 0) > 0 ? 'LOCK ✓ — FOX'
         : player.lockTarget ? `LOCKING ${Math.round(clamp((player.lockT || 0) / w.lockTime, 0, 1) * 100)}%`
         : `${player.clip} / ${w.clip} · AUTO-LOCK`;
       wHtml = `${w.name} <span class="ammo">${st}</span>`;
     } else if (isChargeableBeam(w)){
-      wHtml = `${w.name} <span class="ammo">${player.clip} / ${w.clip} ENERGY · HOLD LMB</span>`;
+      wHtml = `${w.name} <span class="ammo">BATTERY ${beamBatteryPercent(w, player.clip).toFixed(1)}% · HOLD LMB</span>`;
     } else {
       wHtml = `${w.name} <span class="ammo">${player.clip} / ${w.clip}</span>`;
     }
@@ -9007,15 +9027,18 @@ export function startBattle(renderer, opts, onEnd){
       mouseDown = true;
       beginPlayerBeamCharge();
       updatePlayerBeamCharge(Math.max(0, Number(seconds) || 0));
-      const selectedCells = player.beamChargeCells;
+      const selectedDraw = player.beamChargeDraw;
+      const chargePercent = beamBatteryPercent(player.suit.weapons[beamIndex], selectedDraw);
       const fired = releasePlayerBeamCharge();
       mouseDown = false;
       return {
         fired,
         weapon: player.suit.weapons[beamIndex].name,
-        selectedCells,
+        selectedDraw,
+        chargePercent,
         energyBefore: before,
         energyAfter: player.clip,
+        batteryAfterPercent: beamBatteryPercent(player.suit.weapons[beamIndex], player.clip),
         chargedBeamBursts: player.chargedBeamBursts || 0,
         lastBeamHits: player.lastBeamHits || 0,
       };
@@ -9208,9 +9231,9 @@ export function startBattle(renderer, opts, onEnd){
         pClip: player.clip, pShotsFired: player.shotsFired || 0,
         beamCharging: !!player.beamCharging,
         beamCharge: +(player.beamCharge || 0).toFixed(3),
-        beamChargeCells: player.beamChargeCells || 0,
+        beamChargeDraw: +(player.beamChargeDraw || 0).toFixed(4),
         chargedBeamBursts: player.chargedBeamBursts || 0,
-        lastBeamChargeCells: player.lastBeamChargeCells || 0,
+        lastBeamChargeDraw: +(player.lastBeamChargeDraw || 0).toFixed(4),
         lastBeamHits: player.lastBeamHits || 0,
         missileBarrage: player.missileBarrage ? {
           weaponIndex: player.missileBarrage.weaponIndex,
