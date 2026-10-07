@@ -16,7 +16,7 @@ test('player beam guns charge while held and discharge when LMB is released', ()
 });
 
 test('charged beams consume the selected battery draw and scale power and line length', () => {
-  assert.match(battle, /player\.clip = Math\.max\(0, player\.clip - draw\)/);
+  assert.match(battle, /spendActiveAmmo\(player, draw\)/);
   assert.match(battle, /return w\.dmg \* Math\.min\(1, Math\.max\(0, Number\(draw\) \|\| 0\)\)[\s\S]*\* Math\.exp\(BEAM_DAMAGE_EXPONENT \* beamChargeFraction\(w, draw\)\)/);
   assert.doesNotMatch(battle, /const maxHits =/);
   assert.match(battle, /for \(const hit of hits\)\{[\s\S]*if \(hit\.t > hardStop\) break/);
@@ -45,7 +45,7 @@ test('concentrated beam collisions create explosions on targets and terminal sur
 
 test('sixteen normal beam shots equal a continuously drainable 100-percent battery', () => {
   assert.match(battle, /return clamp\(\(Number\(draw\) \|\| 0\) \/ Math\.max\(1, w\?\.clip \|\| 1\) \* 100, 0, 100\)/);
-  assert.match(battle, /BATTERY \$\{beamBatteryPercent\(w, player\.clip\)\.toFixed\(1\)\}% · HOLD LMB/);
+  assert.match(battle, /BATTERY \$\{beamBatteryPercent\(w, player\.clip\)\.toFixed\(1\)\}%[\s\S]*HOLD LMB/);
   assert.match(battle, /CHARGING \$\{chargePercent\.toFixed\(1\)\}%/);
 });
 

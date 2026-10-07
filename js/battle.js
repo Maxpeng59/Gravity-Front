@@ -33,6 +33,9 @@ import {
 } from './ballistics.js';
 import { createAnimeFx } from './anime-fx.js';
 import {
+  allRangedAmmoSpent, createAmmoSupply, weaponAmmoRemaining,
+} from './ammo-supply.js';
+import {
   OBJECTIVE_TUNING, advanceHold, evaluateSecondaries, isStagedMission, missionStages, stageLabel,
 } from './mission-objectives.js';
 import {
@@ -855,6 +858,7 @@ export function startBattle(renderer, opts, onEnd){
     if (air) root.position.y = (SPACE ? pos.y : groundY(pos.x, pos.z)) + rng.range(95, 175); // fighters cruise at altitude
     const maxHp = suit.hp * (ace ? 1.2 : 1);
     const maxFuel = suit.boostFuel * (suit.faction === 'FED' ? 2 : 1); // Federation suits carry double thruster reserve
+    const ammoSupply = createAmmoSupply(suit);
     const hasShield = !air && SHIELDED_IDS.has(suit.id);
     const shieldCap = hasShield ? clamp(Math.round(maxHp * 0.45), 1200, 2600) : 0;
     const colonyFlightCapable = COLONY && !isPlayer && !isNetworkRemote && !air
@@ -873,7 +877,9 @@ export function startBattle(renderer, opts, onEnd){
       flightRoll: 0, colonyFreeFlight: false, colonyFlightLaunching: false,
       colonyFlightCapable,
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
-      wi: 0, clip: suit.weapons[0].clip, reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
+      wi: 0, clip: ammoSupply.clips[0], weaponClips: ammoSupply.clips,
+      ammoReserves: ammoSupply.reserves, ammoLimited: ammoSupply.limited,
+      reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
       beamCharging: false, beamCharge: 0, beamChargeDraw: 0,
       chargedBeamBursts: 0, lastBeamChargeDraw: 0, lastBeamHits: 0, lastBeamPellets: 0,
       muzzleCursors: [],
@@ -3030,20 +3036,83 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  function storeActiveClip(m){
+    if (m.wi >= 0 && m.wi < m.suit.weapons.length && m.weaponClips)
+      m.weaponClips[m.wi] = Math.max(0, m.clip);
+  }
+
+  function setActiveClip(m, value){
+    m.clip = Math.max(0, Number(value) || 0);
+    storeActiveClip(m);
+  }
+
+  function activeReserve(m){
+    if (!m.ammoLimited) return Infinity;
+    return Math.max(0, Number(m.ammoReserves?.[m.wi]) || 0);
+  }
+
+  function beginReload(m, duration = null){
+    const w = m.suit.weapons[m.wi];
+    if (!w || m.wi >= m.suit.weapons.length || m.reloadT > 0 || m.clip >= w.clip) return false;
+    if (m.ammoLimited && activeReserve(m) <= 0){
+      if (m.isPlayer) setMsg(allRangedAmmoSpent(m) ? 'RANGED AMMO EMPTY — MELEE ONLY' : `${w.name} EMPTY — SWITCH WEAPON`, 2.2);
+      return false;
+    }
+    m.reloadT = duration ?? w.reload;
+    return true;
+  }
+
+  function completeReload(m){
+    const wi = m.wi;
+    const w = m.suit.weapons[wi];
+    if (!w || wi >= m.suit.weapons.length) return false;
+    if (!m.ammoLimited){ setActiveClip(m, w.clip); return true; }
+    const reserve = Math.max(0, Number(m.ammoReserves[wi]) || 0);
+    const needed = Math.max(0, w.clip - m.clip);
+    const transfer = Math.min(needed, reserve);
+    m.ammoReserves[wi] = reserve - transfer;
+    setActiveClip(m, m.clip + transfer);
+    return transfer > 0;
+  }
+
+  function updateReload(m, dt){
+    if (m.reloadT <= 0) return;
+    m.reloadT -= dt;
+    if (m.reloadT <= 0){
+      m.reloadT = 0;
+      completeReload(m);
+    }
+  }
+
+  function spendActiveAmmo(m, amount = 1){
+    setActiveClip(m, m.clip - Math.max(0, Number(amount) || 0));
+    if (m.clip <= 0) beginReload(m);
+  }
+
+  function enforcePlayerMeleeOnly(){
+    if (allRangedAmmoSpent(player) && hasSaber){
+      if (player.wi !== SABER_SLOT){
+        switchWeapon(SABER_SLOT);
+        setMsg('RANGED AMMO EMPTY — MELEE ONLY', 3);
+      }
+      return true;
+    }
+    return false;
+  }
+
   function fire(m, dir, aimPoint){
     const w = m.suit.weapons[m.wi];
     if (w.type === 'lockmissile'){
       // Free-aim racks fire immediately along the crosshair without acquiring
       // or tracking a target. Other missile weapons retain their lock sequence.
       if (m.fireT > 0 || m.reloadT > 0) return;
-      if (m.clip <= 0){ m.reloadT = w.reload; return; }
+      if (m.clip <= 0){ beginReload(m); return; }
       if (m.isPlayer && w.freeAim){
         const manualAim = aimPoint || playerAimPoint(w);
         if (w.barrage) startMissileBarrage(m, null, manualAim);
         else {
           launchMissile(m, null, { aimPoint: manualAim });
-          m.clip--; m.fireT = 1 / w.rof;
-          if (m.clip <= 0) m.reloadT = w.reload;
+          spendActiveAmmo(m); m.fireT = 1 / w.rof;
           m.shotsFired = (m.shotsFired || 0) + 1;
         }
         return;
@@ -3054,8 +3123,7 @@ export function startBattle(renderer, opts, onEnd){
         startMissileBarrage(m, tgt);
         return;
       }
-      m.clip--; m.fireT = 1 / w.rof;
-      if (m.clip <= 0) m.reloadT = w.reload;
+      spendActiveAmmo(m); m.fireT = 1 / w.rof;
       launchMissile(m, tgt);
       m.shotsFired = (m.shotsFired || 0) + 1;
       return;
@@ -3063,9 +3131,8 @@ export function startBattle(renderer, opts, onEnd){
     if (w.type === 'bomb'){
       // a stick of bombs released in one pull — they fall under gravity and burst on impact
       if (m.fireT > 0 || m.reloadT > 0) return;
-      if (m.clip <= 0){ m.reloadT = w.reload; return; }
-      m.clip--; m.fireT = 1 / w.rof;
-      if (m.clip <= 0) m.reloadT = w.reload;
+      if (m.clip <= 0){ beginReload(m); return; }
+      spendActiveAmmo(m); m.fireT = 1 / w.rof;
       dropBombs(m, w);
       m.shotsFired = (m.shotsFired || 0) + 1;
       return;
@@ -3073,20 +3140,18 @@ export function startBattle(renderer, opts, onEnd){
     if (w.arc){
       // artillery bombardment: the cannon swings up over the back and LOBS a shell on a high ballistic arc
       if (m.fireT > 0 || m.reloadT > 0) return;
-      if (m.clip <= 0){ m.reloadT = w.reload; return; }
+      if (m.clip <= 0){ beginReload(m); return; }
       let impact = aimPoint;
       if (!impact && m.ai && m.ai.target && m.ai.target.alive){ impact = m.ai.target.root.position.clone(); impact.y += aimHeight(m.ai.target); }
       if (!impact) return;
-      m.clip--; m.fireT = 1 / w.rof;
-      if (m.clip <= 0) m.reloadT = w.reload;
+      spendActiveAmmo(m); m.fireT = 1 / w.rof;
       lobShell(m, w, impact);
       m.shotsFired = (m.shotsFired || 0) + 1;
       return;
     }
     if (m.fireT > 0 || m.reloadT > 0) return;
-    if (m.clip <= 0){ m.reloadT = w.reload; return; }
-    m.clip--; m.fireT = 1 / w.rof;
-    if (m.clip <= 0) m.reloadT = w.reload;
+    if (m.clip <= 0){ beginReload(m); return; }
+    spendActiveAmmo(m); m.fireT = 1 / w.rof;
     m.shotsFired = (m.shotsFired || 0) + 1;
     // head-mounted weapons (vulcans) fire from the eye sensor; multi-barrel mounts alternate L/R muzzles;
     // others fire from the gun barrel. far-LOD mechs have no detailed parts → approximate barrel offset
@@ -3183,7 +3248,7 @@ export function startBattle(renderer, opts, onEnd){
     const w = selectedWeapon();
     if (commandedShip || !player.alive || !isChargeableBeam(w) || player.reloadT > 0 || player.fireT > 0) return false;
     if (player.clip <= 0){
-      player.reloadT = w.reload;
+      beginReload(player);
       return false;
     }
     if (!player.beamCharging){
@@ -3210,9 +3275,8 @@ export function startBattle(renderer, opts, onEnd){
   }
 
   function finishPlayerBeamDischarge(w, draw, chargeFraction, hitCount = 0, pelletCount = 1){
-    player.clip = Math.max(0, player.clip - draw);
+    spendActiveAmmo(player, draw);
     player.fireT = Math.max(1 / w.rof, 0.198 + chargeFraction * 0.27);
-    if (player.clip <= 0) player.reloadT = w.reload;
     player.shotsFired = (player.shotsFired || 0) + 1;
     player.fireHeat = Math.min(1, (player.fireHeat || 0) + 0.145 + chargeFraction * 0.375);
     player.chargedBeamBursts = (player.chargedBeamBursts || 0) + 1;
@@ -3385,9 +3449,9 @@ export function startBattle(renderer, opts, onEnd){
     const weaponIndex = m.wi, w = m.suit.weapons[weaponIndex];
     if (!w?.barrage || (!target?.alive && !aimPoint) || m.missileBarrage || m.clip <= 0 || m.reloadT > 0) return false;
     const count = m.clip;
-    m.clip = 0; // the trigger commits the whole rack immediately
+    setActiveClip(m, 0); // the trigger commits the whole rack immediately
     m.fireT = Math.max(1 / Math.max(0.01, w.rof || 1), count * (w.barrageCadence || 0.06));
-    m.reloadT = w.reload + count * (w.barrageCadence || 0.06);
+    beginReload(m, w.reload + count * (w.barrageCadence || 0.06));
     m.missileBarrage = {
       weaponIndex, target, aimPoint: aimPoint?.clone() || null, remaining: count, total: count, t: 0,
       cadence: w.barrageCadence || 0.06, cone: w.barrageCone || 0.014,
@@ -3635,9 +3699,10 @@ export function startBattle(renderer, opts, onEnd){
     const wi = Math.trunc(Number(index));
     if (!Number.isFinite(wi) || wi < 0 || wi >= m.suit.weapons.length) return false;
     if (m.wi !== wi){
+      storeActiveClip(m);
       m.wi = wi;
       resetMuzzleCycle(m, wi);
-      m.clip = m.suit.weapons[wi].clip;
+      m.clip = m.weaponClips?.[wi] ?? m.suit.weapons[wi].clip;
       m.reloadT = 0;
       m.parts?.rebuildGun?.(wi);
     }
@@ -4131,7 +4196,7 @@ export function startBattle(renderer, opts, onEnd){
     }
     if (k === 'r' && player.wi !== SABER_SLOT && player.clip < player.suit.weapons[player.wi].clip && player.reloadT <= 0){
       cancelPlayerBeamCharge();
-      player.reloadT = player.suit.weapons[player.wi].reload; player.clip = 0;
+      beginReload(player);
     }
     if (k === 'tab'){
       e.preventDefault();
@@ -4196,11 +4261,12 @@ export function startBattle(renderer, opts, onEnd){
   function switchWeapon(i){
     if (i === player.wi) return;
     cancelPlayerBeamCharge();
+    storeActiveClip(player);
     player.wi = i;
     resetMuzzleCycle(player, i);
     player.lockT = 0; player.lockTarget = null; // drop any pending missile lock
     player.reloadT = 0; player.fireT = 0; // a ranged reload can never complete against the saber's virtual slot
-    if (i !== SABER_SLOT){ player.clip = player.suit.weapons[i].clip; player.parts.rebuildGun?.(i); }
+    if (i !== SABER_SLOT){ player.clip = player.weaponClips[i]; player.parts.rebuildGun?.(i); }
     vgMeleeOverride = i !== SABER_SLOT && player.swingT > 0;
     buildViewGun(vgMeleeOverride);
     const nw = player.suit.weapons[i];
@@ -5012,14 +5078,18 @@ export function startBattle(renderer, opts, onEnd){
       if (!ai.target){ setKneelTarget(m, false); return; }
       // pick weapon by range
       const d = m.root.position.distanceTo(ai.target.root.position);
-      let best = 0, bestScore = 1e9;
+      let best = -1, bestScore = 1e9;
       if (!(commanderSpace && m.suit.spaceDoctrine === 'gelgoog_duelist')){
         m.suit.weapons.forEach((w, i) => {
+          if (weaponAmmoRemaining(m, i) <= 0) return;
           const s = Math.abs((w.pref || PREF_RANGE[w.type]) - d);
           if (s < bestScore){ bestScore = s; best = i; }
         });
       }
-      if (best !== m.wi){ m.wi = best; resetMuzzleCycle(m, best); m.clip = m.suit.weapons[best].clip; m.reloadT = 0; m.parts?.rebuildGun?.(best); }
+      if (best >= 0 && best !== m.wi){
+        storeActiveClip(m); m.wi = best; resetMuzzleCycle(m, best);
+        m.clip = m.weaponClips[best]; m.reloadT = 0; m.parts?.rebuildGun?.(best);
+      }
       ai.groundTactic = sampleGroundTactics(m, ai.target, m.suit.weapons[m.wi].pref || PREF_RANGE[m.suit.weapons[m.wi].type]);
     }
     const t = ai.target;
@@ -5043,24 +5113,25 @@ export function startBattle(renderer, opts, onEnd){
       ? closestColliderPoint(t, m.root.position, CLOSEST_COLLIDER_POINT) : d;
     const w = m.suit.weapons[m.wi];
     const pref = w.pref || PREF_RANGE[w.type];
+    const ammoDry = allRangedAmmoSpent(m);
     // doctrine state shared by the melee and movement blocks: wounded units break off (vips run
     // early); hold-out attackers are relentless and never disengage
     const retreatAt = m.vip ? Math.max(tune.retreatHp, 0.55) : tune.retreatHp;
     const relentless = mission.type === 'survive' && m.team === 'ZEON';
     const hurt = !m.suit.carrierSfs && !relentless && m.hp < m.maxHp * retreatAt;
     const groundTactic = ai.groundTactic || sampleGroundTactics(m, t, pref);
-    const formation = !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadFormationPoint(m, t) : null;
+    const formation = !ammoDry && !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadFormationPoint(m, t) : null;
     const formationDistance = formation
       ? Math.hypot(formation.x - m.root.position.x, formation.z - m.root.position.z) : 0;
-    const protectedAlly = fullSpaceCombat ? null : protectionAssignment(m, squad);
+    const protectedAlly = ammoDry || fullSpaceCombat ? null : protectionAssignment(m, squad);
     const protectDistance = protectedAlly ? m.root.position.distanceTo(protectedAlly.root.position) : 0;
     const guardPoint = protectedAlly ? protectionPoint(m, protectedAlly, t) : null;
-    const supportCenter = !fullSpaceCombat && ai.squadRole === 'assault' && !m.suit.carrierSfs ? squadSupportCenter(squad) : null;
+    const supportCenter = !ammoDry && !fullSpaceCombat && ai.squadRole === 'assault' && !m.suit.carrierSfs ? squadSupportCenter(squad) : null;
     const supportDistance = supportCenter
       ? Math.hypot(supportCenter.x - m.root.position.x, supportCenter.z - m.root.position.z) : 0;
-    const squadTethered = !!supportCenter && supportDistance > ASSAULT_SUPPORT_TETHER;
+    const squadTethered = !ammoDry && !!supportCenter && supportDistance > ASSAULT_SUPPORT_TETHER;
     const protectionMelee = !!protectedAlly && d <= PROTECTION_MELEE_RANGE;
-    const routePoint = !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadRoutePoint(m, t) : null;
+    const routePoint = !ammoDry && !fullSpaceCombat && !commanderSpace && !m.suit.carrierSfs ? squadRoutePoint(m, t) : null;
     ai.protectTarget = protectedAlly;
     ai.protectDistance = protectDistance;
     ai.squadTethered = squadTethered;
@@ -5069,7 +5140,7 @@ export function startBattle(renderer, opts, onEnd){
       preferredRange: pref,
       currentlyKneeling: m.kneelTarget || (m.kneelBlend || 0) > 0.5,
       eligible: kneelEligible(m) && !m.dropping && !hurt && !m.blocking && role !== 'brawler' && role !== 'skirmisher',
-      ranged: !!w && !w.arc,
+      ranged: !ammoDry && !!w && !w.arc,
       hasTarget: !!t?.alive,
       hasLineOfSight: groundTactic.lineOfSight !== false,
       repositioning: !!ai.pass || !!commanderSpace || !!groundTactic.reposition,
@@ -5078,9 +5149,9 @@ export function startBattle(renderer, opts, onEnd){
     // In a full squad the rear line owns the kneeling job. Its anchor gunner is
     // deliberately the easiest to plant, guaranteeing persistent support when
     // the geology provides a clear, stable firing shelf.
-    const supportCanPlant = kneelEligible(m) && !m.dropping && !hurt && !m.blocking
+    const supportCanPlant = !ammoDry && kneelEligible(m) && !m.dropping && !hurt && !m.blocking
       && !protectedAlly && !ai.pass && !commanderSpace && !groundTactic.reposition && formationDistance <= 80;
-    const rangedPosture = protectedAlly ? false
+    const rangedPosture = ammoDry || protectedAlly ? false
       : ai.squadRole === 'support' ? supportCanPlant && groundTactic.kneel
       : ai.squadRole === 'assault' ? false : normalRangedPosture;
     setKneelTarget(m, rangedPosture);
@@ -5088,11 +5159,11 @@ export function startBattle(renderer, opts, onEnd){
     // ----- melee charge (ground): lunge in with the blade, swing, then thrust back out -----
     m.meleeT -= dt;
     ai.meleeCd -= dt;
-    const meleeDoctrineAllows = protectionMelee
+    const meleeDoctrineAllows = ammoDry || protectionMelee
       || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee));
-    const canMelee = !fullSpaceCombat && tune.melee > 0 && meleeDoctrineAllows && !squadTethered
-      && (!protectedAlly || protectionMelee)
-      && !hurt && (m.kneelBlend || 0) <= 0.001
+    const canMelee = (ammoDry || !fullSpaceCombat && tune.melee > 0) && meleeDoctrineAllows && !squadTethered
+      && (ammoDry || !protectedAlly || protectionMelee)
+      && (ammoDry || !hurt) && (m.kneelBlend || 0) <= 0.001
       && !m.kneelTarget && m.suit.saber && m.suit.saber.dmg > 0
       && (!t.isProp || t.isShip) && !t.air && !m.dropping; // landships can be cut at the hull; aircraft remain unreachable
     if (canMelee && !ai.meleeRun && ai.meleeCd <= 0){
@@ -5100,9 +5171,9 @@ export function startBattle(renderer, opts, onEnd){
       // more often; timid roles (snipers, heavies) barely ever break formation to lunge. The roll is
       // consumed per WINDOW (a failed roll re-arms the cooldown) so tune.melee is a real appetite knob,
       // not a per-frame lottery that every role wins within a second.
-      const reach = protectionMelee ? PROTECTION_MELEE_RANGE
+      const reach = ammoDry ? 1200 : protectionMelee ? PROTECTION_MELEE_RANGE
         : ai.squadRole === 'assault' ? 520 : (tune.melee >= 1.5 || m.suit.style === 'zaku') ? 460 : 340;
-      const chance = protectionMelee ? 1
+      const chance = ammoDry || protectionMelee ? 1
         : ai.squadRole === 'assault' ? 0.82 : Math.min(0.65, 0.3 * tune.melee + (m.suit.style === 'zaku' ? 0.2 : 0));
       if (targetSurfaceDistance < reach && targetSurfaceDistance > 6){
         if (rng.chance(chance)){
@@ -5133,9 +5204,12 @@ export function startBattle(renderer, opts, onEnd){
           m.meleeT = 0.6; m.bladeT = 0.45; m.swingT = 0.4; m.swingDir = -(m.swingDir || 1);
           sfx('saber', clamp(300 / m.root.position.distanceTo(player.root.position), 0.04, 0.18));
           queueAIMeleeContact(m, t, m.suit.saber.dmg * 0.6, 30);
-          if (++ai.meleeRun.swings >= rng.int(2, 4)){ ai.meleeRun.phase = 'back'; ai.meleeRun.t = 0; }
+          if (++ai.meleeRun.swings >= rng.int(2, 4)){
+            if (ammoDry) ai.meleeRun.swings = 0;
+            else { ai.meleeRun.phase = 'back'; ai.meleeRun.t = 0; }
+          }
         }
-        if (ai.meleeRun.t > 8 || hurt){ ai.meleeRun = null; ai.meleeCd = rng.range(2, 4); m.hopY = 0; } // bail on timeout, or break off wounded
+        if (ai.meleeRun.t > 8 || (hurt && !ammoDry)){ ai.meleeRun = null; ai.meleeCd = rng.range(2, 4); m.hopY = 0; } // bail on timeout, or break off wounded while ammunition remains
       } else { // thrust back out to firing range
         m.vel.lerp(tmpV3.copy(toT).multiplyScalar(-sp), clamp(5 * dt, 0, 1));
         if (ai.meleeRun.t > 0.9 || targetSurfaceDistance > 110){ ai.meleeRun = null; ai.meleeCd = rng.range(3, 6); m.hopY = 0; }
@@ -5163,7 +5237,7 @@ export function startBattle(renderer, opts, onEnd){
     // Movement intent — mobile units keep orbiting, flanking, or advancing while
     // they fight. Kneeling is the deliberate exception because it trades motion
     // for weapon stability.
-    const commanderIntent = commanderSpaceIntent(m, t, d, dt);
+    const commanderIntent = ammoDry ? null : commanderSpaceIntent(m, t, d, dt);
     let calm = false, tangent = null;
     let boost, speed, accel;
     const desired = tmpV3;
@@ -5179,7 +5253,8 @@ export function startBattle(renderer, opts, onEnd){
       tangent = tmpV2.crossVectors(UP, toT).multiplyScalar(ai.strafe);
       // engagement band by ROLE (×weapon pref)
       let radial;
-      if (m.suit.carrierSfs) radial = galcezonAttackRadial(d, pref); // attack SFS never receives a retreat vector
+      if (ammoDry) radial = d > 22 ? 1 : 0;
+      else if (m.suit.carrierSfs) radial = galcezonAttackRadial(d, pref); // attack SFS never receives a retreat vector
       else if (hurt) radial = d > pref * 2.0 ? 0.03 : -1;            // kite to max range, then HOLD and keep firing — never flee the map
       else if (ai.squadRole === 'support'){
         // The rear element preserves standoff. A masked shot produces a measured
@@ -5197,7 +5272,7 @@ export function startBattle(renderer, opts, onEnd){
         radial = ai.pass.phase === 'in' ? 0.9 : -0.9;
       }
       else radial = d > pref * tune.far ? 1 : d < pref * tune.near ? (tune.plant < 0.25 ? -1 : -0.7) : (calm ? 0.03 : 0.12);
-      boost = m.fuel > 10 && (hurt || d > pref * 2 || (tune.passes && radial > 0 && d > pref * 0.8));
+      boost = m.fuel > 10 && (ammoDry || hurt || d > pref * 2 || (tune.passes && radial > 0 && d > pref * 0.8));
       speed = (boost ? m.suit.boost : m.suit.walk) * (1 - Math.min(0.45, m.legDmg * 0.6)) * (m.blocking ? 0.5 : 1);
       if (calm && !boost && !hurt && d >= pref * tune.near && d < pref * tune.far) speed *= tune.plant; // in-band: plant by doctrine
       const strafeWeight = m.suit.carrierSfs ? GALCEZON_ATTACK_STRAFE_WEIGHT : (calm ? 0.3 : 0.75);
@@ -5351,7 +5426,7 @@ export function startBattle(renderer, opts, onEnd){
     // Turreted vehicles may fire off-axis; syncMuzzlePose traverses the live turret
     // onto this lead point before the projectile leaves the animated muzzle.
     const fireCone = commanderIntent ? commanderIntent.fireCone : 0.18;
-    const rangedAllowed = !commanderIntent || commanderIntent.fireAllowed;
+    const rangedAllowed = !ammoDry && (!commanderIntent || commanderIntent.fireAllowed);
     if (rangedAllowed && groundTactic.lineOfSight !== false
       && (m.suit.vehicle || Math.abs(dy) < fireCone) && d < pref * 2.4 && !(w.arc && d < 140)){ // artillery holds fire inside its own splash
       // lead the target, with skill-scaled error; aim point scales with target size
@@ -5366,7 +5441,7 @@ export function startBattle(renderer, opts, onEnd){
       fire(m, dir, m.root.position.clone().addScaledVector(dir, Math.max(50, d)));
     }
     // melee when point-blank (fallback for space combat and non-charging contact)
-    const meleeAllowed = commanderIntent ? commanderIntent.meleeAllowed
+    const meleeAllowed = ammoDry ? true : commanderIntent ? commanderIntent.meleeAllowed
       : tune.melee > 0 && !squadTethered && (!protectedAlly || protectionMelee)
         && (protectionMelee || (ai.squadRole !== 'support' && (ai.squadRole !== 'assault' || groundTactic.melee)));
     const meleeRange = commanderIntent ? commanderIntent.meleeRange : 20;
@@ -5411,7 +5486,8 @@ export function startBattle(renderer, opts, onEnd){
     m.bank = lerp(m.bank, clamp(-turnStep / dt / turn, -1, 1) * 0.9, 4 * dt);
     // firing — forward, converging on the crosshair
     m.fireT -= dt;
-    if (m.reloadT > 0){ m.reloadT -= dt; if (m.reloadT <= 0) m.clip = m.suit.weapons[m.wi].clip; }
+    updateReload(m, dt);
+    enforcePlayerMeleeOnly();
     const aw = m.suit.weapons[m.wi];
     if (isChargeableBeam(aw)){
       updatePlayerBeamCharge(dt);
@@ -5425,10 +5501,8 @@ export function startBattle(renderer, opts, onEnd){
 
   function updatePlayerGroundFire(m, dt){
     m.fireT -= dt; m.meleeT -= dt;
-    if (m.reloadT > 0){
-      m.reloadT -= dt;
-      if (m.reloadT <= 0 && m.wi !== SABER_SLOT) m.clip = m.suit.weapons[m.wi].clip;
-    }
+    updateReload(m, dt);
+    enforcePlayerMeleeOnly();
     const activeWeapon = m.wi === SABER_SLOT ? null : m.suit.weapons[m.wi];
     if (isChargeableBeam(activeWeapon)){
       updatePlayerBeamCharge(dt);
@@ -5782,8 +5856,7 @@ export function startBattle(renderer, opts, onEnd){
         if (w.barrage) startMissileBarrage(m, tgt);
         else {
           launchMissile(m, tgt);
-          m.clip--; m.fireT = 1 / w.rof;
-          if (m.clip <= 0) m.reloadT = w.reload;
+          spendActiveAmmo(m); m.fireT = 1 / w.rof;
           m.shotsFired = (m.shotsFired || 0) + 1;
         }
         m.lockT = 0; m.lockCd = 0.6; m.lockedFlash = 0.6;
@@ -6591,7 +6664,7 @@ export function startBattle(renderer, opts, onEnd){
       pvpUpdateRemote(m, dt);
     } else if (!m.isPlayer){
       m.fireT -= dt;
-      if (m.reloadT > 0){ m.reloadT -= dt; if (m.reloadT <= 0) m.clip = m.suit.weapons[m.wi].clip; }
+      updateReload(m, dt);
       if (m.air){ aircraftUpdate(m, dt); }
       else if (m.dropping){ // carrier-dropped: descend slowly, fire at will, but no maneuvering
         aiUpdate(m, dt);
@@ -7955,25 +8028,25 @@ export function startBattle(renderer, opts, onEnd){
     boostBar.style.width = clamp(player.fuel / player.maxFuel, 0, 1) * 100 + '%';
     let wHtml;
     if (player.wi === SABER_SLOT){
-      wHtml = `${player.suit.saber.name} <span class="ammo">MELEE</span>`;
+      wHtml = `${player.suit.saber.name} <span class="ammo">${allRangedAmmoSpent(player) ? 'MELEE · RANGED AMMO EMPTY' : 'MELEE'}</span>`;
     } else if (w.type === 'lockmissile' && player.missileBarrage?.weaponIndex === player.wi){
       const salvo = player.missileBarrage;
       wHtml = `${w.name} <span class="ammo">BARRAGE · ${salvo.total - salvo.remaining}/${salvo.total} AWAY</span>`;
     } else if (player.reloadT > 0){
-      wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s</span>`;
+      wHtml = `${w.name} <span class="ammo">RELOADING ${player.reloadT.toFixed(1)}s${player.ammoLimited ? ` · RESERVE ${Math.ceil(activeReserve(player))}` : ''}</span>`;
     } else if (player.beamCharging){
       const chargePercent = beamBatteryPercent(w, player.beamChargeDraw);
       const batteryPercent = beamBatteryPercent(w, player.clip);
-      wHtml = `${w.name} <span class="ammo" style="color:var(--acc)">CHARGING ${chargePercent.toFixed(1)}% · BATTERY ${batteryPercent.toFixed(1)}% · RELEASE LMB</span>`;
+      wHtml = `${w.name} <span class="ammo" style="color:var(--acc)">CHARGING ${chargePercent.toFixed(1)}% · BATTERY ${batteryPercent.toFixed(1)}%${player.ammoLimited ? ` · RESERVE ${Math.ceil(activeReserve(player))}` : ''} · RELEASE LMB</span>`;
     } else if (w.type === 'lockmissile' && !w.freeAim){
       const st = (player.lockedFlash || 0) > 0 ? 'LOCK ✓ — FOX'
         : player.lockTarget ? `LOCKING ${Math.round(clamp((player.lockT || 0) / w.lockTime, 0, 1) * 100)}%`
-        : `${player.clip} / ${w.clip} · AUTO-LOCK`;
+        : `${Math.ceil(player.clip)} / ${w.clip}${player.ammoLimited ? ` · RESERVE ${Math.ceil(activeReserve(player))}` : ''} · AUTO-LOCK`;
       wHtml = `${w.name} <span class="ammo">${st}</span>`;
     } else if (isChargeableBeam(w)){
-      wHtml = `${w.name} <span class="ammo">BATTERY ${beamBatteryPercent(w, player.clip).toFixed(1)}% · HOLD LMB</span>`;
+      wHtml = `${w.name} <span class="ammo">BATTERY ${beamBatteryPercent(w, player.clip).toFixed(1)}%${player.ammoLimited ? ` · RESERVE ${Math.ceil(activeReserve(player))}` : ''} · HOLD LMB</span>`;
     } else {
-      wHtml = `${w.name} <span class="ammo">${player.clip} / ${w.clip}</span>`;
+      wHtml = `${w.name} <span class="ammo">${Math.ceil(player.clip)} / ${w.clip}${player.ammoLimited ? ` · RESERVE ${Math.ceil(activeReserve(player))}` : ''}</span>`;
     }
     if (player.shieldMax > 0){
       const sf = Math.round(clamp(player.shieldHp / player.shieldMax, 0, 1) * 100);
@@ -8941,17 +9014,21 @@ export function startBattle(renderer, opts, onEnd){
           player.fireT = 0; player.reloadT = 0;
           if (wi !== SABER_SLOT){
             resetMuzzleCycle(player, wi);
-            player.clip = player.suit.weapons[wi].clip;
+            player.clip = player.weaponClips[wi];
           }
         }
       }
       if (o.reload && player.wi !== SABER_SLOT){
-        player.reloadT = player.suit.weapons[player.wi].reload;
-        player.clip = 0;
+        beginReload(player);
       }
       if (o.ready){
         player.fireT = 0; player.reloadT = 0; player.meleeT = 0;
-        if (player.wi !== SABER_SLOT) player.clip = player.suit.weapons[player.wi].clip;
+      }
+      if (o.exhaustAmmo){
+        player.weaponClips.fill(0);
+        if (player.ammoLimited) player.ammoReserves.fill(0);
+        player.clip = 0; player.reloadT = 0;
+        enforcePlayerMeleeOnly();
       }
       if (o.sandKick) trySandKick();
       if ('slash' in o) trySaber(typeof o.slash === 'string' ? o.slash : undefined);
@@ -8983,10 +9060,16 @@ export function startBattle(renderer, opts, onEnd){
       }
       if ('weapon' in o){
         const wi = clamp(Math.trunc(o.weapon), 0, enemy.suit.weapons.length - 1);
-        enemy.wi = wi; enemy.clip = enemy.suit.weapons[wi].clip; enemy.reloadT = 0;
+        storeActiveClip(enemy); enemy.wi = wi; enemy.clip = enemy.weaponClips[wi]; enemy.reloadT = 0;
         resetMuzzleCycle(enemy, wi); enemy.parts?.rebuildGun?.(wi);
       }
-      if (o.ready){ enemy.fireT = 0; enemy.reloadT = 0; enemy.meleeT = 0; enemy.clip = enemy.suit.weapons[enemy.wi].clip; }
+      if (o.ready){ enemy.fireT = 0; enemy.reloadT = 0; enemy.meleeT = 0; }
+      if (o.exhaustAmmo){
+        enemy.weaponClips.fill(0);
+        if (enemy.ammoLimited) enemy.ammoReserves.fill(0);
+        enemy.clip = 0; enemy.reloadT = 0;
+        if (enemy.ai){ enemy.ai.meleeCd = 0; enemy.ai.tThink = 0; }
+      }
       if (SPACE && enemy.ai && enemy.suit.commander && enemy.suit.spaceDoctrine){
         const target = enemy.ai.target || player;
         const range = enemy.root.position.distanceTo(target.root.position);
@@ -9134,7 +9217,9 @@ export function startBattle(renderer, opts, onEnd){
       if (beamIndex < 0) return null;
       if (commandedShip) releaseCommandedShip(true);
       if (player.wi !== beamIndex) switchWeapon(beamIndex);
-      player.reloadT = 0; player.fireT = 0; player.clip = player.suit.weapons[beamIndex].clip;
+      player.reloadT = 0; player.fireT = 0;
+      player.weaponClips[beamIndex] = player.suit.weapons[beamIndex].clip;
+      player.clip = player.weaponClips[beamIndex];
       const before = player.clip;
       const projectilesBefore = projectiles.length;
       mouseDown = true;
@@ -9386,6 +9471,11 @@ export function startBattle(renderer, opts, onEnd){
         bladeVisible: !!player.parts?.blade?.visible, gunVisible: !!player.parts?.gun?.visible,
         pMeleeT: player.meleeT, pBladeT: player.bladeT, pReloadT: player.reloadT,
         pClip: player.clip, pShotsFired: player.shotsFired || 0,
+        pAmmoLimited: !!player.ammoLimited,
+        pWeaponClips: [...player.weaponClips],
+        pAmmoReserves: player.ammoReserves.map(value => Number.isFinite(value) ? value : null),
+        pRangedAmmoRemaining: allRangedAmmoSpent(player) ? 0
+          : player.suit.weapons.reduce((sum, _weapon, index) => sum + weaponAmmoRemaining(player, index), 0),
         beamCharging: !!player.beamCharging,
         beamCharge: +(player.beamCharge || 0).toFixed(3),
         beamChargeDraw: +(player.beamChargeDraw || 0).toFixed(4),
@@ -9517,6 +9607,9 @@ export function startBattle(renderer, opts, onEnd){
               weaponIndex: m.wi, weaponName: m.suit.weapons[m.wi]?.name, clip: m.clip,
               weapons: m.suit.weapons.map(weapon => weapon.name),
               loadout: m.suit.weaponLoadout || { primary: 'stock', support: 'stock' },
+              ammoLimited: !!m.ammoLimited, ammoDry: allRangedAmmoSpent(m),
+              weaponClips: [...m.weaponClips],
+              ammoReserves: m.ammoReserves.map(value => Number.isFinite(value) ? value : null),
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,
               phaseSide: s?.side || null, phaseUp: s?.up || null,
               passes: s?.passes || 0, feints: s?.feints || 0,

@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js?v=74groundgmloadouts1';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=74groundgmloadouts1';
+import { startBattle } from './battle.js?v=75finiteammo1';
 import { buildMech } from './mecha.js?v=74groundgmloadouts1';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -377,6 +377,7 @@ function runBattle(opts, after){
     const qaHelm = document.createElement('button');
     const qaShipCombat = document.createElement('button');
     const qaBeamCharge = document.createElement('button');
+    const qaAmmo = document.createElement('button');
     const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
       const button = document.createElement('button');
       button.id = `gravity-debug-view-${kind}`;
@@ -408,7 +409,10 @@ function runBattle(opts, after){
     qaBeamCharge.id = 'gravity-debug-beam-charge';
     qaBeamCharge.textContent = 'QA BEAM CHARGE';
     qaBeamCharge.dataset.qaShipIndex = '7';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, qaShipCombat, qaBeamCharge, ...qaShipViews]) {
+    qaAmmo.id = 'gravity-debug-ammo';
+    qaAmmo.textContent = 'QA AMMO LIMIT';
+    qaAmmo.dataset.qaShipIndex = '8';
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, qaShipCombat, qaBeamCharge, qaAmmo, ...qaShipViews]) {
       button.type = 'button';
       if (button.dataset.qaShipIndex) {
         const top = 8 + Number(button.dataset.qaShipIndex) * 32;
@@ -439,6 +443,17 @@ function runBattle(opts, after){
     qaBeamCharge.onclick = () => {
       document.documentElement.dataset.gravityBeamCharge = JSON.stringify(battleHandle?._debugBeamCharge?.(1.13, true) || null);
     };
+    qaAmmo.onclick = () => {
+      battleHandle?._debugUnpause?.();
+      battleHandle?._debugInput?.({ exhaustAmmo: true });
+      battleHandle?._debugEnemy?.(0, { exhaustAmmo: true, targetPlayer: true });
+      setTimeout(() => {
+        const state = battleHandle?._debugState?.() || null;
+        document.documentElement.dataset.gravityAmmo = JSON.stringify(state);
+        const enemy = state?.enemies?.[0];
+        qaAmmo.textContent = `QA AMMO P${state?.pRangedAmmoRemaining ?? '?'} · E${enemy?.ammoDry ? 'DRY' : 'ARMED'} · M${state?.meleeRuns ?? '?'}`;
+      }, 700);
+    };
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
     clearLocalBattleDebug = () => {
@@ -457,12 +472,14 @@ function runBattle(opts, after){
       qaHelm.remove();
       qaShipCombat.remove();
       qaBeamCharge.remove();
+      qaAmmo.remove();
       for (const button of qaShipViews) button.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete document.documentElement.dataset.gravityFedRam;
       delete document.documentElement.dataset.gravityHelm;
       delete document.documentElement.dataset.gravityShipCombat;
       delete document.documentElement.dataset.gravityBeamCharge;
+      delete document.documentElement.dataset.gravityAmmo;
       delete globalThis.__gravityBattle;
     };
   }

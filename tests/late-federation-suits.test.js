@@ -62,7 +62,7 @@ test('selective faceted armour remodelling covers the shared Federation and Zeon
 test('late Federation missile racks fire immediately as a free-aim full-rack barrage', () => {
   const source = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8');
   assert.match(source, /function startMissileBarrage/);
-  assert.match(source, /m\.clip = 0; \/\/ the trigger commits the whole rack immediately/);
+  assert.match(source, /setActiveClip\(m, 0\); \/\/ the trigger commits the whole rack immediately/);
   assert.match(source, /updateMissileBarrage\(m, dt\)/);
   assert.match(source, /m\.isPlayer && w\.freeAim/);
   assert.match(source, /startMissileBarrage\(m, null, manualAim\)/);
