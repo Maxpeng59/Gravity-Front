@@ -33,7 +33,7 @@ import {
 } from './ballistics.js';
 import { createAnimeFx } from './anime-fx.js';
 import {
-  allRangedAmmoSpent, createAmmoSupply, weaponAmmoRemaining,
+  MS_MAX_MAGAZINES, MS_MIN_MAGAZINES, allRangedAmmoSpent, createAmmoSupply, weaponAmmoRemaining,
 } from './ammo-supply.js';
 import {
   OBJECTIVE_TUNING, advanceHold, evaluateSecondaries, isStagedMission, missionStages, stageLabel,
@@ -858,7 +858,7 @@ export function startBattle(renderer, opts, onEnd){
     if (air) root.position.y = (SPACE ? pos.y : groundY(pos.x, pos.z)) + rng.range(95, 175); // fighters cruise at altitude
     const maxHp = suit.hp * (ace ? 1.2 : 1);
     const maxFuel = suit.boostFuel * (suit.faction === 'FED' ? 2 : 1); // Federation suits carry double thruster reserve
-    const ammoSupply = createAmmoSupply(suit);
+    const ammoSupply = createAmmoSupply(suit, rng.int(MS_MIN_MAGAZINES, MS_MAX_MAGAZINES));
     const hasShield = !air && SHIELDED_IDS.has(suit.id);
     const shieldCap = hasShield ? clamp(Math.round(maxHp * 0.45), 1200, 2600) : 0;
     const colonyFlightCapable = COLONY && !isPlayer && !isNetworkRemote && !air
@@ -879,6 +879,7 @@ export function startBattle(renderer, opts, onEnd){
       hp: maxHp * hpFrac, maxHp, fuel: maxFuel, maxFuel,
       wi: 0, clip: ammoSupply.clips[0], weaponClips: ammoSupply.clips,
       ammoReserves: ammoSupply.reserves, ammoLimited: ammoSupply.limited,
+      ammoMagazines: ammoSupply.magazines,
       reloadT: 0, fireT: 0, meleeT: 0, bladeT: 0,
       beamCharging: false, beamCharge: 0, beamChargeDraw: 0,
       chargedBeamBursts: 0, lastBeamChargeDraw: 0, lastBeamHits: 0, lastBeamPellets: 0,
@@ -9472,6 +9473,7 @@ export function startBattle(renderer, opts, onEnd){
         pMeleeT: player.meleeT, pBladeT: player.bladeT, pReloadT: player.reloadT,
         pClip: player.clip, pShotsFired: player.shotsFired || 0,
         pAmmoLimited: !!player.ammoLimited,
+        pAmmoMagazines: Number.isFinite(player.ammoMagazines) ? player.ammoMagazines : null,
         pWeaponClips: [...player.weaponClips],
         pAmmoReserves: player.ammoReserves.map(value => Number.isFinite(value) ? value : null),
         pRangedAmmoRemaining: allRangedAmmoSpent(player) ? 0
@@ -9608,6 +9610,7 @@ export function startBattle(renderer, opts, onEnd){
               weapons: m.suit.weapons.map(weapon => weapon.name),
               loadout: m.suit.weaponLoadout || { primary: 'stock', support: 'stock' },
               ammoLimited: !!m.ammoLimited, ammoDry: allRangedAmmoSpent(m),
+              ammoMagazines: Number.isFinite(m.ammoMagazines) ? m.ammoMagazines : null,
               weaponClips: [...m.weaponClips],
               ammoReserves: m.ammoReserves.map(value => Number.isFinite(value) ? value : null),
               phase: s?.phase || null, phaseT: s?.phaseT || 0, phaseLimit: s?.phaseLimit || 0,

@@ -1,16 +1,21 @@
-export const MS_TOTAL_MAGAZINES = 3;
+export const MS_MIN_MAGAZINES = 5;
+export const MS_MAX_MAGAZINES = 10;
 
 export function mobileSuitUsesFiniteAmmo(suit){
   return !!suit && !suit.air && !suit.vehicle && Array.isArray(suit.weapons);
 }
 
-export function createAmmoSupply(suit){
+export function createAmmoSupply(suit, totalMagazines = MS_MIN_MAGAZINES){
   const clips = (suit?.weapons || []).map(weapon => Math.max(0, Number(weapon?.clip) || 0));
   const limited = mobileSuitUsesFiniteAmmo(suit);
+  const magazines = limited
+    ? Math.max(MS_MIN_MAGAZINES, Math.min(MS_MAX_MAGAZINES, Math.trunc(Number(totalMagazines) || MS_MIN_MAGAZINES)))
+    : Infinity;
   return {
     limited,
+    magazines,
     clips,
-    reserves: clips.map(clip => limited ? clip * (MS_TOTAL_MAGAZINES - 1) : Infinity),
+    reserves: clips.map(clip => limited ? clip * (magazines - 1) : Infinity),
   };
 }
 
