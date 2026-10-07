@@ -3133,7 +3133,7 @@ export function startBattle(renderer, opts, onEnd){
     sfx(w.type, vol);
   }
 
-  const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0.16;
+  const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0.08;
   const BEAM_DAMAGE_EXPONENT = Math.log(20);
   const CONCENTRATED_BEAM_SPLASH_MIN = 0.22;
   const CONCENTRATED_BEAM_SPLASH_MAX = 0.32;

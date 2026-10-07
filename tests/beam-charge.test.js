@@ -7,7 +7,8 @@ const battle = readFileSync(new URL('../js/battle.js', import.meta.url), 'utf8')
 const effects = readFileSync(new URL('../js/anime-fx.js', import.meta.url), 'utf8');
 
 test('player beam guns charge while held and discharge when LMB is released', () => {
-  assert.match(battle, /const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0\.16/);
+  assert.match(battle, /const BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT = 0\.08/);
+  assert.equal((16 - 1) * 0.08, 1.2);
   assert.match(battle, /player\.beamChargeDraw = Math\.min\(player\.clip,[\s\S]*1 \+ player\.beamCharge \/ BEAM_CHARGE_SECONDS_PER_NORMAL_SHOT\)/);
   assert.doesNotMatch(battle, /Math\.floor\(player\.beamCharge/);
   assert.match(battle, /if \(e\.button === 0\)[\s\S]*releasePlayerBeamCharge\(\)[\s\S]*mouseDown = false/);
