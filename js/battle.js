@@ -13,7 +13,7 @@ import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
-import { buildMobileArmor, mobileArmorProfile } from './mobile-armors.js?v=73mobilearmorbalance1';
+import { buildMobileArmor, mobileArmorProfile } from './mobile-armors.js?v=78mobilearmorlore2';
 import { spaceShipProfile } from './space-ship-balance.js?v=57shipordnance1';
 import { COLUMBUS_LAUNCH_INTERVAL, rollColumbusLaunches } from './columbus-carrier.js';
 import {
@@ -1336,6 +1336,7 @@ export function startBattle(renderer, opts, onEnd){
       indestructible: false,
       value: Math.round(hp * (isShip ? 2.5 : kind === 'base' || kind === 'depot' ? 1.2 : 0.65)),
       isProp: true, isShip, isMobileArmor: !!mobileArmor, hoverHeight: mobileArmor?.hoverHeight || 0,
+      iField: !!mobileArmor?.iField,
       radius: mobileArmor?.radius || (kind === 'truck' ? 8 : kind === 'solfortress' ? 58
         : kind === 'bigtray' ? 55 : kind === 'dabude' ? 50 : kind === 'gallop' ? 30
         : kind === 'magellan' ? 46 : kind === 'columbus' ? 44 : isShip ? 42 : 17),
@@ -1511,9 +1512,20 @@ export function startBattle(renderer, opts, onEnd){
 
   playerHoverCraft = spawnPlayerHoverCraft();
 
-  function damageProp(p, dmg, hitPoint, attacker, weaponName = null){
+  function damageProp(p, dmg, hitPoint, attacker, weaponName = null, energy = false){
     if (!p.alive) return;
     if (p.indestructible) return;   // map landmarks (church tower, town houses) are solid cover — absorb fire, never fall
+    // Big Zam, Neue Ziel and Dendrobium carry canon I-fields. They stop beam
+    // fire outside point-blank range; shells, missiles, claws and close beam
+    // attacks still pass through, matching their on-screen vulnerabilities.
+    if (p.iField && energy && attacker?.root){
+      const range = attacker.root.position.distanceTo(p.root.position);
+      if (range > Math.max(90, p.radius * 2.2)){
+        if (hitPoint) fx.spark(hitPoint, !!attacker.isPlayer);
+        p.iFieldBlocks = (p.iFieldBlocks || 0) + 1;
+        return;
+      }
+    }
     if (hitPoint && p.weakPoints){ // bridge / engine weak point on ships & structures
       const wm = weakMult(hitPoint, p.root.position, p.root.rotation.y, 1, p.weakPoints);
       if (wm > 1){ dmg *= wm; critSpark(hitPoint, !!(attacker && attacker.isPlayer)); }
@@ -7057,7 +7069,7 @@ export function startBattle(renderer, opts, onEnd){
         } else if (!p.networkGhost && hitKind === 'prop' && hitTarget.team !== p.team){
           const falloff = p.ballistic?.kind === 'beam'
             ? impactMultiplier({ profile: p.ballistic, distance: (p.traveled || 0) + bestT, air: PHYS.air }).mult : 1;
-          damageProp(hitTarget, p.dmg * falloff, p.pos, p.owner, p.weaponName);
+          damageProp(hitTarget, p.dmg * falloff, p.pos, p.owner, p.weaponName, !!p.energy);
         }
         if (!p.networkGhost && hitKind === 'terrain') killSoldiersNear(p.pos, p.splash ? p.splash * 1.6 : 3);
         hit = true;
@@ -7193,7 +7205,7 @@ export function startBattle(renderer, opts, onEnd){
       // permits a limited rotating bank to fire at once. This prevents the old
       // all-guns alpha strike while preserving the multi-directional silhouette.
       const relativeBankIndex = (turretIndex - bankStart + p.turrets.length) % p.turrets.length;
-      if (relativeBankIndex >= activeLimit){
+      if (p.isMobileArmor && t.secondary !== false && !t.alwaysActive && relativeBankIndex >= activeLimit){
         t.gun.rotation.x = lerp(t.gun.rotation.x, -0.04, 2 * dt);
         t.cd = Math.max(t.cd, 0.35);
         continue;
@@ -7228,8 +7240,8 @@ export function startBattle(renderer, opts, onEnd){
         t.cd = rng.range(p.gunRof[0], p.gunRof[1]) * (t.rofScale || 1);
         t.yaw.updateMatrixWorld(true);                                          // refresh so the muzzle reflects this frame's aim
         const muzzleNodes = t.muzzles?.length ? t.muzzles : [t.muzzle];
-        const shellSpeed = p.landProfile?.shellSpeed || p.shellSpeed || 420;
-        const shellLife = p.landProfile?.shellLife || p.shellLife || 5.5;
+        const shellSpeed = t.projectileSpeed || p.landProfile?.shellSpeed || p.shellSpeed || 420;
+        const shellLife = t.projectileLife || p.landProfile?.shellLife || p.shellLife || 5.5;
         const shellScale = (p.landProfile?.shellScale || p.shellScale || 1.05) * (t.shellScale || 1);
         const muzzleStart = t.muzzleCursor || 0;
         for (let shot = 0; shot < (t.shots || 1); shot++){
@@ -7239,14 +7251,20 @@ export function startBattle(renderer, opts, onEnd){
           dir.x += rng.range(-0.012, 0.012); dir.y += rng.range(-0.009, 0.009); dir.z += rng.range(-0.012, 0.012); dir.normalize();
           // Surface batteries fire machined HE shells; warship batteries use the
           // same luminous naval beams as the campaign fleet battle.
-          const mesh = p.spaceProfile || p.isMobileArmor
+          const mobileArmorMissile = p.isMobileArmor && t.weaponType === 'missile';
+          const mobileArmorVulcan = p.isMobileArmor && t.weaponType === 'vulcan';
+          const mesh = mobileArmorMissile
+            ? new THREE.Mesh(missileGeo, p.team === 'FED' ? torpedoMat : missileMat)
+            : mobileArmorVulcan ? makeShell(Math.max(0.28, shellScale), false)
+            : p.spaceProfile || p.isMobileArmor
             ? new THREE.Mesh(bzGeo, p.team === 'FED' ? beamMatF : bzMat)
             : makeShell(shellScale, false);
           if ((p.spaceProfile || p.isMobileArmor) && t.shellScale) mesh.scale.setScalar(t.shellScale);
           mesh.position.copy(mw); mesh.quaternion.setFromUnitVectors(UP, dir); scene.add(mesh);
-          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: p.gunDmg * (t.damageScale || 1), splash: p.gunSplash * (t.splashScale || 1), team: p.team, owner: p,
+          projectiles.push({ pos: mw.clone(), vel: dir.multiplyScalar(shellSpeed), dmg: t.damage ?? p.gunDmg * (t.damageScale || 1), splash: t.splash ?? p.gunSplash * (t.splashScale || 1), team: p.team, owner: p,
             weaponName: p.battery ? 'STATIONARY TWIN CANNON' : p.isMobileArmor ? (t.weaponName || 'MOBILE ARMOR MEGA-PARTICLE TURRET') : p.spaceProfile ? (t.weaponName || 'SHIP MAIN BATTERY') : 'LANDSHIP MAIN BATTERY', life: shellLife, mesh,
-            energy: !!p.isMobileArmor,
+            energy: p.isMobileArmor && t.weaponType !== 'missile' && t.weaponType !== 'vulcan',
+            homing: mobileArmorMissile ? best : null, turn: mobileArmorMissile ? (t.homingTurn || 1.2) : 0,
             heavy: t.heavy ?? true, collisionRadius: t.collisionRadius ?? (p.spaceProfile ? 2.6 : p.battery ? 1.8 : 2.1) });
         }
         t.shotsFired = (t.shotsFired || 0) + (t.shots || 1);
@@ -9506,6 +9524,10 @@ export function startBattle(renderer, opts, onEnd){
         mobileArmors: props.filter(p => p.isMobileArmor).map(p => ({
           kind: p.kind, team: p.team, hp: Math.round(p.hp), maxHp: p.maxHp,
           speed: p.speed, turretCount: p.turrets?.length || 0,
+          dimensions: (p.landProfile || p.spaceProfile)?.dimensions || null,
+          weapons: [...((p.landProfile || p.spaceProfile)?.weapons || [])],
+          iField: !!p.iField, iFieldBlocks: p.iFieldBlocks || 0,
+          silhouette: p.root.children.find(child => child.userData?.silhouette)?.userData.silhouette || null,
           position: p.root.position.toArray(), velocity: p.vel.toArray(),
           shotsFired: (p.turrets || []).reduce((sum, turret) => sum + (turret.shotsFired || 0), 0),
         })),

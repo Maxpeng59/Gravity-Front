@@ -14,16 +14,20 @@ test('four faction-authentic UC mobile armors join the custom roster', () => {
   assert.match(main, /if \(MOBILE_ARMOR_IDS\.has\(entry\.id\)\) return true/);
 });
 
-test('mobile armors are boss-sized but bounded multi-turret combatants', () => {
-  for (const id of ['bigzam', 'apsaras3', 'neueziel', 'dendrobium']){
-    const profile = mobileArmors.match(new RegExp(`${id}: Object\\.freeze\\(\\{([\\s\\S]*?)\\n  \\}\\)`))?.[1] || '';
-    const number = key => Number(profile.match(new RegExp(`${key}: (\\d+)`))?.[1]);
-    assert.ok(number('hp') >= 34000 && number('hp') <= 42000, `${id} HP`);
-    assert.ok(number('speed') >= 12 && number('speed') <= 28, `${id} speed`);
-    assert.ok(number('turretCount') >= 5 && number('turretCount') <= 8, `${id} hardpoint count`);
-    assert.ok(number('mainRange') >= 1400 && number('mainRange') <= 1700, `${id} range`);
-    assert.ok(number('activeTurretLimit') >= 2 && number('activeTurretLimit') <= 4, `${id} simultaneous banks`);
-  }
+test('mobile armor profiles carry canonical dimensions, mass, weapon manifests and I-field state', () => {
+  assert.match(mobileArmors, /dimensions: '59\.6 m tall'[\s\S]*mass: '1,936\.0 t full'[\s\S]*iField: true/);
+  assert.match(mobileArmors, /apsaras3:[\s\S]*dimensions: 'approx\. 70 m disc'[\s\S]*iField: false/);
+  assert.match(mobileArmors, /dimensions: '76\.6 m long'[\s\S]*mass: '403\.5 t full'[\s\S]*iField: true/);
+  assert.match(mobileArmors, /dimensions: '140\.0 m long \/ 38\.5 m tall'[\s\S]*mass: '453\.1 t full'[\s\S]*iField: true/);
+  for (const weapon of ['28 × 2.1 MW MEGA-PARTICLE GUN', 'VARIABLE-FOCUS LARGE MEGA-PARTICLE CANNON', '24 × SMALL MISSILE LAUNCHER', '2 × LARGE CLAW / LARGE BEAM SABER'])
+    assert.ok(mobileArmors.includes(weapon), weapon);
+});
+
+test('damage and mobility follow each machine combat role instead of one generic boss template', () => {
+  assert.match(mobileArmors, /bigzam:[\s\S]*speed: 11[\s\S]*mainDamage: 2200/);
+  assert.match(mobileArmors, /apsaras3:[\s\S]*mainDamage: 2800[\s\S]*mainSplash: 46/);
+  assert.match(mobileArmors, /neueziel:[\s\S]*speed: 32[\s\S]*turnRate: 0\.38/);
+  assert.match(mobileArmors, /dendrobium:[\s\S]*speed: 35[\s\S]*mainRange: 2350/);
 });
 
 test('each mobile armor builds its own large silhouette and full independent turret bank', () => {
@@ -32,6 +36,10 @@ test('each mobile armor builds its own large silhouette and full independent tur
   assert.match(mobileArmors, /turrets\.push\(\{[\s\S]*yaw, gun, muzzle: muzzles\[0\], muzzles/);
   assert.match(mobileArmors, /if \(kind === 'bigzam'\) return buildBigZam/);
   assert.match(mobileArmors, /if \(kind === 'dendrobium'\) return buildDendrobium/);
+  assert.match(mobileArmors, /addRingTurrets\(root, turrets, light, dark, cooldown, 28/);
+  assert.match(mobileArmors, /weaponName: 'APSARAS III VARIABLE-FOCUS LARGE MEGA-PARTICLE CANNON'/);
+  assert.match(mobileArmors, /weaponName: 'NEUE ZIEL SMALL MISSILE BARRAGE'/);
+  assert.match(mobileArmors, /weaponName: 'DENDROBIUM MICRO-MISSILE CONTAINER'/);
 });
 
 test('battle runtime treats mobile armors as moving targetable heavy props in every environment', () => {
@@ -41,8 +49,11 @@ test('battle runtime treats mobile armors as moving targetable heavy props in ev
   assert.match(battle, /isProp: true, isShip, isMobileArmor: !!mobileArmor/);
   assert.match(battle, /groundY\(nx, nz\) \+ \(p\.hoverHeight \|\| 0\)/);
   assert.match(battle, /p\.spaceProfile \|\| p\.isMobileArmor/);
-  assert.match(battle, /energy: !!p\.isMobileArmor/);
   assert.match(battle, /activeTurretLimit/);
   assert.match(battle, /relativeBankIndex >= activeLimit/);
+  assert.match(battle, /t\.damage \?\? p\.gunDmg/);
+  assert.match(battle, /t\.weaponType === 'missile'/);
+  assert.match(battle, /homing: mobileArmorMissile \? best : null/);
+  assert.match(battle, /if \(p\.iField && energy && attacker\?\.root\)/);
   assert.match(battle, /mobileArmors: props\.filter\(p => p\.isMobileArmor\)/);
 });
