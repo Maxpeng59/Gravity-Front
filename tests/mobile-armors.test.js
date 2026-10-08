@@ -57,3 +57,25 @@ test('battle runtime treats mobile armors as moving targetable heavy props in ev
   assert.match(battle, /if \(p\.iField && energy && attacker\?\.root\)/);
   assert.match(battle, /mobileArmors: props\.filter\(p => p\.isMobileArmor\)/);
 });
+
+test('custom battle lets the player select a mobile armor with a normal MS reserve', () => {
+  assert.match(main, /playerMobileArmor: null/);
+  assert.match(main, /secondarySuitEligible = suit => !!suit && !suit\.air && !suit\.vehicle && !suit\.supportOnly/);
+  assert.match(main, /aria-label', `Pilot \$\{armor\.name\} with secondary mobile suit`/);
+  assert.match(main, /SECONDARY MOBILE SUIT/);
+  assert.match(main, /playerMobileArmorKind: custom\.playerMobileArmor/);
+  assert.match(main, /SECONDARY MS ON DESTRUCTION/);
+});
+
+test('player-controlled mobile armor has manual movement, canonical weapon banks, and MS fallback', () => {
+  assert.match(battle, /const playerMobileArmorLocked = !!mobileArmorProfile/);
+  assert.match(battle, /if \(p\.isMobileArmor\) return fireCommandedMobileArmorWeapon/);
+  assert.match(battle, /turret\.weaponName \|\| 'MOBILE ARMOR WEAPON'/);
+  assert.match(battle, /const missile = turret\.weaponType === 'missile'/);
+  assert.match(battle, /energy: !missile && !vulcan/);
+  assert.match(battle, /p === commandedShip && p\.isMobileArmor/);
+  assert.match(battle, /if \(playerShipLocked && !playerShipProp\?\.alive && !playerMobileArmorLocked\)/);
+  assert.match(battle, /DESTROYED — SECONDARY MS DEPLOYED/);
+  assert.match(battle, /_debugDestroyPlayerMobileArmor\(\)/);
+  assert.match(battle, /secondaryDeployed: playerMobileArmorLocked/);
+});
