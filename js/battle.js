@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from '../vendor/BufferGeometryUtils.js';
 import { RNG, noise2D, clamp, lerp, sfx } from './util.js';
 import { suitById } from './data.js?v=74groundgmloadouts1';
-import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js?v=74groundgmloadouts1';
+import { buildMech, poseWalk, poseAim, buildWeaponMesh } from './mecha.js?v=77meleedeflect1';
 import { modelFor } from './models.js';
 import { MAP_BY_ID } from './maps.js';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -35,6 +35,10 @@ import { createAnimeFx } from './anime-fx.js';
 import {
   MS_MAX_MAGAZINES, MS_MIN_MAGAZINES, allRangedAmmoSpent, createAmmoSupply, weaponAmmoRemaining,
 } from './ammo-supply.js';
+import {
+  MELEE_PROJECTILE_CATCH_RADIUS, MELEE_PROJECTILE_DEFLECTION_CHANCE, MELEE_WEAPON_LENGTH_SCALE,
+  isExplosiveProjectile, meleeDeflectsProjectile, meleeWeaponReach, sweptBladeCatchesProjectile,
+} from './melee-defense.js?v=77meleedeflect1';
 import {
   OBJECTIVE_TUNING, advanceHold, evaluateSecondaries, isStagedMission, missionStages, stageLabel,
 } from './mission-objectives.js';
@@ -2564,6 +2568,10 @@ export function startBattle(renderer, opts, onEnd){
   const projectiles = [], particles = [];
   let heavyProjectileInterceptions = 0;
   let lastHeavyInterception = null;
+  let meleeProjectileContacts = 0;
+  let meleeProjectileDeflections = 0;
+  let meleeProjectileDetonations = 0;
+  let lastMeleeProjectileContact = null;
   const FWD = new THREE.Vector3(0, 0, 1);
   const bzGeo = new THREE.ConeGeometry(0.5, 2.6, 8);       // finned shell (apex forward)
   const missileGeo = new THREE.ConeGeometry(0.32, 3.4, 8); // guided missile (apex forward)
@@ -6915,10 +6923,70 @@ export function startBattle(renderer, opts, onEnd){
     }
   }
 
+  const BLADE_START = new THREE.Vector3();
+  const BLADE_END = new THREE.Vector3();
+  const PROJECTILE_END = new THREE.Vector3();
+  function meleeBladeSegment(m){
+    const reach = m.parts?.blade?.userData?.meleeDeflectionReach || meleeWeaponReach(m.suit.saber?.name);
+    if (m.parts?.blade){
+      m.parts.blade.updateWorldMatrix(true, false);
+      m.parts.blade.getWorldPosition(BLADE_START);
+      BLADE_END.set(0, 0, reach);
+      m.parts.blade.localToWorld(BLADE_END);
+    } else {
+      BLADE_START.copy(m.root.position).setY(m.root.position.y + 8 * (m.suit.scale || 1));
+      BLADE_END.set(Math.sin(m.yaw), 0, Math.cos(m.yaw)).multiplyScalar(reach * MELEE_WEAPON_LENGTH_SCALE).add(BLADE_START);
+    }
+    return reach;
+  }
+
+  function interceptExplosiveWithMelee(p, dt){
+    if (!isExplosiveProjectile(p) || (p.meleeDeflectCooldown || 0) > 0) return null;
+    PROJECTILE_END.copy(p.pos).addScaledVector(p.vel, dt);
+    for (const defender of mechs){
+      if (!defender.alive || defender.team === p.team || defender === p.owner || defender.swingT <= 0 || !defender.suit.saber?.dmg) continue;
+      const reach = meleeBladeSegment(defender);
+      if (!sweptBladeCatchesProjectile(BLADE_START, BLADE_END, p.pos, PROJECTILE_END, MELEE_PROJECTILE_CATCH_RADIUS)) continue;
+
+      const contact = p.pos.clone().addScaledVector(p.vel, dt * 0.5);
+      meleeProjectileContacts++;
+      const roll = Number.isFinite(p.forceMeleeDeflectionRoll) ? p.forceMeleeDeflectionRoll : rng.next();
+      delete p.forceMeleeDeflectionRoll;
+      const deflected = meleeDeflectsProjectile(roll);
+      lastMeleeProjectileContact = {
+        weapon: p.weaponName, defender: defender.name, deflected,
+        reach: +(reach * MELEE_WEAPON_LENGTH_SCALE).toFixed(2), p: contact.toArray(), t: +battleClock.toFixed(2),
+      };
+      fx.spark(contact, false);
+      if (deflected){
+        const speed = Math.max(1, p.vel.length());
+        const reverse = p.vel.clone().normalize().multiplyScalar(-0.82);
+        const away = contact.clone().sub(defender.root.position).normalize();
+        p.vel.copy(reverse.addScaledVector(away, 0.18).normalize().multiplyScalar(speed));
+        p.team = defender.team;
+        p.owner = defender;
+        p.homing = null;
+        p.meleeDeflectCooldown = 0.18;
+        p.pos.copy(contact).addScaledVector(p.vel, 0.018);
+        meleeProjectileDeflections++;
+        sfx('hit', defender.isPlayer ? 0.2 : clamp(280 / contact.distanceTo(player.root.position), 0.03, 0.12));
+        return 'deflected';
+      }
+
+      meleeProjectileDetonations++;
+      explosion(contact, p.splash, clamp(380 / contact.distanceTo(player.root.position), 0.05, 0.32));
+      if (!p.networkGhost) splashDamage(contact, p.splash, p.dmg, p.owner, `${p.weaponName} BLADE CONTACT`);
+      p._meleeIntercepted = true;
+      return 'detonated';
+    }
+    return null;
+  }
+
   function projectilesUpdate(dt){
     detonateHeavyProjectileCollisions(dt);
     for (let i = projectiles.length - 1; i >= 0; i--){
       const p = projectiles[i];
+      p.meleeDeflectCooldown = Math.max(0, (p.meleeDeflectCooldown || 0) - dt);
       if (p._intercepted){
         scene.remove(p.mesh);
         projectiles.splice(i, 1);
@@ -6939,6 +7007,12 @@ export function startBattle(renderer, opts, onEnd){
       }
       if (p.ballistic && !p.arc && !p.bomb && !p.homing) stepBallistic(p.vel, p.ballistic, PHYS, dt); // local gravity + air drag
       else if (!SPACE && p.splash && !p.energy) p.vel.y -= (p.arc ? ART_G : p.bomb ? 30 : 9) * dt; // integrate gravity before casting this frame's path
+      const meleeContact = interceptExplosiveWithMelee(p, dt);
+      if (meleeContact === 'detonated'){
+        scene.remove(p.mesh);
+        projectiles.splice(i, 1);
+        continue;
+      }
       const stepLen = p.vel.length() * dt;
       const dirN = tmpV.copy(p.vel).normalize();
       let hit = false, hitKind = null, hitTarget = null, bestT = stepLen;
@@ -9299,6 +9373,38 @@ export function startBattle(renderer, opts, onEnd){
       setMsg('FEDERATION BOW CHARGE', 2);
       return { attacker: fed.kind, target: foe.kind, heightDelta: foe.root.position.y - fed.root.position.y };
     },
+    _debugMeleeDefense(){
+      const foe = mechs.find(m => m.alive && !m.isPlayer && m.team !== player.team);
+      if (!foe || !player.suit.saber?.dmg || !player.parts?.blade) return null;
+      player.swingT = 0.4;
+      player.swingDuration = 0.4;
+      player.swingKind = 'crosscut';
+      player.bladeT = 0.5;
+      const run = roll => {
+        meleeBladeSegment(player);
+        const pos = BLADE_START.clone().lerp(BLADE_END, 0.55);
+        const projectile = {
+          pos, vel: new THREE.Vector3(420, 0, 0), dmg: 0, splash: 12,
+          team: foe.team, owner: foe, weaponName: 'QA EXPLOSIVE', life: 2,
+          mesh: new THREE.Object3D(), forceMeleeDeflectionRoll: roll,
+        };
+        const result = interceptExplosiveWithMelee(projectile, 1 / 60);
+        return {
+          result, team: projectile.team, ownerIsPlayer: projectile.owner === player,
+          homing: !!projectile.homing, speed: +projectile.vel.length().toFixed(2),
+        };
+      };
+      return {
+        success: run(0.10), failure: run(0.90),
+        chance: MELEE_PROJECTILE_DEFLECTION_CHANCE,
+        lengthScale: MELEE_WEAPON_LENGTH_SCALE,
+        counters: {
+          contacts: meleeProjectileContacts,
+          deflections: meleeProjectileDeflections,
+          detonations: meleeProjectileDetonations,
+        },
+      };
+    },
     _debugState(){
       const selectedWeapon = player.suit.weapons[player.wi];
       const activeMuzzle = selectedWeapon ? activeMuzzleNode(player) : null;
@@ -9572,6 +9678,15 @@ export function startBattle(renderer, opts, onEnd){
         viewShieldPosition: viewShield.position.toArray(),
         viewShieldRotation: viewShield.rotation.toArray().slice(0, 3),
         killFeed: Array.from(killFeedEl.children, row => row.textContent),
+        meleeProjectileDefense: {
+          chance: MELEE_PROJECTILE_DEFLECTION_CHANCE,
+          lengthScale: MELEE_WEAPON_LENGTH_SCALE,
+          catchRadius: MELEE_PROJECTILE_CATCH_RADIUS,
+          contacts: meleeProjectileContacts,
+          deflections: meleeProjectileDeflections,
+          detonations: meleeProjectileDetonations,
+          last: lastMeleeProjectileContact,
+        },
         particleCount: particles.length + fx.activeCount,
         player: player.root.position.toArray(),
         enemies: mechs.filter(m => m.alive && !m.isPlayer && m.team === 'ZEON')

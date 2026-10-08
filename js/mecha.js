@@ -16,6 +16,7 @@ import { buildZeonCanonical } from './canonical-zeon.js';
 import { buildFederationCanonical } from './canonical-fed.js?v=74groundgmloadouts1';
 import { buildOriginalSuit, isOriginalSuit } from './original-suits.js';
 import { applyAnimeLook } from './anime-render.js';
+import { MELEE_WEAPON_LENGTH_SCALE, meleeWeaponReach } from './melee-defense.js?v=77meleedeflect1';
 
 const mat = (color, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.52, metalness: 0.3 }, extra));
 
@@ -1603,6 +1604,10 @@ export function poseAim(parts, pitch, k = 1){
 export function buildMech(suit){
   const built = buildMechRaw(suit);
   if (!built?.root) return built;
+  if (built.parts?.blade && suit.saber?.dmg > 0){
+    built.parts.blade.scale.z *= MELEE_WEAPON_LENGTH_SCALE;
+    built.parts.blade.userData.meleeDeflectionReach = meleeWeaponReach(suit.saber.name);
+  }
   applyAnimeLook(built.root, { parts: built.parts });
   const parts = built.parts;
   if (parts && typeof parts.rebuildGun === 'function' && !parts.rebuildGun.animeWrapped){
