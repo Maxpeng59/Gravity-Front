@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import { el, RNG, sfx, noise2D, clamp } from './util.js';
 import { SUITS, AIRCRAFT, suitById, ENVIRONMENTS, START_DAY } from './data.js?v=74groundgmloadouts1';
 import { genGalaxy, clearDetails, observe, news } from './galaxy.js';
-import { startBattle } from './battle.js?v=77meleedeflect1';
+import { startBattle } from './battle.js?v=78playablema1';
 import { buildMech } from './mecha.js?v=77meleedeflect1';
 import { buildCanonicalSpaceShip } from './canonical-space-ships.js?v=57shipordnance1';
 import { buildCanonicalLandship } from './canonical-landships.js';
@@ -379,6 +379,7 @@ function runBattle(opts, after){
     const qaBeamCharge = document.createElement('button');
     const qaAmmo = document.createElement('button');
     const qaMeleeDefense = document.createElement('button');
+    const qaMobileArmorFallback = document.createElement('button');
     const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
       const button = document.createElement('button');
       button.id = `gravity-debug-view-${kind}`;
@@ -416,7 +417,10 @@ function runBattle(opts, after){
     qaMeleeDefense.id = 'gravity-debug-melee-defense';
     qaMeleeDefense.textContent = 'QA MELEE DEFLECT';
     qaMeleeDefense.dataset.qaShipIndex = '9';
-    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, qaShipCombat, qaBeamCharge, qaAmmo, qaMeleeDefense, ...qaShipViews]) {
+    qaMobileArmorFallback.id = 'gravity-debug-mobile-armor-fallback';
+    qaMobileArmorFallback.textContent = 'QA MA FALLBACK';
+    qaMobileArmorFallback.dataset.qaShipIndex = '10';
+    for (const button of [qaUnpause, qaColonyFlight, qaColonySurface, qaColonyTurn, qaColonyRoll, qaMissileRack, qaFireOn, qaFireOff, qaState, qaFedRam, qaHelm, qaShipCombat, qaBeamCharge, qaAmmo, qaMeleeDefense, qaMobileArmorFallback, ...qaShipViews]) {
       button.type = 'button';
       if (button.dataset.qaShipIndex) {
         const top = 8 + Number(button.dataset.qaShipIndex) * 32;
@@ -461,6 +465,13 @@ function runBattle(opts, after){
     qaMeleeDefense.onclick = () => {
       document.documentElement.dataset.gravityMeleeDefense = JSON.stringify(battleHandle?._debugMeleeDefense?.() || null);
     };
+    qaMobileArmorFallback.onclick = () => {
+      const result = battleHandle?._debugDestroyPlayerMobileArmor?.() || null;
+      document.documentElement.dataset.gravityMobileArmorFallback = JSON.stringify(result);
+      qaMobileArmorFallback.textContent = result?.sortieContinues && result?.secondaryVisible
+        ? `QA ${String(result.secondarySuit || 'MS').toUpperCase()} DEPLOYED`
+        : 'QA MA FALLBACK';
+    };
     document.addEventListener('gravity-debug-unpause', unpause);
     document.addEventListener('gravity-debug-state', publishState);
     clearLocalBattleDebug = () => {
@@ -481,6 +492,7 @@ function runBattle(opts, after){
       qaBeamCharge.remove();
       qaAmmo.remove();
       qaMeleeDefense.remove();
+      qaMobileArmorFallback.remove();
       for (const button of qaShipViews) button.remove();
       delete document.documentElement.dataset.gravityBattleState;
       delete document.documentElement.dataset.gravityFedRam;
@@ -488,6 +500,7 @@ function runBattle(opts, after){
       delete document.documentElement.dataset.gravityShipCombat;
       delete document.documentElement.dataset.gravityBeamCharge;
       delete document.documentElement.dataset.gravityAmmo;
+      delete document.documentElement.dataset.gravityMobileArmorFallback;
       delete document.documentElement.dataset.gravityMeleeDefense;
       delete globalThis.__gravityBattle;
     };
@@ -1057,7 +1070,7 @@ const CUSTOM_OPERATIONS = [
   { id: 'breakthrough', name: 'BREAKTHROUGH', groundOnly: true, brief: 'Three phases: destroy the AA sites, hold the drop zone, then kill the sector commander.' },
 ];
 
-const custom = { op: 'sortie', suit: 'rx78', playerShip: null, env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
+const custom = { op: 'sortie', suit: 'rx78', playerShip: null, playerMobileArmor: null, env: 'ground', biome: 'random', map: null, enemies: [{ id: 'zaku2', n: 3, pos: { x: 0, z: 1150 } }], allies: [], army: 0, loadouts: {}, hoverCrafts: {},
   spawn: { player: { x: 0, z: -260 } }, terrainSeed: Math.floor(Math.random() * 1e9) };
 // ---- terrain preview for the deployment map: replicates battle.js's stock ground hfn from the SAME seed, so the
 // relief you see IS the battlefield (mountains/hills/valleys). Only for random biomes (no authored map) + ground.
@@ -1116,7 +1129,11 @@ const CUSTOM_PROP_IDS = new Set([...SHIP_IDS, ...MOBILE_ARMOR_IDS, ...STATIONARY
 const shipById = id => SHIPS.find(ship => ship.id === id) || null;
 const unitFaction = id => shipById(id)?.faction || mobileArmorById(id)?.faction || stationaryBatteryById(id)?.faction || suitById(id)?.faction || null;
 const opposingFaction = faction => faction === 'ZEON' ? 'FED' : 'ZEON';
-const customPlayerFaction = () => custom.playerShip ? shipById(custom.playerShip).faction : suitById(custom.suit)?.faction || 'FED';
+const secondarySuitEligible = suit => !!suit && !suit.air && !suit.vehicle && !suit.supportOnly;
+const defaultSecondarySuit = faction => faction === 'ZEON' ? 'zaku2' : 'gm';
+const customPlayerFaction = () => custom.playerMobileArmor
+  ? mobileArmorById(custom.playerMobileArmor).faction
+  : custom.playerShip ? shipById(custom.playerShip).faction : suitById(custom.suit)?.faction || 'FED';
 function normalizeCustomSidesForPlayer(){
   const friendly = customPlayerFaction(), hostile = opposingFaction(friendly);
   custom.enemies = custom.enemies.filter(entry => unitFaction(entry.id) === hostile);
@@ -1149,7 +1166,7 @@ function applyRecommendedMapForces(map){
   const preset = map?.recommendedForces;
   if (!preset) return;
   custom.army = 0;
-  if (pvpSuit(preset.playerSuitId) && !custom.playerShip) custom.suit = preset.playerSuitId;
+  if (pvpSuit(preset.playerSuitId) && !custom.playerShip && !custom.playerMobileArmor) custom.suit = preset.playerSuitId;
   custom.enemies = preset.enemies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   custom.allies = preset.allies.map(entry => ({ ...entry, pos: { ...entry.pos } }));
   if (map.spawn?.player) custom.spawn.player = { ...map.spawn.player };
@@ -1178,11 +1195,20 @@ function renderCustomLoadout(){
     sfx('ui', 0.1);
     renderCustom();
   });
+  if (custom.playerMobileArmor){
+    const notice = el('div', 'hovercraft-card');
+    notice.innerHTML = `<div class="hovercraft-copy"><b>SECONDARY MOBILE SUIT · ${suit.name}</b><span>Its loadout is carried in reserve. If the mobile armor is destroyed, control transfers immediately to this MS and the sortie continues.</span></div>`;
+    box.prepend(notice);
+  }
 }
 
 function renderCustomHoverCraft(){
   const box = $('custom-hovercraft'); if (!box) return;
-  if (custom.playerShip){
+  if (custom.playerShip || custom.playerMobileArmor){
+    if (custom.playerMobileArmor){
+      box.innerHTML = `<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>INTEGRAL MOBILE-ARMOR PROPULSION</b><span>The reserve mobile suit deploys without a hover craft when the mobile armor is destroyed.</span></div></div>`;
+      return;
+    }
     const landship = !!landshipProfile(custom.playerShip);
     box.innerHTML = `<div class="hovercraft-card unavailable"><div class="hovercraft-copy"><b>${landship ? 'INTEGRAL LANDSHIP DRIVE' : 'INTEGRAL CAPITAL-SHIP DRIVE'}</b><span>${landship ? 'Use W/S to drive or reverse, A/D to steer only the hull, Shift for flank speed, and the mouse to control the turret view.' : 'Use W/S thrust, A/D turn, Space/C vertical verniers, and Shift for flank speed.'}</span></div></div>`;
     return;
@@ -1205,6 +1231,38 @@ function renderCustomHoverCraft(){
 
 function renderCustom(){
   const grid = $('suit-grid'); grid.innerHTML = '';
+  for (const armor of MOBILE_ARMORS){
+    const profile = mobileArmorProfile(armor.id);
+    const card = el('div', 'suit-card' + (custom.playerMobileArmor === armor.id ? ' sel' : ''));
+    const top = el('div', '');
+    top.appendChild(el('span', 'fac ' + armor.faction, 'MOBILE ARMOR'));
+    card.appendChild(top);
+    card.appendChild(el('div', 'nm', armor.name));
+    card.appendChild(el('div', 'cd', armor.code));
+    card.appendChild(statBar('HULL', profile.hp / 52000));
+    card.appendChild(statBar('SPD', profile.speed / 28));
+    card.appendChild(statBar('PWR', profile.mainDamage / 520));
+    card.tabIndex = 0;
+    card.setAttribute('role', 'button');
+    card.setAttribute('aria-label', `Pilot ${armor.name} with secondary mobile suit`);
+    const selectArmor = () => {
+      custom.playerMobileArmor = armor.id;
+      custom.playerShip = null;
+      const current = suitById(custom.suit);
+      if (!secondarySuitEligible(current) || current.faction !== armor.faction)
+        custom.suit = defaultSecondarySuit(armor.faction);
+      custom.op = 'sortie';
+      normalizeCustomSidesForPlayer();
+      sfx('ui', 0.1);
+      renderCustom();
+      setFold('readout', true);
+    };
+    card.onclick = selectArmor;
+    card.onkeydown = event => {
+      if (event.key === 'Enter' || event.key === ' '){ event.preventDefault(); selectArmor(); }
+    };
+    grid.appendChild(card);
+  }
   for (const ship of SHIPS.filter(unit => unit.env === custom.env)){
     const profile = landshipProfile(ship.id) || spaceShipProfile(ship.id);
     const card = el('div', 'suit-card' + (custom.playerShip === ship.id ? ' sel' : ''));
@@ -1221,6 +1279,7 @@ function renderCustom(){
     card.setAttribute('aria-label', `Pilot ${ship.name}`);
     const selectShip = () => {
       custom.playerShip = ship.id;
+      custom.playerMobileArmor = null;
       custom.op = 'sortie';
       normalizeCustomSidesForPlayer();
       sfx('ui', 0.1);
@@ -1235,9 +1294,11 @@ function renderCustom(){
   }
   // mobile suits, then every fighter you can also pilot
   for (const s of [...SUITS.filter(unit => !unit.supportOnly), ...AIRCRAFT]){
+    const reserveChoice = custom.playerMobileArmor && secondarySuitEligible(s)
+      && s.faction === mobileArmorById(custom.playerMobileArmor)?.faction;
     const card = el('div', 'suit-card' + (!custom.playerShip && custom.suit === s.id ? ' sel' : ''));
     const top = el('div', '');
-    top.appendChild(el('span', 'fac ' + s.faction, s.air ? 'FIGHTER' : s.faction));
+    top.appendChild(el('span', 'fac ' + s.faction, reserveChoice ? 'SECONDARY MS' : s.air ? 'FIGHTER' : s.faction));
     card.appendChild(top);
     card.appendChild(el('div', 'nm', s.name));
     card.appendChild(el('div', 'cd', s.code));
@@ -1247,6 +1308,7 @@ function renderCustom(){
     card.onclick = () => {
       custom.suit = s.id;
       custom.playerShip = null;
+      if (!reserveChoice) custom.playerMobileArmor = null;
       normalizeCustomSidesForPlayer();
       sfx('ui', 0.1);
       renderCustom();
@@ -1275,7 +1337,7 @@ function renderCustom(){
     for (const op of CUSTOM_OPERATIONS){
       const blocked = op.groundOnly && custom.env !== 'ground';
       const b = el('button', 'small' + (custom.op === op.id ? ' sel' : ''), op.name);
-      b.disabled = blocked || custom.army > 0 || (!!custom.playerShip && op.id !== 'sortie');
+      b.disabled = blocked || custom.army > 0 || (!!(custom.playerShip || custom.playerMobileArmor) && op.id !== 'sortie');
       b.title = op.brief;
       b.onclick = () => { custom.op = op.id; renderCustom(); };
       opBox.appendChild(b);
@@ -1448,8 +1510,15 @@ function renderCustom(){
   renderCustomLoadout();
   renderCustomHoverCraft();
   const loadout = custom.loadouts[custom.suit] || null;
-  msPreview.setSuit(custom.suit, loadout, custom.playerShip);
-  if (custom.playerShip) renderShipStats(custom.playerShip);
+  const primaryHeavy = custom.playerMobileArmor || custom.playerShip;
+  msPreview.setSuit(custom.suit, loadout, primaryHeavy);
+  if (primaryHeavy){
+    renderShipStats(primaryHeavy);
+    if (custom.playerMobileArmor){
+      const reserve = suitById(custom.suit);
+      $('ms-stats').insertAdjacentHTML('beforeend', `<div class="wl">SECONDARY MS ON DESTRUCTION<br>▸ <b>${reserve.name}</b><br>▸ ${reserve.code}</div>`);
+    }
+  }
   else renderMsStats(applyWeaponLoadout(suitById(custom.suit), loadout));
   ensureMapControls();
   spawnMap.show();
@@ -1510,7 +1579,7 @@ $('btn-launch-custom').onclick = () => {
   const playerFaction = customPlayerFaction(), enemyFaction = opposingFaction(playerFaction);
   // a land-only suit can't deploy in space — drop the sortie to the surface
   let env = custom.env;
-  if (!custom.playerShip && env === 'space' && !hoverCraftSpaceCapable(suitById(custom.suit), custom.hoverCrafts[custom.suit])){
+  if (!custom.playerShip && !custom.playerMobileArmor && env === 'space' && !hoverCraftSpaceCapable(suitById(custom.suit), custom.hoverCrafts[custom.suit])){
     env = 'ground';
     modal('GROUND-ONLY UNIT', `${suitById(custom.suit).name} cannot operate in space. Sortie redirected to a planetary surface.`, [{ label: 'UNDERSTOOD' }]);
   }
@@ -1555,6 +1624,12 @@ $('btn-launch-custom').onclick = () => {
     playerControlled: true,
     pos: { ...custom.spawn.player },
   });
+  if (custom.playerMobileArmor) customShips.unshift({
+    kind: custom.playerMobileArmor,
+    team: playerFaction,
+    playerControlled: true,
+    pos: { ...custom.spawn.player },
+  });
   const customBatteries = custom.army > 0 ? [] : [
     ...enemyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
     ...allyEx.filter(o => STATIONARY_BATTERY_IDS.has(o.id)),
@@ -1568,7 +1643,9 @@ $('btn-launch-custom').onclick = () => {
     terrainSeed: custom.terrainSeed,            // the exact seed previewed on the deployment map → WYSIWYG terrain
     playerSuitId: custom.suit, playerHp: 1, playerLoadout: custom.loadouts[custom.suit] || null,
     playerTeam: playerFaction, playerShipKind: custom.playerShip,
-    hoverCraft: !custom.playerShip && hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
+    ...(custom.playerMobileArmor ? { playerShipKind: custom.playerMobileArmor } : {}),
+    playerMobileArmorKind: custom.playerMobileArmor,
+    hoverCraft: !custom.playerShip && !custom.playerMobileArmor && hoverCraftEquipped(suitById(custom.suit), custom.hoverCrafts[custom.suit]),
     enemies, allies,
     spawn: custom.army > 0 ? null : custom.spawn, // deployment-map centres (manual sorties only; mass battle keeps its own spread)
     mission: staged
