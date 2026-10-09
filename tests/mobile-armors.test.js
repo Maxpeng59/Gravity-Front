@@ -42,6 +42,16 @@ test('each mobile armor builds its own large silhouette and full independent tur
   assert.match(mobileArmors, /weaponName: 'DENDROBIUM MICRO-MISSILE CONTAINER'/);
 });
 
+test('reference remodels use authored plates and preserve each canonical outline', () => {
+  assert.match(mobileArmors, /function frontPlate\(/);
+  assert.match(mobileArmors, /function topPlate\(/);
+  assert.match(mobileArmors, /big-zam-reference-layered-manta-shell-command-cupola-horns-28-port-band-segmented-legs-articulated-claws/);
+  assert.match(mobileArmors, /apsaras-iii-reference-three-lobed-trefoil-shell-exposed-belly-yellow-cannon-collar-four-fins-dorsal-spikes-three-braces/);
+  assert.match(mobileArmors, /neue-ziel-reference-tiny-core-enormous-tapered-binders-exposed-rear-thrusters-wired-claws-four-subarms-trident-tail/);
+  assert.match(mobileArmors, /dendrobium-reference-140m-open-orchis-truss-eight-separated-containers-visible-stamen-offset-mega-cannon-ifield-folding-claws-six-thrusters/);
+  assert.match(main, /'bigzam', 'apsaras3', 'neueziel', 'dendrobium'/);
+});
+
 test('battle runtime treats mobile armors as moving targetable heavy props in every environment', () => {
   assert.match(battle, /const mobileArmor = mobileArmorProfile\(kind\)/);
   assert.match(battle, /const spaceProfile = mobileArmor && SPACE \? mobileArmor : spaceShipProfile\(kind\)/);

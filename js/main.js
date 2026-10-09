@@ -385,7 +385,7 @@ function runBattle(opts, after){
     const qaAmmo = document.createElement('button');
     const qaMeleeDefense = document.createElement('button');
     const qaMobileArmorFallback = document.createElement('button');
-    const qaShipViews = ['salamis', 'magellan', 'musai'].map((kind, index) => {
+    const qaShipViews = ['salamis', 'magellan', 'musai', 'bigzam', 'apsaras3', 'neueziel', 'dendrobium'].map((kind, index) => {
       const button = document.createElement('button');
       button.id = `gravity-debug-view-${kind}`;
       button.textContent = `QA ${kind.toUpperCase()}`;
