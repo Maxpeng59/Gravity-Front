@@ -1591,7 +1591,7 @@ $('btn-launch-custom').onclick = () => {
   const activeMap = custom.map ? MAPS.find(m => m.id === custom.map) : null;
   if (activeMap) env = 'ground'; // named battlefields are ground-only
   // mass battle: generate N-per-side armies from random pools; otherwise use the manual lists
-  const zPool = ['zaku2', 'zaku2b', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
+  const zPool = ['zaku1', 'zaku2', 'zaku2g', 'zaku2b', 'zaku1sniper', 'gouf', 'dom', 'gelgoog', 'goufnh', 'acguy', 'weasel', 'weasel'];
   const enemyPool = enemyFaction === 'FED' ? ARMY_FED : zPool;
   const allyPool = playerFaction === 'FED' ? ARMY_FED : zPool;
   // expand the { id, n, pos } entries into a flat { id, pos } list, capped per side (LOD keeps big fields performant)

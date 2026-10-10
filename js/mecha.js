@@ -184,12 +184,12 @@ export function heldMuzzleZ(suit, w){
     : /GRENADE/.test(w.name) ? 3.9
     : /MISSILE/.test(w.name) ? 4.3
     : /FINGER/.test(w.name) ? 3.6
-    : /HEAT ROD/.test(w.name) ? 4.9
+    : /HEAT ROD|SEA SERPENT/.test(w.name) ? 4.9
     : /SPRAY/.test(w.name) ? 4.0
     : /MINIGUN/.test(w.name) ? 5.4
     : /100MM/.test(w.name) ? 5.8
     : /GATLING/.test(w.name) ? 6.2
-    : (w.dmg > 600 || /SNIPER|SATELLITE/.test(w.name)) ? 8.7
+    : (w.dmg > 600 || /SNIPER|SATELLITE|LONG-RANGE/.test(w.name)) ? 8.7
     : w.type === 'bazooka' ? (gmStyle ? 5.6 : 4.4) : (gmStyle ? 6.2 : 5.9);
 }
 // held weapon, shaped to MATCH ITS NAME: sniper scope+bipod, rotary gatling, Zaku ammo drum,
@@ -213,7 +213,7 @@ export function buildWeaponMesh(suit, w){
       gun.add(cyl(0.5, 0.26, 0.32, M.scope, 0, 0.15, 3.7).rotateX(Math.PI / 2)); // glowing spray emitter
       return gun;
     }
-    if (/HEAT ROD/.test(nm)){ // Gouf heat rod: forearm launcher, coil rings, white-hot tip
+    if (/HEAT ROD|SEA SERPENT/.test(nm)){ // physical/electrical rod launcher, not a chargeable beam rifle
       gun.add(box(1.25, 1.0, 2.8, M.dark, 0, 0.1, 0.9));                    // launcher body
       gun.add(box(1.35, 0.3, 2.9, M.accent, 0, 0.7, 0.9));                  // armored cover
       for (let i = 0; i < 4; i++) gun.add(cyl(0.5, 0.5, 0.18, M.main, 0, 0.1, 2.5 + i * 0.5).rotateX(Math.PI / 2)); // coil
@@ -264,6 +264,16 @@ export function buildWeaponMesh(suit, w){
     return gun;
   }
   if (w.type === 'mg'){
+    if (/LONG-RANGE RIFLE/.test(nm)){
+      gun.add(box(0.78, 1.1, 3.4, M.dark, 0, 0, 0.25));
+      gun.add(box(0.65, 0.7, 1.1, M.accent, 0, -0.85, 0.55));
+      gun.add(box(0.5, 1.1, 0.75, M.dark, 0, -1.0, -0.7));
+      gun.add(cyl(0.24, 0.28, 6.5, M.dark, 0, 0.1, 5.15).rotateX(Math.PI / 2));
+      gun.add(cyl(0.38, 0.38, 0.42, M.accent, 0, 0.1, 8.42).rotateX(Math.PI / 2));
+      gun.add(cyl(0.35, 0.35, 2.4, M.dark, 0, 1.05, -0.15).rotateX(Math.PI / 2));
+      gun.add(cyl(0.28, 0.28, 0.2, M.scope, 0, 1.05, -1.4).rotateX(Math.PI / 2));
+      return gun;
+    }
     if (/GATLING/.test(nm)){ // rotary gatling: motor block, housing, 4-barrel cluster, side ammo drum
       gun.add(box(1.1, 1.4, 2.8, M.dark, 0, 0, 0.2));                       // motor housing
       gun.add(box(0.5, 1.3, 0.7, M.dark, 0, -1.1, -0.6));                   // grip
@@ -310,6 +320,16 @@ export function buildWeaponMesh(suit, w){
       gun.add(box(0.1, 0.35, 0.1, M.dark, 0, 0.5, 1.9));                   // front sight post
       for (const sx of [-0.35, 0.35]) gun.add(box(0.08, 0.08, 2.0, M.dark, sx, 0, -1.7)); // folding wire stock struts
       gun.add(box(0.85, 0.1, 0.1, M.dark, 0, 0, -2.6));                    // stock butt bar
+      return gun;
+    }
+    if (/90MM/.test(nm) && !gmStyle){ // Zeon compact 90 mm gun: box feed rather than the ZMP-50D drum
+      gun.add(box(0.78, 1.1, 3.1, M.dark, 0, 0, 0.5));
+      gun.add(box(0.8, 0.25, 2.7, M.main, 0, 0.67, 0.4));
+      gun.add(box(0.58, 1.3, 0.88, M.dark, 0, -1.05, 0.82));
+      gun.add(box(0.5, 1.0, 0.65, M.dark, 0, -0.95, -0.65));
+      gun.add(cyl(0.18, 0.2, 3.5, M.dark, 0, 0.12, 4.05).rotateX(Math.PI / 2));
+      gun.add(cyl(0.28, 0.25, 0.42, M.dark, 0, 0.12, 5.85).rotateX(Math.PI / 2));
+      gun.add(box(0.42, 0.7, 0.55, M.dark, 0, -0.65, 2.55));
       return gun;
     }
     if (gmStyle){
@@ -992,7 +1012,11 @@ function equipCanonicalHumanoid(suit, M, built){
       parts.aimArms = integrated ? (parts.integratedAimArms?.[wi] || []) : [parts.armR];
       parts.aimArm = parts.aimArms[0] || null;
       parts.aimGun = null; parts.gun = null; parts.heldWeapon = null;
-      if (integrated) return;
+      if (integrated){
+        const fixedMuzzle = parts.integratedMuzzles?.[wi];
+        if (fixedMuzzle){ fixedMuzzle.add(muzzle); muzzle.position.set(0, 0, 0); }
+        return;
+      }
       const next = guns.get(wi) || makeGun(weapon, wi);
       // Enforce the shared humanoid contract even if a cached gun was moved by
       // an earlier custom state: every single-handed ranged weapon lives on the
@@ -1012,7 +1036,13 @@ function equipCanonicalHumanoid(suit, M, built){
   if (!parts.blade){
     const name = (suit.saber && suit.saber.name || '').toUpperCase();
     const blade = new THREE.Group();
-    if (/HAWK|AXE/.test(name)){
+    if (/BEAM AXE/.test(name)){
+      blade.add(cyl(0.15, 0.15, 4.6, M.dark, 0, 0, 0).rotateX(Math.PI / 2));
+      blade.add(cyl(0.34, 0.34, 0.5, M.trim, 0, 0, 2.2).rotateX(Math.PI / 2));
+      const edge = box(0.22, 2.85, 1.65, M.blade, 0, 0.9, 2.75);
+      edge.rotation.z = -0.25; blade.add(edge);
+      blade.add(box(0.13, 2.7, 0.35, M.blade, 0, 1.1, 3.55));
+    } else if (/HAWK|AXE/.test(name)){
       blade.add(cyl(0.13, 0.13, 4.6, M.dark, 0, 0, 0).rotateX(Math.PI / 2));
       blade.add(box(0.25, 2.7, 2.0, M.gold, 0, 0.75, 2.55));
       blade.add(box(0.28, 3.0, 0.34, M.heat, 0, 0.8, 3.58));

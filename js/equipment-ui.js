@@ -34,7 +34,9 @@ export function renderEquipmentPanel(container, suit, loadout, onChange, config 
     container.appendChild(node('div', 'equipment-fixed-title', 'FIXED ARMAMENT'));
     container.appendChild(node('div', 'equipment-fixed-copy', suit.air
       ? 'Aircraft weapon stations cannot be changed in the mobile-suit equipment bay.'
-      : 'This specialist frame uses integrated weapons with no compatible hand-equipment slots.'));
+      : suit.id === 'zaku1'
+        ? 'MS-05 field kit: 90 mm machine gun only. No alternate rack or melee weapon.'
+        : 'This frame has a fixed stock weapon kit with no compatible hand-equipment slots.'));
     return;
   }
 

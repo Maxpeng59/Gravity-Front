@@ -271,7 +271,27 @@ export const SUITS = [
     saber: { name: 'NONE', dmg: 0 }, cost: 16000,
   },
   {
-    // Zaku assault: just the 50-round low-damage machine gun and a heat hawk
+    // Player-requested MS-05 field kit: deliberately 90 mm only, with no hawk or alternate rack.
+    id: 'zaku1', name: 'MS-05 Zaku I', code: 'MS-05', faction: 'ZEON', style: 'zaku',
+    hp: 2700, armor: 6, walk: 24, boost: 65, boostFuel: 68, scale: 0.96,
+    colors: { main: 0x526781, chest: 0x343e52, accent: 0x42606c, trim: 0x899ca2 },
+    weapons: [
+      { name: '90MM ZAKU MACHINE GUN', type: 'mg', dmg: 52, rof: 8.5, clip: 80, reload: 2.6, speed: 980, spread: 0.022, pref: 290 },
+    ],
+    saber: { name: 'NONE', dmg: 0 }, cost: 5400,
+  },
+  {
+    // MS-05L's generator backpack feeds its long-range beam sniper rifle.
+    id: 'zaku1sniper', name: 'MS-05L Zaku I Sniper Type', code: 'MS-05L', faction: 'ZEON', style: 'zaku',
+    hp: 2800, armor: 6, walk: 22, boost: 62, boostFuel: 70, scale: 0.97,
+    colors: { main: 0x808569, chest: 0x424d42, accent: 0x626f56, trim: 0xa8a78b },
+    weapons: [
+      { name: 'MS-05L BEAM SNIPER RIFLE', type: 'beam', dmg: 790, rof: 0.47, clip: 6, reload: 3.9, speed: 2200, spread: 0.0012, pref: 1050, scope: true, recoil: 0.9 },
+    ],
+    saber: { name: 'NONE', dmg: 0 }, cost: 9900,
+  },
+  {
+    // Zaku assault: the rest of its Zeon field armory is selectable in the unit readout.
     id: 'zaku2', name: 'MS-06F Zaku II (Assault)', code: 'MS-06F', faction: 'ZEON', style: 'zaku',
     hp: 3200, armor: 8, walk: 27, boost: 78, boostFuel: 80, scale: 0.99,
     colors: { main: 0x9aaa8f, chest: 0x3b3e46, accent: 0x66715e, trim: 0xaeb9a5 },
@@ -284,7 +304,7 @@ export const SUITS = [
     // MS-06J Zaku II Ground Type — terrestrial cooling and mobility changes; it still walks/runs (no hover system).
     id: 'zaku2g', name: 'MS-06J Zaku II (Ground Type)', code: 'MS-06J', faction: 'ZEON', style: 'zaku',
     groundOnly: true, landType: true,
-    hp: 3200, armor: 9, walk: 30, boost: 84, boostFuel: 86, scale: 0.99,
+    hp: 3200, armor: 9, walk: 39, boost: 110, boostFuel: 92, scale: 0.99,
     colors: { main: 0x9aaa8f, chest: 0x3b3e46, accent: 0x66715e, trim: 0xaeb9a5 },
     weapons: [
       { name: 'ZMP-50D 120MM MACHINE GUN', type: 'mg', dmg: 44, rof: 8, clip: 50, reload: 2.8, speed: 840, spread: 0.024 },
@@ -312,6 +332,30 @@ export const SUITS = [
       { name: 'H&L-SB25K ZAKU BAZOOKA', type: 'bazooka', dmg: 480, rof: 0.8, clip: 5, reload: 3.2, speed: 260, spread: 0.012, splash: 14 },
     ],
     saber: { name: 'HEAT HAWK TYPE-5', dmg: 430 }, cost: 12000,
+  },
+  {
+    // Neo Zeon's late-UC direct Zaku successor: beam rifle and torso beam cannon battery.
+    id: 'zaku3', name: 'AMX-011 Zaku III', code: 'AMX-011', faction: 'ZEON', style: 'zaku',
+    hp: 5600, armor: 15, walk: 32, boost: 112, boostFuel: 115, scale: 1.12,
+    colors: { main: 0xa4a3a9, chest: 0x555b69, accent: 0x797b88, trim: 0xc0bec1 },
+    weapons: [
+      { name: 'AMX-011 BEAM RIFLE', type: 'beam', dmg: 480, rof: 1.55, clip: 18, reload: 2.7, speed: 1580, spread: 0.0037, pref: 570 },
+      { name: 'TORSO BEAM CANNONS', type: 'beam', dmg: 225, rof: 2.4, clip: 24, reload: 3.0, speed: 1350, spread: 0.008, pref: 360, integrated: true },
+      { name: 'HEAD BEAM CANNON', type: 'beam', dmg: 165, rof: 2.7, clip: 28, reload: 2.7, speed: 1270, spread: 0.011, pref: 290, integrated: true },
+    ],
+    saber: { name: 'BEAM SABER', dmg: 720 }, cost: 23800,
+  },
+  {
+    // Mars Zeon's renewed Zaku: beam rifle, shield guns and beam axe.
+    id: 'rfzaku', name: 'OMS-06RF RF Zaku', code: 'OMS-06RF', faction: 'ZEON', style: 'zaku',
+    hp: 5100, armor: 14, walk: 37, boost: 122, boostFuel: 120, scale: 1.04,
+    colors: { main: 0x819b78, chest: 0x354b46, accent: 0x536d64, trim: 0xb0b7a3 },
+    weapons: [
+      { name: 'RF ZAKU BEAM RIFLE', type: 'beam', dmg: 450, rof: 1.7, clip: 20, reload: 2.5, speed: 1600, spread: 0.004, pref: 540 },
+      { name: 'RF ZAKU 2-BARREL VULCAN GUN', type: 'mg', dmg: 57, rof: 12.0, clip: 120, reload: 2.8, speed: 1250, spread: 0.025, pref: 360, integrated: true },
+      { name: 'RF ZAKU SEA SERPENT', type: 'beam', dmg: 310, rof: 0.8, clip: 8, reload: 3.2, speed: 620, spread: 0.008, pref: 175, integrated: true, nonChargeBeam: true },
+    ],
+    saber: { name: 'BEAM AXE', dmg: 680 }, cost: 22000,
   },
   {
     // Zaku Tank: a Zaku upper body on a tracked lower body — slow, tough fire-support with a shoulder bazooka

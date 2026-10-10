@@ -152,7 +152,7 @@ const liteKind = suit => suit.style === 'fighter' ? 'air' : suit.style === 'tank
 const FED_POOL = ['gm', 'gm', 'gmbazooka', 'gmg_std', 'guncannon'];
 const SHIELDED_IDS = new Set([
   'rx78','fa78','rx79g','ez8','nt1','gp01','mk2','gm','gmbazooka','gmg_a','gmg_std','gmg_b','rgm79sp',
-  'zaku2','zaku2g','zaku2b','zaku2s','gouf','goufnh','gelgoog','gelgoogs',
+  'zaku2','zaku2g','zaku2b','zaku2s','zaku3','rfzaku','gouf','goufnh','gelgoog','gelgoogs',
 ]);
 // ground-only suits get swapped for a space-capable equivalent when fielded in orbit
 const SPACE_SUB = { gouf: 'zaku2', goufnh: 'zaku2b', guntank: 'guncannon', type61: 'gm', magella: 'zaku2', weasel: 'zaku2', galcezon: 'zaku2' };
@@ -4044,7 +4044,7 @@ export function startBattle(renderer, opts, onEnd){
   let sniperSwayYaw = 0, sniperSwayPitch = 0, sniperLatched = false, sniperRmbHeld = false;
 
   const selectedWeapon = () => player.wi === SABER_SLOT ? null : player.suit.weapons[player.wi];
-  const isChargeableBeam = weapon => weapon?.type === 'beam' && !/HEAT ROD/i.test(weapon.name || '');
+  const isChargeableBeam = weapon => weapon?.type === 'beam' && !/HEAT ROD/i.test(weapon.name || '') && !weapon.nonChargeBeam;
   const activeAimProfile = () => sniperMode ? weaponAimProfile(selectedWeapon()) : null;
   const aimMoveScale = () => activeAimProfile()?.moveScale ?? 1;
 

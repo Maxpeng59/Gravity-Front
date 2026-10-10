@@ -14,7 +14,7 @@ const PI = Math.PI;
 const V3 = THREE.Vector3;
 
 const supported = new Set([
-  'zaku2', 'zaku2b', 'zaku2g', 'zaku2s', 'zakutank',
+  'zaku1', 'zaku1sniper', 'zaku2', 'zaku2b', 'zaku2g', 'zaku2s', 'zaku3', 'rfzaku', 'zakutank',
   'gouf', 'goufnh', 'dom', 'gelgoog', 'gelgoogs', 'magella', 'weasel', 'acguy',
 ]);
 
@@ -22,8 +22,12 @@ const supported = new Set([
 // The J-type is the normal ground-use Zaku II, so it remains Zeon green; a tan Desert Type would
 // require the MS-06D designation. Command variants use the distinctive Char palettes without gold.
 const PALETTES = {
+  zakuI:        { main: 0x526781, chest: 0x343e52, accent: 0x42606c, trim: 0x899ca2 },
+  zakuISniper:  { main: 0x808569, chest: 0x424d42, accent: 0x626f56, trim: 0xa8a78b },
   zaku:         { main: 0x9aaa8f, chest: 0x3b3e46, accent: 0x66715e, trim: 0xaeb9a5 },
   charZaku:     { main: 0xd75d68, chest: 0x67262b, accent: 0xa72d31, trim: 0x393c42 },
+  zakuIII:      { main: 0xa4a3a9, chest: 0x555b69, accent: 0x797b88, trim: 0xc0bec1 },
+  rfZaku:       { main: 0x819b78, chest: 0x354b46, accent: 0x536d64, trim: 0xb0b7a3 },
   zakuTank:     { main: 0x4f5948, chest: 0x28302d, accent: 0x68715d, trim: 0x8b9185 },
   gouf:         { main: 0x2869a9, chest: 0x182b45, accent: 0x245181, trim: 0xd88a2d },
   goufCustom:   { main: 0x465666, chest: 0x1c2730, accent: 0x293b4c, trim: 0x8a9296 },
@@ -189,10 +193,10 @@ function monoHead(M, options = {}){
     for (const yy of [-0.62, -0.79, -0.96]) stat.add(box(1.0, 0.055, 0.12, M.frame, 0, yy, 1.67));
     for (const sx of [-1, 1]){
       stat.add(sideCyl(0.38, 0.38, 0.34, M.dark, sx * 1.25, -0.14, 0.28, 12));
-      stat.add(ribbedCable([
-        [sx * 1.2, -0.08, 0.35], [sx * 1.38, -0.38, 0.78],
-        [sx * 1.13, -0.86, 1.16], [sx * 0.7, -0.93, 1.42],
-      ], 0.2, M.main, M.dark, 9));
+      if (!options.old) stat.add(ribbedCable([
+          [sx * 1.2, -0.08, 0.35], [sx * 1.38, -0.38, 0.78],
+          [sx * 1.13, -0.86, 1.16], [sx * 0.7, -0.93, 1.42],
+        ], 0.2, M.main, M.dark, 9));
     }
     if (options.commander || options.gouf){
       const horn = profile([[-0.18, 0.82], [0.02, 2.3], [0.35, 0.86]], [], 0.14, M.main, 0, 0, 0.08);
@@ -253,16 +257,18 @@ function makeBeamNaginata(M){
 
 function buildZaku(suit, rawM){
   const M = mats(rawM), root = new THREE.Group(), parts = { flames: [] };
+  const old = suit.id === 'zaku1' || suit.id === 'zaku1sniper';
+  const sniper = suit.id === 'zaku1sniper', rf = suit.id === 'rfzaku';
   const ground = suit.id === 'zaku2g', commander = suit.id === 'zaku2s';
   const stat = new THREE.Group();
 
   for (const [key, sx] of [['legL', -1], ['legR', 1]]){
     const leg = zeonLeg(M, sx, {
-      thigh: M.main, shin: M.main, knee: M.accent, calf: ground ? M.chest : M.main,
+      thigh: M.main, shin: M.main, knee: M.accent, calf: ground ? M.chest : M.main, cable: !old,
     });
     leg.position.set(sx * 1.75, 9.25, 0); root.add(leg); parts[key] = leg;
     // J-type replaces the F-type's rear calf apogee hardware with simple armor plates.
-    if (!ground){
+    if (!ground && !old){
       const pod = new THREE.Group(); pod.position.set(sx * 1.75, 3.55, -1.25);
       pod.add(fwdCyl(0.23, 0.34, 0.55, M.frame, 0, 0, 0, 9)); root.add(pod);
     }
@@ -289,37 +295,148 @@ function buildZaku(suit, rawM){
     stat.add(box(0.72, 0.16, 0.22, M.dark, sx * 1.52, yy, 1.81));
 
   // Waist and torso power transmission pipes are one of the frame's defining shapes.
-  stat.add(ribbedCable([
-    [-2.65, 10.75, 0.85], [-3.0, 10.72, 0], [-2.5, 10.72, -1.05],
-    [0, 10.72, -1.45], [2.5, 10.72, -1.05], [3.0, 10.72, 0], [2.65, 10.75, 0.85],
-  ], 0.25, M.frame, M.dark, 22));
-  stat.add(ribbedCable([
-    [-1.85, 14.15, 1.3], [-2.15, 14.7, 0.7], [-1.55, 15.1, 0.1],
-    [1.55, 15.1, 0.1], [2.15, 14.7, 0.7], [1.85, 14.15, 1.3],
-  ], 0.22, M.frame, M.dark, 16));
+  if (!old){
+    stat.add(ribbedCable([
+      [-2.65, 10.75, 0.85], [-3.0, 10.72, 0], [-2.5, 10.72, -1.05],
+      [0, 10.72, -1.45], [2.5, 10.72, -1.05], [3.0, 10.72, 0], [2.65, 10.75, 0.85],
+    ], 0.25, M.frame, M.dark, 22));
+    stat.add(ribbedCable([
+      [-1.85, 14.15, 1.3], [-2.15, 14.7, 0.7], [-1.55, 15.1, 0.1],
+      [1.55, 15.1, 0.1], [2.15, 14.7, 0.7], [1.85, 14.15, 1.3],
+    ], 0.22, M.frame, M.dark, 16));
+  }
   stat.add(chamferBox(3.25, 2.65, 1.45, M.dark, 0, 13.45, -2.05, 0.18));
   stat.add(box(2.45, 0.34, 0.18, M.frame, 0, 13.55, -2.85));
   root.add(compactGroup(stat));
 
   addBackThrusters(root, parts, M, 12.75, -2.9, [-0.86, 0.86], 0.43);
 
-  const mh = monoHead(M, { commander }); mh.head.position.set(0, 16.15, 0);
+  const mh = monoHead(M, { commander, old }); mh.head.position.set(0, 16.15, 0);
   root.add(mh.head); parts.head = mh.head; parts.eye = mh.eye; parts.monoeye = mh.monoeye; parts.eyeMat = M.eye;
+  if (sniper){
+    // Distinct MS-05L rangefinder and the generator that supplies its beam rifle.
+    mh.head.add(box(0.64, 0.42, 1.2, M.dark, -0.8, 1.0, 0.7));
+    mh.head.add(fwdCyl(0.24, 0.24, 0.18, M.eye, -0.8, 1.0, 1.33));
+    root.add(chamferBox(3.0, 4.25, 1.9, M.chest, 0, 12.75, -3.4, 0.2));
+    for (const sx of [-1, 1]){
+      root.add(fwdCyl(0.45, 0.5, 1.9, M.frame, sx * 0.86, 13.7, -4.55));
+      root.add(chamferBox(0.88, 1.25, 0.55, M.accent, sx * 1.75, 6.0, 1.72, 0.1));
+    }
+  }
 
   const armL = zeonArm(M, 1), armR = zeonArm(M, -1);
   armL.position.set(3.6, 14.45, 0); armR.position.set(-3.6, 14.45, 0);
   // Canonical asymmetry: the slab shield and weapon hand are both on the machine's right (-X);
   // the three-spike pauldron is on its left (+X).
-  const shoulderShield = makeZakuShoulderShield(M); shoulderShield.position.set(-1.1, 0.55, 0); shoulderShield.rotation.z = 0.1;
-  armR.add(shoulderShield); parts.shield = shoulderShield; parts.shieldKind = 'native'; parts.guardArm = armR;
+  if (!old){
+    const shoulderShield = makeZakuShoulderShield(M); shoulderShield.position.set(-1.1, 0.55, 0); shoulderShield.rotation.z = 0.1;
+    armR.add(shoulderShield); parts.shield = shoulderShield; parts.shieldKind = 'native'; parts.guardArm = armR;
+    if (rf){
+      const twinMuzzle = new THREE.Object3D(); twinMuzzle.position.set(-1.6, 0.72, 4.35); armR.add(twinMuzzle);
+      parts.integratedMuzzles = { 1: twinMuzzle };
+      for (const x of [-1.92, -1.36]){
+        armR.add(fwdCyl(0.19, 0.21, 2.55, M.dark, x, 0.75, 2.85));
+        armR.add(fwdCyl(0.29, 0.29, 0.35, M.frame, x, 0.75, 4.15));
+      }
+    }
+  } else {
+    // MS-05 predates the Zaku II slab shield and spiked shoulder.
+    armR.add(sph(1.28, M.main, -0.15, 0.4, 0, 14, 10));
+  }
   const pauldron = new THREE.Group(), ps = new THREE.Group();
-  const shell = sph(1.75, M.accent, 0.2, 0.65, 0, 18, 12); shell.scale.set(1.0, 0.92, 1.02); ps.add(shell);
-  const top = cone(0.31, 1.25, M.accent, 0.25, 2.2, 0, 10); ps.add(top);
-  const side = cone(0.34, 1.35, M.accent, 1.75, 0.9, 0, 10); side.rotation.z = -PI / 2; ps.add(side);
-  for (const zz of [-0.92, 0.92]){ const spike = cone(0.27, 1.0, M.accent, 0.35, 1.25, zz, 10); spike.rotation.x = zz > 0 ? -1.05 : 1.05; ps.add(spike); }
+  const shell = sph(old ? 1.42 : 1.75, M.accent, 0.2, 0.65, 0, 18, 12); shell.scale.set(1.0, 0.92, 1.02); ps.add(shell);
+  if (!old){
+    const top = cone(0.31, 1.25, M.accent, 0.25, 2.2, 0, 10); ps.add(top);
+    const side = cone(0.34, 1.35, M.accent, 1.75, 0.9, 0, 10); side.rotation.z = -PI / 2; ps.add(side);
+    for (const zz of [-0.92, 0.92]){ const spike = cone(0.27, 1.0, M.accent, 0.35, 1.25, zz, 10); spike.rotation.x = zz > 0 ? -1.05 : 1.05; ps.add(spike); }
+  }
   pauldron.add(compactGroup(ps)); armL.add(pauldron);
+  if (rf){
+    // Modernized rectangular backpack and skirt vanes distinguish the OMS-06RF frame.
+    root.add(chamferBox(3.65, 3.8, 1.6, M.chest, 0, 12.9, -3.05, 0.18));
+    armL.add(chamferBox(0.82, 1.2, 1.8, M.dark, 0, -4.55, 1.5, 0.1));
+    for (const zz of [1.8, 2.12, 2.44]) armL.add(fwdCyl(0.31, 0.31, 0.16, M.accent, 0, -4.55, zz));
+    const serpentMuzzle = new THREE.Object3D(); serpentMuzzle.position.set(0, -4.55, 2.9);
+    armL.add(serpentMuzzle); parts.integratedMuzzles[2] = serpentMuzzle;
+    parts.integratedAimArms = { 1: [armR], 2: [armL] };
+    for (const sx of [-1, 1]){
+      root.add(chamferBox(0.58, 3.8, 1.9, M.accent, sx * 2.7, 9.5, -0.15, 0.1));
+      addThruster(root, parts, M.frame, M.flame, sx * 1.28, 11.3, -4.25, 0.48, 2.2, 'rear');
+    }
+  }
   root.add(armL, armR); parts.armL = armL; parts.armR = armR;
 
+  return {
+    root, parts, kind: 'humanoid', allowDefaultShield: false,
+    weaponMount: [0, -6.42, 0.72], meleeMount: [0, -6.42, 0.62],
+  };
+}
+
+function buildZakuIII(rawM){
+  const M = mats(rawM), root = new THREE.Group(), parts = { flames: [] };
+  const stat = new THREE.Group();
+  for (const [key, sx] of [['legL', -1], ['legR', 1]]){
+    const leg = zeonLeg(M, sx, { wide: 1.16, thigh: M.main, shin: M.main, knee: M.accent, cable: false });
+    leg.position.set(sx * 2.0, 9.3, 0); root.add(leg); parts[key] = leg;
+    // Bell-bottom calves and large forward knee armour match the ZZ-era machine.
+    root.add(chamferBox(2.6, 2.4, 0.68, M.accent, sx * 2.0, 3.1, 1.5, 0.18));
+  }
+  stat.add(cyl(3.15, 3.5, 1.8, M.chest, 0, 10.0, 0, 16));
+  for (const sx of [-1, 1]){
+    const skirt = chamferBox(1.6, 3.1, 2.45, M.main, sx * 2.8, 9.75, 0.22, 0.2);
+    skirt.rotation.z = sx * 0.13; stat.add(skirt);
+    stat.add(chamferBox(1.45, 2.55, 0.55, M.accent, sx * 1.2, 9.6, 1.75, 0.13));
+  }
+  stat.add(facetedHull([
+    [11.0, 2.55, 1.45, -1.35], [12.0, 3.35, 1.9, -1.5],
+    [14.5, 3.55, 1.85, -1.45], [15.3, 2.3, 1.15, -1.0],
+  ], M.chest));
+  stat.add(chamferBox(5.35, 1.75, 0.8, M.main, 0, 13.9, 1.82, 0.19));
+  stat.add(chamferBox(3.25, 1.05, 0.45, M.accent, 0, 12.6, 2.03, 0.12));
+  stat.add(chamferBox(4.45, 3.6, 1.5, M.dark, 0, 13.0, -2.1, 0.18));
+  for (const sx of [-1, 1]){
+    const intake = chamferBox(1.4, 2.7, 2.5, M.main, sx * 3.2, 13.45, 0.12, 0.17);
+    intake.rotation.z = sx * -0.1; stat.add(intake);
+    stat.add(chamferBox(0.85, 0.5, 0.24, M.dark, sx * 1.25, 12.3, 2.38, 0.06));
+  }
+  root.add(compactGroup(stat));
+  // Two waist/chest beam emitters; the active secondary shot originates here.
+  for (const sx of [-1, 1]){
+    root.add(fwdCyl(0.43, 0.48, 0.7, M.frame, sx * 1.25, 12.3, 2.46));
+    root.add(fwdCyl(0.22, 0.22, 0.1, M.eye, sx * 1.25, 12.3, 2.85));
+  }
+  const waistMuzzle = new THREE.Object3D(); waistMuzzle.position.set(0, 12.3, 2.95);
+  root.add(waistMuzzle); parts.integratedMuzzles = { 1: waistMuzzle };
+  // Oversized rear propellant/beam-generator block with four articulated nozzles.
+  root.add(chamferBox(4.7, 4.8, 2.2, M.chest, 0, 13.0, -3.42, 0.2));
+  for (const sx of [-1, 1]){
+    root.add(chamferBox(1.45, 4.25, 1.55, M.accent, sx * 2.25, 13.3, -4.2, 0.13));
+    for (const yy of [10.75, 12.3]) addThruster(root, parts, M.frame, M.flame, sx * 1.45, yy, -5.1, 0.48, 2.0, 'rear');
+  }
+  const mh = monoHead(M, {}); mh.head.position.set(0, 16.45, 0);
+  // Zaku III has a taller, angular brow and a longer chin than the OYW head.
+  mh.head.add(chamferBox(2.75, 0.45, 1.05, M.accent, 0, 0.72, 0.96, 0.1));
+  mh.head.add(chamferBox(1.3, 0.8, 1.2, M.main, 0, -0.92, 1.18, 0.12));
+  mh.head.add(fwdCyl(0.25, 0.29, 0.56, M.frame, 0, -0.89, 1.82));
+  const headMuzzle = new THREE.Object3D(); headMuzzle.position.set(0, -0.89, 2.18);
+  mh.head.add(headMuzzle); parts.integratedMuzzles[2] = headMuzzle;
+  root.add(mh.head); parts.head = mh.head; parts.eye = mh.eye; parts.monoeye = mh.monoeye; parts.eyeMat = M.eye;
+  const armL = zeonArm(M, 1, { forearmPlate: M.accent });
+  const armR = zeonArm(M, -1, { forearmPlate: M.main });
+  armL.position.set(4.15, 14.9, 0); armR.position.set(-4.15, 14.9, 0);
+  armR.add(chamferBox(2.0, 2.7, 2.65, M.main, -0.15, 0.28, 0, 0.16));
+  const shield = makeZakuShoulderShield(M); shield.scale.set(1.22, 1.13, 1.18);
+  shield.position.set(-1.34, 0.7, 0); armR.add(shield);
+  parts.shield = shield; parts.shieldKind = 'native'; parts.guardArm = armR;
+  const pauldron = new THREE.Group();
+  const shell = sph(1.92, M.main, 0.22, 0.68, 0, 18, 12); shell.scale.set(1.1, 0.9, 1.1); pauldron.add(shell);
+  for (const zz of [-1.05, 1.05]){
+    const spike = cone(0.4, 1.65, M.accent, 0.5, 1.55, zz, 12);
+    spike.rotation.x = zz > 0 ? -0.9 : 0.9; pauldron.add(spike);
+  }
+  armL.add(pauldron);
+  root.add(armL, armR); parts.armL = armL; parts.armR = armR;
+  root.userData.modelFamily = 'zaku-iii';
   return {
     root, parts, kind: 'humanoid', allowDefaultShield: false,
     weaponMount: [0, -6.42, 0.72], meleeMount: [0, -6.42, 0.62],
@@ -911,8 +1028,12 @@ function buildMagella(suit, rawM){
 export function buildZeonCanonical(suit, M){
   if (!suit || !supported.has(suit.id)) return null;
   switch (suit.id){
+    case 'zaku1': return buildZaku(suit, palette('zakuI', M));
+    case 'zaku1sniper': return buildZaku(suit, palette('zakuISniper', M));
     case 'zaku2': case 'zaku2b': case 'zaku2g': return buildZaku(suit, palette('zaku', M));
     case 'zaku2s': return buildZaku(suit, palette('charZaku', M));
+    case 'zaku3': return buildZakuIII(palette('zakuIII', M));
+    case 'rfzaku': return buildZaku(suit, palette('rfZaku', M));
     case 'zakutank': return buildZakuTank(suit, palette('zakuTank', M));
     case 'gouf': return buildGouf(suit, palette('gouf', M), false);
     case 'goufnh': return buildGouf(suit, palette('goufCustom', M), true);
